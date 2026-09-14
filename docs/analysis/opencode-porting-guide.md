@@ -10,15 +10,17 @@
 
 ## 0. TL;DR
 
-1. **현재 채택안은 본체 무수정 deep-interview 플러그인이다.** 아래 §1~7의 `session.finish` 신설은 종료 전 veto를 위한 과거 설계안이며 현재 구현의 필수 조건이 아니다. ralplan/ultragoal 이식도 현재 제품 범위가 아니다.
+1. **현재 채택안은 본체 무수정 deep-interview 플러그인이다.** 아래 §1~7은 당시 분석·설계 기록이며, 특히 `session.finish` 신설은 종료 전 veto를 위한 과거 설계안으로 현재 구현의 필수 조건이 아니다. ralplan/ultragoal 이식도 현재 제품 범위가 아니다.
 2. **두 원본은 "호환 차이만 빼면 동일"이 아니다.** `ultragoal`은 사실상 동일(호스트 goal 바인딩만 다름), `ralplan`은 핵심만 동일(주변 장치 상이), `deep-interview`는 기능 자체가 갈라져 있다.
 3. **두 원본의 차이는 대부분 프롬프트 계약(SKILL.md) 레벨**이다. 컴파일된 하네스는 형태가 대체로 공유되고, 갈라진 건 "모델에게 무엇을 시키는가"다. → 이식 시 좋은 아이디어를 **취사선택(merge)** 하는 게 최적.
 
 ### 현재 선택한 연결 계약
 
 - `skills.paths`로 bundled SKILL을 등록하고 host의 skill-derived `/deep-interview`를 사용한다. 중복 custom command나 core patch는 없다.
-- `session.idle` 관측 후 최신 질문/중단/상태와 assistant 종료 근거를 검사하고 유효한 미완료 인터뷰에만 `promptAsync`로 계속한다. 이는 **post-idle**이며 종료 전 차단과 시점·보장이 다르다. waiting/cancelled/interrupted/error/terminal/불명확 상태에는 자동 재진입하지 않는다.
-- 실제 question Asked/Replied/Rejected, tool 결과 및 interruption을 동일 session 저장 연산으로 처리한다. 누락된 after/reject를 답변으로 만들지 않는다. legacy SDK에 없는 `question.list`는 사용하지 않는다.
+- 분석한 OMC 리비전의 기본 등록 MJS Stop 경로에는 deep-interview 전용 자동 계속 처리가 없다. 기본 경로에 연결되지 않은 별도 TS 활성 스킬 보강 구현(최대 10회·30분 만료)은 가져오지 않는다.
+- prompt 계약과 실제 native `question` 도구 가용성으로 한 번에 한 질문을 지원한다. 모델의 호출을 강제하지 않으며, 호출된 도구가 실제 대기·응답 수신을 처리한 뒤 모델은 자연스럽게 계속한다. 도구를 사용할 수 없거나 거부되면 plaintext 답변 fallback 없이 중단하고 보고한다.
+- OpenCode 1.18.30의 `agent/agent.ts` 기본값은 custom agent의 `question`을 거부하며 내장 build/plan에 별도 허용한다. 이후 승인된 수정으로 자체 primary도 question을 기본 허용한다. 단 사용자 전역·개별 권한에 question과 일치하는 규칙이 있으면 허용을 추가하지 않고 호스트 평가에 맡긴다. 전역 → 개별 agent 우선순위와 와일드카드 규칙 순서를 보존한다. `agent.open-gajae`는 사용자 덮어쓰기로 수용하며 explorer의 deny 7개와 중복 정의 검사는 유지한다. 등록된 도구 목록과 실제 agent의 사용 권한은 별개다.
+- deep-interview에는 `session.idle` 후 `promptAsync` 재진입, one-shot correction, budget, 또는 obligation 엔진이 없다. 실제 question Asked/Replied/Rejected, tool 결과 및 interruption은 동일 session 저장 연산으로 처리하고 취소·오류·restart/resume에서 durable state와 대조한다. 누락된 after/reject를 답변으로 만들지 않으며 legacy SDK에 없는 `question.list`는 사용하지 않는다.
 - OMC deep-interview snapshot 대체·명시 인자 우선·custom payload 한도와 OMX atomic 저장 패턴을 조합한다. runtime 기록은 모델 snapshot과 분리해 보호한다. 동일 process queue만 보장하며 multi-process lock은 없다.
 - OMC Round0/점수/ontology와 OMX Fact/Judgment·출처 라벨·리듬·Pressure Pass/Closure Audit는 원문 기반 프롬프트 계약이다. transcript/spec의 `[from-code]`, `[from-code][auto-confirmed]`, `[from-research]`, `[from-user]`를 runtime question `source`와 혼동하지 않는다.
 - 자체 `open-gajae` primary와 `open-gajae-explore`만 정의한다. OMC `agents/explore.md`와 OMX `prompts/explore.md`를 동등 원천으로 조합하며 OMO의 custom AgentConfig/model 연결 방식을 참고한다. 내장 explore/general 재사용이나 모델 override가 아니다.

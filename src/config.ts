@@ -125,6 +125,23 @@ export const explorePermissions = {
   deep_interview_spec: "deny",
 } as const;
 
+// Detect an explicit rule, not its effective action: leave rule ordering and
+// evaluation to OpenCode. Its permission names match case-sensitive * / ? globs.
+function hasQuestionPermission(permission: unknown): boolean {
+  if (typeof permission === "string") return true;
+  if (!permission || typeof permission !== "object") return false;
+  return Object.keys(permission).some((pattern) =>
+    new RegExp(
+      `^${pattern
+        .replaceAll("\\", "/")
+        .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+        .replace(/\*/g, ".*")
+        .replace(/\?/g, ".")}$`,
+      process.platform === "win32" ? "si" : "s",
+    ).test("question"),
+  );
+}
+
 async function findCollision(root: string, ownSkill: string): Promise<void> {
   let entries;
   try {
@@ -157,11 +174,11 @@ export async function configureAgents(
   packageRoot: string,
 ): Promise<void> {
   const target = config as Config & { skills?: { paths?: string[] } };
-  for (const name of agentNames)
-    if (config.agent?.[name])
-      throw new Error(
-        `Agent collision: ${name}; remove the duplicate definition`,
-      );
+  const primaryOverrides = config.agent?.["open-gajae"];
+  if (config.agent?.["open-gajae-explore"])
+    throw new Error(
+      "Agent collision: open-gajae-explore; remove the duplicate definition",
+    );
   if (config.command?.["deep-interview"])
     throw new Error(
       "Command collision: deep-interview; native skill must own this command",
@@ -183,6 +200,11 @@ export async function configureAgents(
     ...target.skills,
     paths: [...new Set([...(target.skills?.paths ?? []), skillRoot])],
   };
+  const primaryPermission =
+    hasQuestionPermission(config.permission) ||
+    hasQuestionPermission(primaryOverrides?.permission)
+      ? primaryOverrides?.permission
+      : { question: "allow" as const, ...primaryOverrides?.permission };
   config.agent = {
     ...config.agent,
     "open-gajae": {
@@ -191,6 +213,8 @@ export async function configureAgents(
         "Own tasks end-to-end; use open-gajae-explore for repository facts.",
       prompt: primary,
       ...settings.agents["open-gajae"],
+      ...primaryOverrides,
+      permission: primaryPermission,
     },
     "open-gajae-explore": {
       mode: "subagent",

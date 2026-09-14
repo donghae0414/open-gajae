@@ -100,7 +100,7 @@ test("registers substantive owned roles without broadening user or native config
   const explore = configured.agent!["open-gajae-explore"]!;
   expect(primary.mode).toBe("primary");
   expect(primary.model).toBeUndefined();
-  expect(primary.permission).toBeUndefined();
+  expect<unknown>(primary.permission).toEqual({ question: "allow" });
   expect(primary.prompt).toContain('subagent_type: "open-gajae-explore"');
   expect(explore.mode).toBe("subagent");
   expect(explore.model).toBe("openai/gpt-5.6-terra");
@@ -112,14 +112,14 @@ test("registers substantive owned roles without broadening user or native config
   ).toBe(true);
   expect(configured.command).toBeUndefined();
 });
-test("rejects owned role and native command collisions instead of replacing definitions", async () => {
+test("retains explorer and native command collision protection", async () => {
   const settings = {
     deepInterview: { ambiguityThreshold: 0.2, maxRounds: 20 },
     agents: {},
   };
   await expect(
     configureAgents(
-      { agent: { "open-gajae": { prompt: "user" } } },
+      { agent: { "open-gajae-explore": { prompt: "user" } } },
       settings,
       resolve("."),
     ),
@@ -131,6 +131,66 @@ test("rejects owned role and native command collisions instead of replacing defi
       resolve("."),
     ),
   ).rejects.toThrow("Command collision");
+});
+
+test("primary user overrides preserve native permission ordering without late grants", async () => {
+  const cases = [
+    { global: { question: "deny" }, local: undefined },
+    { global: { "*": "deny" }, local: undefined },
+    { global: { "ques*": "deny" }, local: undefined },
+    { global: { "questio?": "ask" }, local: { edit: "ask" } },
+    { global: { question: "deny" }, local: { question: "allow" } },
+    { global: { question: "allow" }, local: { question: "deny" } },
+    { global: undefined, local: { "*": "deny", question: "allow" } },
+    { global: undefined, local: { question: "allow", "*": "deny" } },
+    { global: { question: { "*": "deny" } }, local: undefined },
+    { global: undefined, local: { question: { "*": "ask" } } },
+  ];
+  for (const { global, local } of cases) {
+    // The installed legacy SDK omits host-supported question/wildcard keys.
+    const config = {
+      permission: global,
+      agent: {
+        "open-gajae": {
+          permission: local,
+          model: "test/user",
+          prompt: "user prompt",
+        },
+      },
+    } as Config;
+    const before = structuredClone(config);
+    await configureAgents(
+      config,
+      {
+        deepInterview: { ambiguityThreshold: 0.2, maxRounds: 20 },
+        agents: { "open-gajae": { model: "test/plugin" } },
+      },
+      resolve("."),
+    );
+    expect(config.permission).toEqual(before.permission);
+    expect<unknown>(config.agent!["open-gajae"]!.permission).toEqual(local);
+    expect(Object.keys(config.agent!["open-gajae"]!.permission ?? {})).toEqual(
+      Object.keys(local ?? {}),
+    );
+    expect(config.agent!["open-gajae"]!.model).toBe("test/user");
+    expect(config.agent!["open-gajae"]!.prompt).toBe("user prompt");
+    expect(config.agent!["open-gajae-explore"]!.permission).toEqual(
+      explorePermissions,
+    );
+  }
+  const config: Config = {
+    permission: { read: "deny" } as Config["permission"],
+    agent: { "open-gajae": { permission: { edit: "ask" } } },
+  };
+  await configureAgents(
+    config,
+    { deepInterview: { ambiguityThreshold: 0.2, maxRounds: 20 }, agents: {} },
+    resolve("."),
+  );
+  expect<unknown>(config.agent!["open-gajae"]!.permission).toEqual({
+    question: "allow",
+    edit: "ask",
+  });
 });
 
 test("native tools enforce caller scope and permission while combining explicit snapshot writes", async () => {
@@ -185,56 +245,19 @@ test("native tools enforce caller scope and permission while combining explicit 
   });
 });
 
-test("native hook events preserve real answers and deduplicate idle with absent idle-map entry", async () => {
+test("native questions wait without injection and progress only on actual replies", async () => {
   await fixture(async (root) => {
     const store = new StateStore(root, {
       ambiguityThreshold: 0.2,
       maxRounds: 20,
     });
     await store.start("s", "hook surface");
-    let dispatches = 0;
+    const requests: string[] = [];
     const client = createOpencodeClient({
       baseUrl: "http://fixture.local",
       fetch: (async (request: Request) => {
-        const url = new URL(request.url);
-        if (url.pathname.endsWith("/status")) return Response.json({});
-        if (url.pathname.endsWith("/message"))
-          return Response.json([
-            {
-              info: {
-                id: "user1",
-                role: "user",
-                agent: "open-gajae",
-                model: {
-                  providerID: "openai",
-                  modelID: "gpt-5.6-terra",
-                  variant: "high",
-                },
-              },
-              parts: [],
-            },
-            {
-              info: {
-                id: "assistant1",
-                parentID: "user1",
-                role: "assistant",
-                time: { completed: 2 },
-              },
-              parts: [],
-            },
-          ]);
-        if (url.pathname.endsWith("/prompt_async")) {
-          const body = await request.json();
-          expect(body.agent).toBe("open-gajae");
-          expect(body.model).toEqual({
-            providerID: "openai",
-            modelID: "gpt-5.6-terra",
-          });
-          expect(body.variant).toBe("high");
-          dispatches++;
-          return new Response(null, { status: 204 });
-        }
-        throw new Error(`Unexpected request ${url.pathname}`);
+        requests.push(new URL(request.url).pathname);
+        return new Response(null, { status: 204 });
       }) as typeof fetch,
     });
     const hooks = createHooks(store, client);
@@ -252,10 +275,25 @@ test("native hook events preserve real answers and deduplicate idle with absent 
       { tool: "question", sessionID: "s", callID: "call" },
       { args: { questions: [{}] } },
     );
+    await send({
+      type: "question.asked",
+      properties: { id: "q", sessionID: "s", tool: { callID: "call" } },
+    });
+    const idle = { type: "session.idle", properties: { sessionID: "s" } };
+    const waiting = await store.read("s");
+    await Promise.all([send(idle), send(idle)]);
+    expect(await store.read("s")).toEqual(waiting);
+    expect(waiting?._runtime.status).toBe("waiting");
+    await expect(
+      hooks["tool.execute.before"]!(
+        { tool: "question", sessionID: "s", callID: "duplicate" },
+        { args: { questions: [{}] } },
+      ),
+    ).rejects.toThrow("duplicate");
     await Promise.all([
       send({
-        type: "question.asked",
-        properties: { id: "q", sessionID: "s", tool: { callID: "call" } },
+        type: "question.replied",
+        properties: { requestID: "q", sessionID: "s", answers: [["actual"]] },
       }),
       send({
         type: "question.replied",
@@ -270,17 +308,137 @@ test("native hook events preserve real answers and deduplicate idle with absent 
     expect((await store.read("s"))?._runtime.answers?.[0].answers).toEqual([
       ["actual"],
     ]);
-    const idle = { type: "session.idle", properties: { sessionID: "s" } };
     await Promise.all([send(idle), send(idle)]);
-    expect(dispatches).toBe(1);
+    await hooks["tool.execute.before"]!(
+      { tool: "question", sessionID: "s", callID: "next" },
+      { args: { questions: [{}] } },
+    );
+    await send({
+      type: "question.asked",
+      properties: { id: "q2", sessionID: "s", tool: { callID: "next" } },
+    });
+    await send({
+      type: "question.rejected",
+      properties: { requestID: "q2", sessionID: "s" },
+    });
+    expect((await store.read("s"))?._runtime.status).toBe("interrupted");
+    expect((await store.read("s"))?._runtime.round).toBe(1);
     await store.cancel("s");
     await send(idle);
-    expect(dispatches).toBe(1);
+    expect(requests).toEqual([]);
     // Finishing an interview must not permanently block ordinary native questions.
     await hooks["tool.execute.before"]!(
       { tool: "question", sessionID: "s", callID: "ordinary" },
       { args: { questions: [{}, {}] } },
     );
+  });
+});
+
+test("text-only questions and changing assistant IDs never trigger idle reinjection", async () => {
+  await fixture(async (root) => {
+    const store = new StateStore(root, {
+      ambiguityThreshold: 0.2,
+      maxRounds: 20,
+    });
+    const original = await store.start("s", "ask before proceeding");
+    const requests: string[] = [];
+    let turn = 0;
+    const client = createOpencodeClient({
+      baseUrl: "http://fixture.local",
+      fetch: (async (request: Request) => {
+        const path = new URL(request.url).pathname;
+        requests.push(path);
+        if (path.endsWith("/status")) return Response.json({});
+        if (path.endsWith("/message"))
+          return Response.json([
+            {
+              info: {
+                id: `user${turn}`,
+                role: "user",
+                agent: "open-gajae",
+                model: { providerID: "openai", modelID: "gpt-5.6-terra" },
+              },
+              parts: [],
+            },
+            {
+              info: {
+                id: `assistant${turn}`,
+                parentID: `user${turn}`,
+                role: "assistant",
+                time: { completed: turn + 1 },
+              },
+              parts: [{ type: "text", text: "Which scope do you want?" }],
+            },
+          ]);
+        return new Response(null, { status: 204 });
+      }) as typeof fetch,
+    });
+    const hooks = createHooks(store, client);
+    for (; turn < 7; turn++) {
+      await hooks.event!({
+        event: {
+          type: "message.updated",
+          properties: {
+            info: {
+              id: `assistant${turn}`,
+              sessionID: "s",
+              role: "assistant",
+              time: { completed: turn + 1 },
+            },
+          },
+        } as Parameters<NonNullable<Hooks["event"]>>[0]["event"],
+      });
+      await hooks.event!({
+        event: {
+          type: "session.status",
+          properties: { sessionID: "s", status: { type: "idle" } },
+        },
+      });
+      await hooks.event!({
+        event: { type: "session.idle", properties: { sessionID: "s" } },
+      });
+    }
+    expect(requests).toEqual([]);
+    expect(await store.read("s")).toEqual(original);
+  });
+});
+
+test("assistant interruption and errors remain recorded without idle polling", async () => {
+  await fixture(async (root) => {
+    const store = new StateStore(root, {
+      ambiguityThreshold: 0.2,
+      maxRounds: 20,
+    });
+    await store.start("aborted", "interruption");
+    await store.start("failed", "error");
+    const requests: string[] = [];
+    const hooks = createHooks(
+      store,
+      createOpencodeClient({
+        baseUrl: "http://fixture.local",
+        fetch: (async (request: Request) => {
+          requests.push(request.url);
+          return new Response(null, { status: 204 });
+        }) as typeof fetch,
+      }),
+    );
+    for (const [sessionID, name] of [
+      ["aborted", "MessageAbortedError"],
+      ["failed", "APIError"],
+    ]) {
+      await hooks.event!({
+        event: {
+          type: "message.updated",
+          properties: {
+            info: { sessionID, role: "assistant", error: { name } },
+          },
+        } as Parameters<NonNullable<Hooks["event"]>>[0]["event"],
+      });
+    }
+    expect((await store.read("aborted"))?._runtime.status).toBe("interrupted");
+    expect((await store.read("failed"))?._runtime.status).toBe("error");
+    expect((await store.read("aborted"))?._runtime.round).toBe(0);
+    expect(requests).toEqual([]);
   });
 });
 

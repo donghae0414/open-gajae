@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { realpath } from "node:fs/promises";
 import { type QuestionKind, StateStore } from "./state.js";
 
-// Question/idle lifecycle handling draws on OMC/OMX MIT sources; project notices carry attribution.
+// Native question lifecycle handling draws on OMC/OMX MIT sources; project notices carry attribution.
 const kinds = new Set<QuestionKind>([
   "requirement",
   "continuation",
@@ -156,13 +156,10 @@ export function createHooks(
             );
           }
         }
-        if (
-          state._runtime.inFlight ||
-          (state._runtime.questionCallId && !state._runtime.pending)
-        ) {
+        if (state._runtime.questionCallId && !state._runtime.pending) {
           await store.interrupt(
             input.sessionID,
-            "explicit resume reconciled an unresolved prior dispatch",
+            "explicit resume reconciled an unresolved question invocation",
           );
         }
         const reconciled = await store.read(input.sessionID);
@@ -265,6 +262,25 @@ export function createHooks(
 
       const event = record(input.event);
       const properties = record(event?.properties);
+      if (event?.type === "message.updated") {
+        const info = record(properties?.info);
+        if (
+          info?.role === "assistant" &&
+          typeof info.sessionID === "string" &&
+          info.error
+        ) {
+          const error = record(info.error);
+          const aborted = error?.name === "MessageAbortedError";
+          await store.interrupt(
+            info.sessionID,
+            aborted
+              ? "native assistant was interrupted"
+              : "native assistant failed",
+            !aborted,
+          );
+        }
+        return;
+      }
       if (!event || !properties || typeof properties.sessionID !== "string")
         return;
       if (event.type === "session.error") {
@@ -278,143 +294,6 @@ export function createHooks(
             true,
           );
         return;
-      }
-      if (
-        event.type !== "session.idle" &&
-        !(
-          event.type === "session.status" &&
-          record(properties.status)?.type === "idle"
-        )
-      )
-        return;
-
-      const active = await store.read(properties.sessionID);
-      if (
-        !active ||
-        active._runtime.status !== "active" ||
-        active._runtime.pending ||
-        active._runtime.inFlight
-      )
-        return;
-      let history: Awaited<ReturnType<typeof client.session.messages>>;
-      let statuses: Awaited<ReturnType<typeof client.session.status>>;
-      try {
-        [history, statuses] = await Promise.all([
-          client.session.messages({
-            path: { id: properties.sessionID },
-            query: { directory: store.worktree },
-          }),
-          client.session.status({ query: { directory: store.worktree } }),
-        ]);
-      } catch {
-        await store.interrupt(
-          properties.sessionID,
-          "native history or status request failed before post-idle continuation",
-          true,
-        );
-        return;
-      }
-      if ("error" in history && history.error) {
-        const state = await store.read(properties.sessionID);
-        if (state)
-          await store.interrupt(
-            properties.sessionID,
-            "could not reconcile session history before post-idle continuation",
-            true,
-          );
-        return;
-      }
-      if ("error" in statuses && statuses.error) {
-        await store.interrupt(
-          properties.sessionID,
-          "could not read native session status before post-idle continuation",
-          true,
-        );
-        return;
-      }
-      // SessionStatus.list omits idle sessions; only busy/retry are retained.
-      if (
-        !statuses.data ||
-        (statuses.data[properties.sessionID] &&
-          statuses.data[properties.sessionID].type !== "idle")
-      )
-        return;
-      const latest = history.data?.at(-1);
-      // A missing, errored, or unfinished assistant message is not a valid idle
-      // completion and must not be used to resurrect the interview.
-      if (
-        !latest ||
-        latest.info.role !== "assistant" ||
-        latest.info.time.completed === undefined
-      )
-        return;
-      if (latest.info.error) {
-        await store.interrupt(
-          properties.sessionID,
-          "latest assistant message was interrupted or errored",
-          true,
-        );
-        return;
-      }
-      const parentID = latest.info.parentID;
-      const parent = history.data?.find(
-        (message) => message.info.id === parentID,
-      )?.info;
-      if (
-        !parent ||
-        parent.role !== "user" ||
-        !parent.agent ||
-        !parent.model?.providerID ||
-        !parent.model.modelID
-      ) {
-        await store.interrupt(
-          properties.sessionID,
-          "cannot verify the current interview agent/model for continuation",
-          true,
-        );
-        return;
-      }
-      const variant = record(parent.model)?.variant;
-      const claim = await store.claimContinuation(
-        properties.sessionID,
-        latest.info.id,
-      );
-      if (!claim) return;
-      // The state mutation above is complete before the network call. No queue is
-      // held while promptAsync is in flight, and a second idle signal sees inFlight.
-      const current = await store.read(properties.sessionID);
-      if (
-        !current ||
-        current._runtime.status !== "active" ||
-        !current._runtime.inFlight ||
-        current._runtime.lastAssistantMessageId !== latest.info.id
-      )
-        return;
-      try {
-        const sent = await client.session.promptAsync({
-          path: { id: properties.sessionID },
-          query: { directory: store.worktree },
-          body: {
-            agent: parent.agent,
-            model: {
-              providerID: parent.model.providerID,
-              modelID: parent.model.modelID,
-            },
-            ...(typeof variant === "string" ? { variant } : {}),
-            parts: [{ type: "text", text: claim.prompt }],
-          },
-        });
-        if (sent.error)
-          await store.settleContinuation(
-            properties.sessionID,
-            "post-idle promptAsync failed",
-          );
-        else await store.settleContinuation(properties.sessionID);
-      } catch {
-        await store.settleContinuation(
-          properties.sessionID,
-          "post-idle promptAsync threw",
-        );
       }
     },
   };

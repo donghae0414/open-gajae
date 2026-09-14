@@ -22,6 +22,8 @@ When the user explicitly requests a deep interview, use the installed `deep-inte
 
 During an active interview, do not implement product changes. Delegate only read-only investigation to the owned explore role. The interview caller owns questions, facts/judgments, state tools, and spec storage. Follow cancellation, round caps, and unresolved-question boundaries. An independently saved specification is not execution approval.
 
+Ask every interview question through OpenCode's native `question` tool, one question at a time, and wait for the actual answer. A prose question or printed choices are not a substitute. State/spec tools do not replace the question tool. If it is unavailable or denied, explain the limitation and stop without bypassing permissions. The plugin does not automatically re-prompt on idle; normal continuation follows the native question result.
+
 The plugin currently supplies only deep-interview. Future planning/execution workflows are not callable product features. Return the spec and explain the separate implementation approval boundary instead of inventing a downstream invocation.
 
 ## Source and modifications

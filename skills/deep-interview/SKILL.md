@@ -11,7 +11,7 @@ Turn a vague idea into an independent, evidence-backed specification. Preserve t
 
 Use `/deep-interview <idea>` to start, `/deep-interview resume` to resume, and `/deep-interview cancel` to cancel. Native command handling establishes the current host session's state. Merely reading this skill does not start another session. If no state exists, ask the user to invoke the command rather than silently seeding a separate interview. An existing active interview is not overwritten. Never use `active:true` to revive a cancelled, interrupted, or completed interview.
 
-Read `state_read(mode:"deep-interview")` before deciding the next action and after any resume/compaction. Use only the three plugin tools `state_read`, `state_write`, `deep_interview_spec`; never write state JSON directly. State is session-local under `.open-gajae/state/sessions/`; specification paths are tool-owned under `.open-gajae/specs/`. Do not supply arbitrary paths or another session's identifiers.
+Read `state_read(mode:"deep-interview")` before deciding the next action and after any resume/compaction. For state/spec operations, use only the three plugin tools `state_read`, `state_write`, `deep_interview_spec`; never write state JSON directly. Questions use OpenCode's separate native `question` tool. State is session-local under `.open-gajae/state/sessions/`; specification paths are tool-owned under `.open-gajae/specs/`. Do not supply arbitrary paths or another session's identifiers.
 
 `state_write` REPLACES the model-owned snapshot, rather than merging it. Start from the latest read, retain the model fields still needed, and submit the complete next model snapshot. Explicit tool arguments take precedence over the custom `state` object. Never submit `_runtime` or `_meta`: host records, question IDs, received answers, cancellation, and actual rounds are not model-authored facts. Observe the tool's validation errors and correct the request instead of treating an error string as success.
 
@@ -53,6 +53,12 @@ Auto-confirm only descriptive facts. If a discovery implies what the feature sho
 Track consecutive non-user discoveries and confirmation-style answers. After three in a row, the next material user-facing round must request direct human judgment, unless the closure audit already says the interview is ready to crystallize. Facts do not become requirements merely by repetition.
 
 ## One-question loop
+
+Every user-facing interview question, including topology, confirmation, and closure questions, MUST call OpenCode's native `question` tool with exactly one item in `questions`. Do not substitute an assistant-prose question or a printed list of choices. Brief explanatory prose may precede the tool call, but is not itself a tracked question. If you already printed the question instead of calling the tool, call `question` with that same question in the current turn rather than treating it as answered.
+
+If the native tool is unavailable or denied, report the limitation and stop. Do not bypass permissions, invent another question transport, or count ordinary chat text as a native question reply. Tool availability depends on the OpenCode host/client configuration; these instructions do not force the model to call a missing tool.
+
+The plugin never injects a continuation or corrective prompt on idle. While a native question is pending, wait for its real tool result; do not poll state or ask again. OpenCode resumes the model when the tool returns the user's answer, so a normal round does not require `/deep-interview resume`. If a turn ends without a native question or completion, the plugin leaves it stopped; only a user-initiated turn or explicit resume can restart work.
 
 1. Read current state and actual answers. Never invent an answer from a dismissed question, missing after-event, idle transition, interrupted tool, or vanished pending request.
 2. Before calling native `question`, record the next question's purpose in the model snapshot (`next_question_kind`: requirement, confirmation, continuation, or closure). Ask exactly one question at a time; wait for its actual response. A requirements decision and a low-confidence confirmation concern requirements; control confirmations and closure acknowledgements are not extra requirements rounds.

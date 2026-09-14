@@ -207,7 +207,9 @@ test("raw spec receipt and completion reject stale files, models and incomplete 
       completion_requested: true,
     });
     expect(done._runtime.status).toBe("completed");
-    expect(await store.claimContinuation("s", "assistant1")).toBeUndefined();
+    await expect(
+      store.recordQuestionIntent("s", "requirement"),
+    ).rejects.toThrow();
     const fresh = await store.start("s", "new interview");
     expect(fresh._runtime.interviewId).not.toBe(receipt.interviewId);
   });
@@ -258,7 +260,9 @@ test("tenth-round control does not count and a negative response stops further q
     const state = await store.read("s");
     expect(state?._runtime.round).toBe(10);
     expect(state?._runtime.status).toBe("cancelled");
-    expect(await store.claimContinuation("s", "assistant")).toBeUndefined();
+    await expect(
+      store.recordQuestionIntent("s", "requirement"),
+    ).rejects.toThrow();
   }, 11);
   await fixture(async (store) => {
     await store.start("cap", "hard cap");

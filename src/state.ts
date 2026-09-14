@@ -37,8 +37,6 @@ export type InterviewRuntime = {
     kind: QuestionKind;
     askedAt: string;
   };
-  lastAssistantMessageId?: string;
-  inFlight?: boolean;
   reason?: string;
   error?: string;
   spec?: SpecReceipt;
@@ -558,7 +556,6 @@ export class StateStore {
         validateCompletion(next);
         await this.verifyReceipt(sessionId, next);
         next._runtime.status = "completed";
-        next._runtime.inFlight = false;
       }
       const written = this.bump(next);
       return { state: written, result: written };
@@ -658,7 +655,6 @@ export class StateStore {
           status: "active" as const,
           pending: undefined,
           questionCallId: undefined,
-          inFlight: false,
           reason: undefined,
           error: undefined,
         },
@@ -679,7 +675,6 @@ export class StateStore {
           status: "cancelled" as const,
           pending: undefined,
           questionCallId: undefined,
-          inFlight: false,
           reason,
           completedAt: now(),
         },
@@ -770,7 +765,6 @@ export class StateStore {
           kind: state._runtime.nextQuestionKind,
           askedAt: now(),
         },
-        inFlight: false,
       };
       const next = {
         ...state,
@@ -913,7 +907,6 @@ export class StateStore {
           status: error ? ("error" as const) : ("interrupted" as const),
           pending: undefined,
           questionCallId: undefined,
-          inFlight: false,
           reason,
           error: error ? reason : undefined,
         },
@@ -993,60 +986,6 @@ export class StateStore {
           ...runtime,
           status: "completed" as const,
           completedAt: now(),
-          inFlight: false,
-        },
-      };
-      return { state: this.bump(next), result: next };
-    });
-  }
-
-  /** Claim a guarded post-idle continuation. The caller must invoke the SDK outside this queue. */
-  async claimContinuation(sessionId: string, assistantMessageId: string) {
-    return this.mutate(sessionId, (state) => {
-      if (!state) return { result: undefined };
-      const runtime = state._runtime;
-      if (
-        runtime.status !== "active" ||
-        runtime.pending ||
-        runtime.questionCallId ||
-        runtime.inFlight ||
-        runtime.error ||
-        terminal.has(runtime.status) ||
-        runtime.lastAssistantMessageId === assistantMessageId
-      )
-        return { result: undefined };
-      const next = {
-        ...state,
-        _meta: { ...state._meta, updatedAt: now(), updatedBy: "post-idle" },
-        _runtime: {
-          ...runtime,
-          inFlight: true,
-          lastAssistantMessageId: assistantMessageId,
-        },
-      };
-      return {
-        state: this.bump(next),
-        result: {
-          interviewId: runtime.interviewId,
-          prompt:
-            "Continue the active deep interview. Ask only the next required question or finish the current closure obligation.",
-        },
-      };
-    });
-  }
-
-  async settleContinuation(sessionId: string, failure?: string) {
-    return this.mutate(sessionId, (state) => {
-      if (!state || !state._runtime.inFlight) return { result: state };
-      const next = {
-        ...state,
-        _meta: { ...state._meta, updatedAt: now(), updatedBy: "post-idle" },
-        _runtime: {
-          ...state._runtime,
-          inFlight: false,
-          ...(failure
-            ? { status: "error" as const, error: failure, reason: failure }
-            : {}),
         },
       };
       return { state: this.bump(next), result: next };
