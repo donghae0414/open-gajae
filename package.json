@@ -1,0 +1,31 @@
+{
+  "name": "open-gajae",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenCode deep-interview and owned primary/explore agents",
+  "license": "SEE LICENSE IN THIRD-PARTY-NOTICES.md",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "prompts",
+    "licenses",
+    "THIRD-PARTY-NOTICES.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "bun build ./src/index.ts --outdir ./dist --target bun --format esm --packages external",
+    "test": "bun test ./tests/state.test.ts ./tests/integration.test.ts"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "1.18.30",
+    "jsonc-parser": "3.3.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "typescript": "^5.9.3"
+  }
+}

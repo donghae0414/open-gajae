@@ -10,9 +10,25 @@
 
 ## 0. TL;DR
 
-1. **세 워크플로 모두 opencode로 이식 가능하다.** 셋을 함께 이식해도 필요한 **코어 패치는 단 1개**(`session.finish` 훅 신설)뿐이고, 나머지는 전부 플러그인 + 커스텀 agent + 기존 프리미티브(`question`/`task`/`todowrite`/`permission.ask`)로 구현된다.
+1. **현재 채택안은 본체 무수정 deep-interview 플러그인이다.** 아래 §1~7의 `session.finish` 신설은 종료 전 veto를 위한 과거 설계안이며 현재 구현의 필수 조건이 아니다. ralplan/ultragoal 이식도 현재 제품 범위가 아니다.
 2. **두 원본은 "호환 차이만 빼면 동일"이 아니다.** `ultragoal`은 사실상 동일(호스트 goal 바인딩만 다름), `ralplan`은 핵심만 동일(주변 장치 상이), `deep-interview`는 기능 자체가 갈라져 있다.
 3. **두 원본의 차이는 대부분 프롬프트 계약(SKILL.md) 레벨**이다. 컴파일된 하네스는 형태가 대체로 공유되고, 갈라진 건 "모델에게 무엇을 시키는가"다. → 이식 시 좋은 아이디어를 **취사선택(merge)** 하는 게 최적.
+
+### 현재 선택한 연결 계약
+
+- `skills.paths`로 bundled SKILL을 등록하고 host의 skill-derived `/deep-interview`를 사용한다. 중복 custom command나 core patch는 없다.
+- `session.idle` 관측 후 최신 질문/중단/상태와 assistant 종료 근거를 검사하고 유효한 미완료 인터뷰에만 `promptAsync`로 계속한다. 이는 **post-idle**이며 종료 전 차단과 시점·보장이 다르다. waiting/cancelled/interrupted/error/terminal/불명확 상태에는 자동 재진입하지 않는다.
+- 실제 question Asked/Replied/Rejected, tool 결과 및 interruption을 동일 session 저장 연산으로 처리한다. 누락된 after/reject를 답변으로 만들지 않는다. legacy SDK에 없는 `question.list`는 사용하지 않는다.
+- OMC deep-interview snapshot 대체·명시 인자 우선·custom payload 한도와 OMX atomic 저장 패턴을 조합한다. runtime 기록은 모델 snapshot과 분리해 보호한다. 동일 process queue만 보장하며 multi-process lock은 없다.
+- OMC Round0/점수/ontology와 OMX Fact/Judgment·출처 라벨·리듬·Pressure Pass/Closure Audit는 원문 기반 프롬프트 계약이다. transcript/spec의 `[from-code]`, `[from-code][auto-confirmed]`, `[from-research]`, `[from-user]`를 runtime question `source`와 혼동하지 않는다.
+- 자체 `open-gajae` primary와 `open-gajae-explore`만 정의한다. OMC `agents/explore.md`와 OMX `prompts/explore.md`를 동등 원천으로 조합하며 OMO의 custom AgentConfig/model 연결 방식을 참고한다. 내장 explore/general 재사용이나 모델 override가 아니다.
+- 모델 설정은 소유 두 역할에만 적용한다. 미지정은 host 현재/부모 모델 경로, runtime TUI 선택은 유지한다. native가 미존재 variant를 생략할 수 있어 semantic 오류를 항상 보장하지 않는다.
+- host의 configured agent permissions는 user policy 뒤에 결합된다. late allow로 기존 read/task deny를 넓히지 않도록 explore는 edit/bash/task/external_directory/question/state_write/deep_interview_spec의 deny만 추가하고 primary에는 task grant를 넣지 않는다.
+- 이 deny 목록은 최종 host policy와 다르다. `agent.ts:296-310`의 Truncate.GLOB allow 및 `subagent-permissions.ts`의 부모 external_directory 정책 결합은 host 예외로 남는다. 플러그인 최종 deny 엔진이나 core patch로 바꾸지 않고 한계를 문서화한다.
+- public `/command`는 `Command.Info` schema의 source/template를 반환한다(legacy SDK 타입만 source를 생략). 초기화 중 client 호출 없이 실제 command before-hook에서 source와 bundle base-directory를 확인해 MCP/외부 skill 충돌에 의한 잘못된 상태 시딩을 거부한다.
+- 인터뷰의 제품 변경 금지는 원본 수준 안내와 native 권한에 의존한다. 전역 hard guard·자손 격리·OS sandbox·unknown MCP 전체 차단을 주장하지 않는다.
+- FOLLOWUP-01: 실제 downstream skill이 생길 때 인계/승인/취소/실패 처리를 추가한다. FOLLOWUP-02: 최초 자체 explore는 현재 범위이며 이후 specialist 추가 시 primary 라우팅·모델·권한·검증도 함께 갱신한다.
+- 원본 revision과 고지/변경 이유는 [THIRD-PARTY-NOTICES](../../THIRD-PARTY-NOTICES.md)에 기록한다. 설치/사용자 검증은 README를 따른다. fixture 통과는 실제 host/model E2E 성공을 뜻하지 않는다.
 
 ---
 
