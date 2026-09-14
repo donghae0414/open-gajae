@@ -19,13 +19,13 @@ The custom payload has the source limits of 1,048,576 UTF-8 bytes, nesting depth
 
 ### Model snapshot fields
 
-Maintain `goal` (text), `decisions` and `acceptance_criteria` (nonempty arrays at normal closure), `non_goals` and `decision_boundaries` (explicit arrays), `topology:{status:"confirmed",components:[...],deferrals:[...]}`, `current_ambiguity` (finite weighted result), `ontology_snapshots`, and `closure:{non_goals:boolean,decision_boundaries:boolean,pressure_pass:boolean,closure_audit:boolean}`. Before closure, unresolved flags remain false; never set them solely to satisfy validation. Include the actual pressure-pass and audit rationale in model records and the spec, not just booleans.
+Maintain `goal` (text), `decisions` and `acceptance_criteria` (nonempty arrays at normal closure), `non_goals` and `decision_boundaries` (explicit arrays), `topology` as specified below (initially `status:"pending"`, `confirmed_at:null`, empty `components` and `deferrals`, and `last_targeted_component_id:null`; confirmed only after the user's topology answer), `current_ambiguity` (finite weighted result after scoring), `ontology_snapshots`, and `closure:{non_goals:boolean,decision_boundaries:boolean,pressure_pass:boolean,closure_audit:boolean}`. Before closure, unresolved flags remain false; never set them solely to satisfy validation. Include the actual pressure-pass and audit rationale in model records and the spec, not just booleans.
 
 Preserve `transcript`, `component_scores`, source labels, challenge usage, threshold metadata and all other relevant model records across replacements. Actual received answers and round count are available under `_runtime`; inspect them but do not submit them as runtime fields. Use `_runtime.ambiguityThreshold` and `_runtime.maxRounds` rather than changing policy through a model snapshot.
 
 For normal completion: submit the final complete snapshot, save the spec, then submit the SAME model fields plus `completion_requested:true`. Do not change content between the spec receipt and completion request; that invalidates its model revision. An error means completion did not occur. No completion flag is needed to manufacture cancellation/cap status: the host owns those transitions.
 
-## Round 0: goal, topology, and evidence
+## Before Round 0: goal and evidence
 
 Read the resolved threshold and maximum rounds from state. The product default threshold is 20%, not the planning session's historical 5%. Report the effective threshold before the first requirements question; do not silently substitute a different threshold.
 
@@ -33,7 +33,72 @@ Classify greenfield versus brownfield. Brownfield requires relevant existing sou
 
 If useful and permitted, delegate bounded read-only investigation using native `task(subagent_type:"open-gajae-explore")`. Supply scope and needed file/line evidence. The owned explorer returns facts only; you own questions, decisions, state, and spec. Do not use native general/explore aliases or nonexistent specialists. If inspection/task permission is denied, report the gap without bypassing it.
 
-Build a topology of all requested components and their relationships, not only the easiest slice. Maintain component IDs, active/deferred status, gaps, deferral reasons, and last targeted component. Ask one focused topology clarification when materially needed, not a batch of unrelated questions. Deferred components remain visible in the final spec but are excluded from the ambiguity math. Do not defer a user requirement unilaterally to lower ambiguity.
+## Round 0: Topology Enumeration Gate
+
+Run this gate exactly once after initialization and before Round 1 or any ambiguity scoring. The goal is to lock the **shape** of the user's scope before depth-first Socratic questioning can overfit to the most-described component. Do not skip it because the request appears clear or has only one component.
+
+1. **Enumerate candidate top-level components** from the prompt-safe initial idea and brownfield context:
+   - Extract top-level verbs/nouns, workstreams, surfaces, integrations, or deliverables that can succeed or fail independently.
+   - Prefer 1-6 components. If more than 6 candidates appear, group siblings at the highest useful level and note the grouping rationale.
+   - Do not treat implementation tasks, fields, or sub-features as top-level components unless the user framed them as independent outcomes.
+2. **Ask one confirmation question** before Round 1. Use OpenCode's native `question` tool with exactly one item in `questions`, following the one-question loop's state-write and actual-answer rules. Set `next_question_kind:"confirmation"` in the complete model snapshot before calling the tool. Render the following template and contextual options in the user's language inside the tool's question body, not merely in preceding assistant prose:
+
+```text
+Round 0 | Topology confirmation | Ambiguity: not scored yet
+
+I'm reading this as {N} top-level component(s):
+1. {component_name}: {one_sentence_description}
+2. ...
+
+Is that topology right? Should any component be added, removed, merged, split, or explicitly deferred?
+```
+
+Options should include contextually relevant choices such as **Looks right**, **Add/remove/merge components**, **Defer one or more components**, plus the native free-text input. This is the pre-scoring topology question and preserves the one-question-per-round rule. The components and choices must reflect this request and the gathered evidence, not a fixed list copied from an example.
+
+3. **Lock topology into state** after the actual answer. Reflect user-specified additions, removals, merges, splits, or deferrals in the normalized component list. If the answer does not establish the intended topology (for example, it only says a correction is needed without specifying it), clarify that same unresolved topology before scoring; do not invent a decision. Do not mark a proposed scope confirmed before the user answers, or defer a user requirement unilaterally to lower ambiguity.
+
+Store the normalized component list and confirmation timestamp through `state_write`. The following is the topology portion of the complete model snapshot, not a standalone replacement payload; retain all other model fields from the latest `state_read`:
+
+```json
+{
+  "topology": {
+    "status": "confirmed",
+    "confirmed_at": "<ISO-8601 timestamp>",
+    "components": [
+      {
+        "id": "component-slug",
+        "name": "Component Name",
+        "description": "Confirmed top-level outcome",
+        "status": "active|deferred",
+        "evidence": ["initial prompt phrase or brownfield citation"],
+        "clarity_scores": {
+          "goal": null,
+          "constraints": null,
+          "criteria": null,
+          "context": null
+        },
+        "weakest_dimension": null
+      }
+    ],
+    "deferrals": [
+      {
+        "component_id": "component-slug",
+        "reason": "User-confirmed deferral reason",
+        "confirmed_at": "<ISO-8601 timestamp>"
+      }
+    ],
+    "last_targeted_component_id": null
+  }
+}
+```
+
+Deferred components remain visible in the final spec but are excluded from the ambiguity math. Preserve component IDs, relationships, per-dimension gaps, and the last targeted component in subsequent snapshots.
+
+4. **Legacy state migration:** When resuming an existing interview that lacks `topology`, treat it as `status:"legacy_missing"`. If no final spec exists yet, run Round 0 before the next ambiguity scoring pass and then continue with the existing transcript. Use the host-owned `_runtime.spec` receipt to identify a saved final spec, rather than inventing a model-owned `spec_path` as proof. If a final spec already exists, do not rewrite history; note in the final report that topology was not captured for that legacy interview. An unresolved `pending` topology continues its existing gate after resume, without issuing a duplicate native question or bypassing pending-question recovery.
+
+5. **Single-component pass-through:** If the user confirms one active component, proceed with the existing interview flow while still carrying `topology.components[0]` into scoring and spec output.
+
+6. **Four-component fixture shape:** For an initial idea such as "Build an intake pipeline that ingests CSVs, normalizes records, provides a detailed reviewer UI with inline comments and approvals, and exports audit-ready reports," Round 0 should surface all four top-level components — `Ingestion`, `Normalization`, `Review UI`, and `Export` — even though `Review UI` is the one detailed component. The detailed `Review UI` component must not collapse or stand in for the less-detailed sibling components. Follow-up questions must continue until every active component has sufficient goal/constraint/criteria clarity, subject to the existing threshold, closure, cancellation, and round limits. The final spec must cover each confirmed component in `## Topology` or explicitly list a user-confirmed deferral for that component.
 
 ## Fact/Judgment routing — transcript/spec labels only
 
