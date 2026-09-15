@@ -1,4 +1,5 @@
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
+import { promises as fs } from "node:fs";
 import {
   mkdtemp,
   rm,
@@ -229,8 +230,13 @@ test("actual answers are recorded once, and cancellation cannot be reversed by l
       store.recordQuestionReply("s", "q1", [["real answer"]]),
       store.recordQuestionReply("s", "q1", [["real answer"]]),
     ]);
-    expect((await store.read("s"))?._runtime.round).toBe(1);
-    expect((await store.read("s"))?._runtime.answers).toHaveLength(1);
+    const recorded = await store.read("s");
+    expect(recorded?._runtime.answers).toHaveLength(1);
+    expect(recorded?._runtime.answers?.[0]).toMatchObject({
+      requestId: "q1",
+      kind: "requirement",
+      answers: [["real answer"]],
+    });
     await store.recordQuestionAsked("s", "q1", "call1");
     expect((await store.read("s"))?._runtime.status).toBe("active");
     await store.cancel("s");
@@ -240,7 +246,7 @@ test("actual answers are recorded once, and cancellation cannot be reversed by l
   });
 });
 
-test("tenth-round control does not count and a negative response stops further questions", async () => {
+test("model rounds do not control host question gates and continuation meanings remain native", async () => {
   await fixture(async (store) => {
     await store.start("s", "round control");
     for (let i = 0; i < 10; i++) {
@@ -251,28 +257,186 @@ test("tenth-round control does not count and a negative response stops further q
       await store.recordQuestionAsked("s", `q${i}`);
       await store.recordQuestionReply("s", `q${i}`, [["answer"]]);
     }
-    await expect(
-      store.recordQuestionIntent("s", "requirement"),
-    ).rejects.toThrow("tenth");
+    await store.replaceModelState("s", { rounds: Array.from({ length: 11 }) });
+    await store.recordQuestionIntent("s", "requirement");
+    await store.recordQuestionAsked("s", "after-ten");
+    await store.recordQuestionReply("s", "after-ten", [["answer"]]);
     await store.recordQuestionIntent("s", "continuation");
     await store.recordQuestionAsked("s", "continue");
     await store.recordQuestionReply("s", "continue", [["Stop"]]);
     const state = await store.read("s");
-    expect(state?._runtime.round).toBe(10);
+    expect(state?.rounds).toHaveLength(11);
+    expect(state?._runtime.answers).toHaveLength(12);
     expect(state?._runtime.status).toBe("cancelled");
     await expect(
       store.recordQuestionIntent("s", "requirement"),
     ).rejects.toThrow();
   }, 11);
   await fixture(async (store) => {
-    await store.start("cap", "hard cap");
-    await store.recordQuestionIntent("cap", "requirement");
-    await store.recordQuestionAsked("cap", "q");
-    await store.recordQuestionReply("cap", "q", [["answer"]]);
-    expect((await store.read("cap"))?._runtime.status).toBe("limit-reached");
+    const rounds = Array.from({ length: 11 }, (_, ordinal) => ({ ordinal }));
+
+    await store.start("continue", "affirmative continuation");
+    await store.replaceModelState("continue", { rounds });
+    await store.recordQuestionIntent("continue", "continuation");
+    await store.recordQuestionAsked("continue", "continue-q");
+    await store.recordQuestionReply("continue", "continue-q", [["Continue"]]);
+    const continued = await store.read("continue");
+    expect(continued?._runtime.status).toBe("active");
+    expect(continued?._runtime.answers).toEqual([
+      expect.objectContaining({
+        requestId: "continue-q",
+        kind: "continuation",
+        answers: [["Continue"]],
+      }),
+    ]);
+    expect(continued?.rounds).toEqual(rounds);
+
+    await store.start("unrecognized", "ambiguous continuation");
+    await store.replaceModelState("unrecognized", { rounds });
+    await store.recordQuestionIntent("unrecognized", "continuation");
+    await store.recordQuestionAsked("unrecognized", "unrecognized-q");
+    await store.recordQuestionReply("unrecognized", "unrecognized-q", [
+      ["not sure"],
+    ]);
+    const unrecognized = await store.read("unrecognized");
+    expect(unrecognized?._runtime.status).toBe("interrupted");
+    expect(unrecognized?._runtime.answers).toHaveLength(1);
+    expect(unrecognized?.rounds).toEqual(rounds);
+
+    await store.start("both", "conflicting continuation");
+    await store.replaceModelState("both", { rounds });
+    await store.recordQuestionIntent("both", "continuation");
+    await store.recordQuestionAsked("both", "both-q");
+    await store.recordQuestionReply("both", "both-q", [["Continue", "Stop"]]);
+    const both = await store.read("both");
+    expect(both?._runtime.status).toBe("cancelled");
+    expect(both?._runtime.reason).toBe("user declined further questions");
+    expect(both?._runtime.answers).toHaveLength(1);
+    expect(both?.rounds).toEqual(rounds);
+  });
+  await fixture(async (store) => {
+    await store.start("cap", "model-declared cap");
+    await store.replaceModelState("cap", { rounds: [] });
+    const receipt = await store.writeSpec("cap", "# Partial at cap", "limit-reached");
+    const state = await store.read("cap");
+    expect(state?._runtime.status).toBe("limit-reached");
+    expect(state?._runtime.spec).toEqual(receipt);
     await expect(
       store.recordQuestionIntent("cap", "continuation"),
     ).rejects.toThrow();
-    await store.writeSpec("cap", "# Partial at cap", "limit-reached");
+    await expect(
+      store.writeSpec("cap", "# Changed partial", "limit-reached"),
+    ).rejects.toThrow("different spec receipt");
   }, 1);
+});
+
+test("model-declared caps preserve lifecycle ownership", async () => {
+  await fixture(async (store) => {
+    await store.start("waiting", "pending cap");
+    await store.recordQuestionIntent("waiting", "requirement");
+    await store.recordQuestionAsked("waiting", "q");
+    await expect(
+      store.writeSpec("waiting", "# Partial", "limit-reached"),
+    ).rejects.toThrow("active");
+    expect((await store.read("waiting"))?._runtime.status).toBe("waiting");
+
+    await store.start("cancelled", "cancelled cap");
+    await store.cancel("cancelled");
+    await expect(
+      store.writeSpec("cancelled", "# Partial", "limit-reached"),
+    ).rejects.toThrow("active");
+
+    await store.start("error", "error cap");
+    await store.interrupt("error", "failed", true);
+    await expect(
+      store.writeSpec("error", "# Partial", "limit-reached"),
+    ).rejects.toThrow("active");
+
+    await store.start("interrupted", "interrupted cap");
+    await store.interrupt("interrupted", "paused");
+    const interrupted = await store.read("interrupted");
+    await expect(
+      store.writeSpec("interrupted", "# Partial", "limit-reached"),
+    ).rejects.toThrow("active");
+    expect(await store.read("interrupted")).toEqual(interrupted);
+
+    await store.start("completed", "completed cap");
+    await store.replaceModelState("completed", readyModel());
+    await store.writeSpec("completed", "# Complete", "normal");
+    await store.complete("completed");
+    const completed = await store.read("completed");
+    await expect(
+      store.writeSpec("completed", "# Partial", "limit-reached"),
+    ).rejects.toThrow();
+    expect(await store.read("completed")).toEqual(completed);
+  });
+});
+
+test("failed cap persistence does not report terminal success and retries consistently", async () => {
+  await fixture(async (store) => {
+    const specFailure = await store.start(
+      "spec-failure",
+      "failed spec persistence",
+    );
+    const specFile = join(
+      store.worktree,
+      ".open-gajae",
+      "specs",
+      "spec-failure",
+      `${specFailure._runtime.interviewId}.md`,
+    );
+    const originalRename = fs.rename;
+    const rename = spyOn(fs, "rename").mockImplementation(async (from, to) => {
+      if (to === specFile) throw new Error("spec rename failed");
+      return originalRename(from, to);
+    });
+    try {
+      await expect(
+        store.writeSpec("spec-failure", "# Partial", "limit-reached"),
+      ).rejects.toThrow("spec rename failed");
+    } finally {
+      rename.mockRestore();
+    }
+    const afterSpecFailure = await store.read("spec-failure");
+    expect(afterSpecFailure?._runtime.status).toBe("active");
+    expect(afterSpecFailure?._runtime.spec).toBeUndefined();
+    const specReceipt = await store.writeSpec(
+      "spec-failure",
+      "# Partial",
+      "limit-reached",
+    );
+    expect(
+      await store.writeSpec("spec-failure", "# Partial", "limit-reached"),
+    ).toEqual(specReceipt);
+
+    await store.start("state-failure", "failed state persistence");
+    const stateFile = store.statePath("state-failure");
+    const stateRename = spyOn(fs, "rename").mockImplementation(
+      async (from, to) => {
+        if (to === stateFile) throw new Error("state rename failed");
+        return originalRename(from, to);
+      },
+    );
+    try {
+      await expect(
+        store.writeSpec("state-failure", "# Partial", "limit-reached"),
+      ).rejects.toThrow("state rename failed");
+    } finally {
+      stateRename.mockRestore();
+    }
+    const afterStateFailure = await store.read("state-failure");
+    expect(afterStateFailure?._runtime.status).toBe("active");
+    expect(afterStateFailure?._runtime.spec).toBeUndefined();
+    const receipt = await store.writeSpec(
+      "state-failure",
+      "# Partial",
+      "limit-reached",
+    );
+    expect((await store.writeSpec("state-failure", "# Partial", "limit-reached"))).toEqual(
+      receipt,
+    );
+    expect((await store.read("state-failure"))?._runtime.status).toBe(
+      "limit-reached",
+    );
+  });
 });

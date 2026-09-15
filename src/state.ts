@@ -23,12 +23,8 @@ export type InterviewRuntime = {
   revision: number;
   modelRevision: number;
   status: InterviewStatus;
-  round: number;
   maxRounds: number;
   ambiguityThreshold: number;
-  confirmationRequested: boolean;
-  confirmationAnswered?: boolean;
-  continuationApproved?: boolean;
   nextQuestionKind: QuestionKind;
   questionCallId?: string;
   pending?: {
@@ -160,18 +156,14 @@ function validateState(
     typeof runtime.interviewId !== "string" ||
     typeof runtime.revision !== "number" ||
     typeof runtime.modelRevision !== "number" ||
-    typeof runtime.round !== "number" ||
     typeof runtime.maxRounds !== "number" ||
     typeof runtime.ambiguityThreshold !== "number"
   )
     throw new Error("state runtime is structurally invalid");
   if (
     !safeSegment.test(runtime.interviewId) ||
-    !Number.isSafeInteger(runtime.round) ||
-    runtime.round < 0 ||
     !Number.isSafeInteger(runtime.maxRounds) ||
     runtime.maxRounds < 1 ||
-    runtime.round > runtime.maxRounds ||
     !Number.isSafeInteger(runtime.revision) ||
     !Number.isSafeInteger(runtime.modelRevision) ||
     !Number.isFinite(runtime.ambiguityThreshold) ||
@@ -609,10 +601,8 @@ export class StateStore {
           revision: 1,
           modelRevision: 0,
           status: "active",
-          round: 0,
           maxRounds: this.options.maxRounds,
           ambiguityThreshold: this.options.ambiguityThreshold,
-          confirmationRequested: false,
           nextQuestionKind: "requirement",
         },
       };
@@ -699,23 +689,6 @@ export class StateStore {
       if (state._runtime.spec)
         throw new Error(
           "a finalized specification must be completed before starting another interview",
-        );
-      if (state._runtime.round >= state._runtime.maxRounds)
-        throw new Error("maximum requirement rounds reached");
-      if (
-        state._runtime.round >= 10 &&
-        !state._runtime.confirmationAnswered &&
-        kind !== "continuation"
-      )
-        throw new Error(
-          "a tenth-round continuation decision is required before another requirement question",
-        );
-      if (
-        kind === "continuation" &&
-        (state._runtime.round !== 10 || state._runtime.confirmationAnswered)
-      )
-        throw new Error(
-          "continuation control is only available after ten requirements answers",
         );
       const next = {
         ...state,
@@ -815,11 +788,6 @@ export class StateStore {
             },
           ]
         : state._runtime.answers;
-      const nextRound =
-        pending.kind === "requirement" || pending.kind === "confirmation"
-          ? state._runtime.round + 1
-          : state._runtime.round;
-      const limit = nextRound >= state._runtime.maxRounds;
       const continuationText =
         actualAnswers?.flat().map((answer) => answer.trim().toLowerCase()) ??
         [];
@@ -828,7 +796,7 @@ export class StateStore {
           ? continuationText.some((answer) =>
               ["yes", "y", "continue", "proceed", "more"].includes(answer),
             )
-          : state._runtime.continuationApproved;
+          : false;
       const continuationRejected =
         pending.kind === "continuation"
           ? continuationText.some((answer) =>
@@ -838,17 +806,10 @@ export class StateStore {
       const ambiguousContinuation =
         pending.kind === "continuation" &&
         (!actualAnswers || continuationApproved === continuationRejected);
-      const tenthContinuation =
-        !limit && nextRound >= 10 && !state._runtime.confirmationAnswered;
-      const confirmationAnswered =
-        state._runtime.confirmationAnswered ||
-        (pending.kind === "continuation" && !ambiguousContinuation);
       const nextKind: QuestionKind =
-        limit || continuationRejected
+        continuationRejected
           ? "closure"
-          : tenthContinuation && !confirmationAnswered
-            ? "continuation"
-            : "requirement";
+          : "requirement";
       const next = {
         ...state,
         next_question_kind: nextKind,
@@ -859,10 +820,7 @@ export class StateStore {
         },
         _runtime: {
           ...state._runtime,
-          round: nextRound,
-          status: limit
-            ? ("limit-reached" as const)
-            : continuationRejected
+          status: continuationRejected
               ? ("cancelled" as const)
               : ambiguousContinuation
                 ? ("interrupted" as const)
@@ -870,14 +828,8 @@ export class StateStore {
           pending: undefined,
           questionCallId: undefined,
           answers: answerHistory,
-          confirmationRequested:
-            state._runtime.confirmationRequested || tenthContinuation,
-          confirmationAnswered,
-          continuationApproved,
           nextQuestionKind: nextKind,
-          reason: limit
-            ? "maximum requirement rounds reached"
-            : continuationRejected
+          reason: continuationRejected
               ? "user declined further questions"
               : ambiguousContinuation
                 ? "continuation response was not an explicit affirmative or negative selection"
@@ -928,9 +880,16 @@ export class StateStore {
       if (termination === "normal") validateCompletionFields(state);
       if (termination === "cancelled" && runtime.status !== "cancelled")
         throw new Error("cancelled specs require a cancelled interview");
-      if (termination === "limit-reached" && runtime.status !== "limit-reached")
+      if (
+        termination === "limit-reached" &&
+        !runtime.spec &&
+        (runtime.status !== "active" ||
+          runtime.pending ||
+          runtime.questionCallId ||
+          runtime.error)
+      )
         throw new Error(
-          "limit-reached specs require a round-limited interview",
+          "limit-reached specs require an active, error-free interview without a pending question",
         );
       const file = this.specPath(
         sessionId,
@@ -967,7 +926,15 @@ export class StateStore {
           updatedAt: now(),
           updatedBy: "deep_interview_spec",
         },
-        _runtime: { ...runtime, spec: receipt },
+        _runtime:
+          termination === "limit-reached"
+            ? {
+                ...runtime,
+                status: "limit-reached" as const,
+                reason: "configured maximum rounds reached by model declaration",
+                spec: receipt,
+              }
+            : { ...runtime, spec: receipt },
       };
       return { state: this.bump(next), result: receipt };
     });
