@@ -4,6 +4,8 @@
 > 분석 범위: `deep-interview`, `ralplan`, `ultragoal` 세 스킬 + 이를 구동하는 하네스(hook / state / question) 전반
 > 독자: opencode plugin을 개발하며 이 워크플로들을 이식/참고하려는 개발자
 
+> **적용 범위:** [AGENTS.md](../../AGENTS.md)에 따라 Phase 2 참고 자료로 보존한다. Phase 1은 OMC를 기준으로 하며 이 문서를 기능·워크플로·역할 정책의 설계 근거로 사용하지 않는다. 아래는 명시된 버전의 과거 분석이며, Phase 1 완성 후 OMX 장점을 선별 검토할 때 실제 소스로 재검증한다. 기존 구현에 반영된 OMX 계약의 출처 기록은 유지한다.
+
 ---
 
 ## 1. 프로젝트 개요

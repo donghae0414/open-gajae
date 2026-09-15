@@ -2,7 +2,16 @@
 
 # open-gajae
 
-OMC·OMX의 deep-interview 계약을 조합하고 자체 primary/explore를 제공하는 OpenCode 플러그인입니다. 두 원본은 동등한 분석·이식 원천이며 저장소 내부 OMO는 필요한 agent 구현 참고입니다. OpenCode 본체는 수정하지 않습니다.
+OMC의 철학과 행동 계약에 맞춰 정렬 중인 OpenCode 플러그인입니다. OpenCode는 호스트이며 구현 대상이 아닙니다. OpenCode 본체는 수정하지 않습니다.
+
+## 개발 방향과 현재 상태
+
+- **Phase 1:** OMC를 기능·워크플로·agent 역할 계약의 기준으로 삼습니다. 호스트 전용 연결은 OpenCode의 native API·권한에 맞게 이식하고 필요한 차이는 기록합니다.
+- **Phase 2:** Phase 1 완성 후 OMX를 분석하고 장점을 선별 도입합니다. OMX는 Phase 1 설계 원천이 아니며, OMO는 제품 정책이 아닌 호스트 연결 구현의 참고로만 사용합니다.
+- **현재 구현:** deep-interview와 자체 primary/read-only explore에는 OMC·OMX 혼합 계약과 OMO 유래 agent 지침이 남아 있습니다. 아래 사용법·동작 설명은 이 현재 구현을 설명하며 OMC 정렬 완료를 뜻하지 않습니다. 실행 프롬프트·검증 코드·테스트는 별도 구현 변경에서 함께 수정해야 합니다.
+- **구현 정렬 전 결정:** Phase 1 기능 범위·기준 OMC 커밋·완료 검증 조건을 확정합니다. 현재 기능 목록이 OMC 전체 이식을 약속하는 것은 아닙니다.
+
+개발 정책의 기준은 [AGENTS.md](AGENTS.md)입니다. 전환 중에도 남아 있는 파생물의 출처와 라이선스 조건은 유지합니다.
 
 ## 빌드와 로컬 등록
 

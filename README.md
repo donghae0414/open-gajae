@@ -2,7 +2,16 @@
 
 # open-gajae
 
-An OpenCode plugin combining OMC/OMX deep-interview contracts with an owned primary and read-only exploration role. OpenCode is the host, not an implementation target. OMC and OMX are equal sources; repository-local OMO supplies selected agent patterns.
+An OpenCode plugin being aligned with OMC's philosophy and behavioral contracts. OpenCode is the host, not an implementation target; its core remains unchanged.
+
+## Development direction and current status
+
+- **Phase 1:** Use OMC as the functional, workflow, and agent-role baseline. Adapt host-specific integration to OpenCode's native APIs and permissions, documenting necessary deviations.
+- **Phase 2:** After Phase 1 is complete, analyze OMX and selectively adopt improvements. OMX is not a Phase 1 design source; OMO is a host-integration reference only, not a product-policy source.
+- **Current implementation:** deep-interview plus owned primary/read-only explore roles still contain mixed OMC/OMX contracts and retained OMO-derived agent guidance. The usage and behavior descriptions below describe that implementation, not completed OMC alignment. Runtime prompts, validation, and tests require a separate coordinated change.
+- **Before implementation alignment:** Define the Phase 1 feature scope, pin the OMC baseline commit, and specify completion checks. The current feature set is not a promise to port all of OMC.
+
+See [AGENTS.md](AGENTS.md) for the governing development policy. Source attribution and license conditions remain applicable to retained material throughout the transition.
 
 ## Build and local registration
 

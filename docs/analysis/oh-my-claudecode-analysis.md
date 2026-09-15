@@ -4,6 +4,8 @@
 > 분석 범위: `deep-interview`, `ralplan`, `ultragoal` 세 스킬 + 하네스(hook / state / question) 전반
 > 독자: opencode plugin을 개발하며 이 워크플로들을 이식/참고하려는 개발자
 
+> **적용 범위:** [AGENTS.md](../../AGENTS.md)에 따른 Phase 1 OMC 참고 자료다. 아래는 명시된 버전의 분석 기록이며, 구현 정렬 전에 별도로 고정할 OMC 기준 커밋의 실제 소스로 재검증한다. OMX 비교는 당시 분석 맥락이지 Phase 1 혼합 설계 지침이 아니다. 분석에 포함된 세 스킬이 모두 Phase 1 구현 범위로 확정된 것은 아니다.
+
 ---
 
 ## 1. 프로젝트 개요

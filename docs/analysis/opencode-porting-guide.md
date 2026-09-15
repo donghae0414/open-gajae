@@ -1,20 +1,26 @@
 # deep-interview / ralplan / ultragoal — opencode 이식 분석 정리
 
 > **독자:** opencode plugin을 개발하는 개발자
-> **목적:** oh-my-claudecode(Claude Code)와 oh-my-codex(Codex)의 세 워크플로(`deep-interview`, `ralplan`, `ultragoal`)를 분석하고, 이를 **opencode 플러그인으로 이식**하기 위한 실전 가이드를 제공한다.
+> **목적:** OMC 기준 개발 정책과 현재 구현 상태를 구분하고, OMC·OMX의 세 워크플로(`deep-interview`, `ralplan`, `ultragoal`)에 대한 과거 비교·이식 제안을 보존한다. 개발 정책의 기준은 [AGENTS.md](../../AGENTS.md)다.
 > **상세 근거 문서:**
 > - [oh-my-claudecode 상세 분석](./oh-my-claudecode-analysis.md)
 > - [oh-my-codex 상세 분석](./oh-my-codex-analysis.md)
 
 ---
 
-## 0. TL;DR
+## 0. 개발 정책과 구현 상태
 
-1. **현재 채택안은 본체 무수정 deep-interview 플러그인이다.** 아래 §1~7은 당시 분석·설계 기록이며, 특히 `session.finish` 신설은 종료 전 veto를 위한 과거 설계안으로 현재 구현의 필수 조건이 아니다. ralplan/ultragoal 이식도 현재 제품 범위가 아니다.
-2. **두 원본은 "호환 차이만 빼면 동일"이 아니다.** `ultragoal`은 사실상 동일(호스트 goal 바인딩만 다름), `ralplan`은 핵심만 동일(주변 장치 상이), `deep-interview`는 기능 자체가 갈라져 있다.
-3. **두 원본의 차이는 대부분 프롬프트 계약(SKILL.md) 레벨**이다. 컴파일된 하네스는 형태가 대체로 공유되고, 갈라진 건 "모델에게 무엇을 시키는가"다. → 이식 시 좋은 아이디어를 **취사선택(merge)** 하는 게 최적.
+### 현재 개발 정책
 
-### 현재 선택한 연결 계약
+- **Phase 1은 OMC 기준 이식이다.** 기능·철학·워크플로·agent 역할 계약은 OMC를 따른다. OMX와 동등 비교하여 혼합하는 방식은 더 이상 활성 개발 지침이 아니다.
+- **OpenCode는 기술적 기준이다.** 본체는 수정하지 않고 native API·도구·권한·생명주기로 연결한다. OMC의 호스트 전용 계약을 그대로 지원할 수 없으면 차이·이유·기능상 영향을 기록하며 OMX/OMO 정책으로 조용히 대체하지 않는다.
+- **OMX 검토는 Phase 2로 유보한다.** Phase 1 완료 후 장점을 개별 분석·선별한다. OMO는 OpenCode 연결 구현 참고로만 사용한다.
+- **Phase 1 범위·기준 OMC 커밋·완료 검증 조건은 구현 정렬 전에 확정한다.** 현재 deep-interview와 자체 primary/explore가 구현되어 있다는 사실은 전체 OMC 이식이나 세 워크플로의 Phase 1 포함을 의미하지 않는다. 고지에 기록된 과거 파생물 커밋을 새 기준 커밋으로 자동 간주하지 않는다.
+- **문서 정비와 실행 계약 정렬은 별도다.** `prompts/*.md`, `skills/deep-interview/SKILL.md`, 관련 상태 검증·테스트는 후속 구현 변경에서 함께 정렬한다. 안전한 저장 등 기술 장치를 출처만으로 삭제하지 않으며 남은 파생물의 고지·라이선스를 유지한다.
+
+### 현재 구현 계약 — 혼합 상태, OMC 정렬 전
+
+아래는 현재 제품 동작의 기록이며 새 설계의 채택 지침이 아니다. 현재 제품은 본체 무수정 deep-interview 플러그인이며 ralplan/ultragoal은 구현되어 있지 않다.
 
 - `skills.paths`로 bundled SKILL을 등록하고 host의 skill-derived `/deep-interview`를 사용한다. 중복 custom command나 core patch는 없다.
 - 분석한 OMC 리비전의 기본 등록 MJS Stop 경로에는 deep-interview 전용 자동 계속 처리가 없다. 기본 경로에 연결되지 않은 별도 TS 활성 스킬 보강 구현(최대 10회·30분 만료)은 가져오지 않는다.
@@ -34,7 +40,9 @@
 
 ---
 
-## 1. 두 원본의 핵심 아키텍처 (공통 골격)
+## 1. 두 원본의 핵심 아키텍처 (과거 비교 기록)
+
+> **§1~7 전체는 과거 분석·설계 기록이다.** 비교 결론과 merge 추천은 Phase 1 개발 지침이 아니다. `session.finish` 코어 패치 제안은 미채택이며 현재 구현의 필수 조건도 아니다. 기술적 주장과 기능 등가 판정은 해당 기준 소스로 재검증해야 한다.
 
 두 프로젝트 모두 동일한 3계층 + 동일한 설계 사상("판단은 LLM, 강제는 코드")을 쓴다.
 
@@ -83,7 +91,7 @@
 | 리뷰어 교차 | — | `--architect codex` / `--critic codex` |
 | 기본 handoff | → ultragoal | → team / ralph |
 
-### 2.4 어느 deep-interview 방식이 나은가 (설계 판단)
+### 2.4 어느 deep-interview 방식이 나은가 (과거 설계 판단)
 
 단일 우승자는 없다. 서로 다른 실패 모드를 방어한다.
 
@@ -100,7 +108,7 @@
 | 객관적 종료 신호 필요 | claudecode (ontology 수렴) |
 | 모델 지시 준수 불안 | claudecode (단순·견고) |
 
-**opencode 이식 추천 (merge):** claudecode의 단순 채점 + Topology + Ontology를 베이스로, codex의 **Fact/Judgment 라우팅**과 **Non-goals/Decision-Boundaries 게이트**, 그리고 intent 차원 하나를 흡수. 기본값은 claudecode 방식, 고위험/고모호 작업엔 codex 방식.
+**과거 merge 제안 — Phase 1 적용 제외:** claudecode의 단순 채점 + Topology + Ontology를 베이스로, codex의 **Fact/Judgment 라우팅**과 **Non-goals/Decision-Boundaries 게이트**, 그리고 intent 차원 하나를 흡수하자는 제안이었다. 기본값은 claudecode 방식, 고위험/고모호 작업엔 codex 방식을 쓰자는 당시 판단이며 현재 개발 정책이 아니다.
 
 ---
 
@@ -127,7 +135,9 @@ opencode 플러그인 `Hooks` 인터페이스(`plugin/src/index.ts`)에는 다�
 
 ---
 
-## 4. 유일한 코어 패치: `session.finish` 훅 신설
+## 4. 과거 미채택 제안: `session.finish` 코어 훅 신설
+
+> 아래는 당시 가설과 코드 제안이다. 구현·검증 완료를 뜻하지 않으며 현재의 OpenCode 본체 무수정 정책에서는 적용하지 않는다.
 
 세 워크플로의 Stop 게이트(deep-interview obligation, ralplan `SKILL_STOP_BLOCKERS`, ultragoal reinforcement)는 **모두 이 패치 하나로 커버**된다.
 
@@ -163,7 +173,9 @@ if (result === "stop") {
 
 ---
 
-## 5. 스킬별 이식 방안
+## 5. 스킬별 과거 이식 제안
+
+> 현재 구현 명세나 승인된 작업 목록이 아니다. 아래 코어 패치·obligation·혼합 계약·아티팩트 경로 제안은 §0의 현재 구현과 구분한다. Phase 1 포함 여부와 호스트 연결은 별도로 확정·검증한다.
 
 ### 5.1 deep-interview → opencode
 
@@ -213,7 +225,9 @@ opencode엔 `get_goal/create_goal/update_goal`/`/goal`이 **전혀 없다** (확
 
 ---
 
-## 6. 종합 이식 체크리스트
+## 6. 과거 이식 체크리스트 — 실행 대상 아님
+
+> 당시 검토 항목을 보존한 목록이다. 미완료 제품 작업이나 Phase 1 완료 조건으로 해석하지 않는다. 코어 패치는 미채택이며 merge 제안은 Phase 1에서 제외한다.
 
 - [ ] **코어 패치 1개**: `session.finish` 훅 신설 (`prompt.ts:1319`) — 세 스킬의 Stop 게이트 공유.
 - [ ] `chat.message` 훅: 키워드 감지 + disk state 시딩 + synthetic part 주입 (3스킬 공통 진입점).
@@ -223,11 +237,13 @@ opencode엔 `get_goal/create_goal/update_goal`/`/goal`이 **전혀 없다** (확
 - [ ] `permission.ask` 훅 (ralplan write 경계).
 - [ ] `todowrite` 바인딩 or 생략 (ultragoal goal 포인터).
 - [ ] disk 아티팩트: `.opencode/{specs,plans,ultragoal,context,state}/`.
-- [ ] deep-interview는 merge 권장: claudecode 베이스 + codex의 Fact/Judgment 라우팅·Non-goals/Decision-Boundaries 게이트 흡수.
+- [ ] 당시 merge 검토안: claudecode 베이스 + codex의 Fact/Judgment 라우팅·Non-goals/Decision-Boundaries 게이트 흡수. 현재 Phase 1 적용 제외.
 
 ---
 
-## 7. 핵심 통찰 (기억할 것)
+## 7. 과거 분석 결론 — 현재 지침 아님
+
+> 아래 강제 지점과 단일 패치의 충분성은 당시 설계 주장이지 현재 호스트에서 검증된 보장이 아니다. 현재 개발에는 §0과 AGENTS.md를 적용한다.
 
 1. **prompt vs code 구분이 이식의 핵심.** 두 원본의 워크플로 차이는 대부분 SKILL.md(프롬프트) 레벨이다. 하네스 코드는 형태가 공유되므로, 이식이란 "SKILL 계약을 opencode agent 프롬프트로 옮기고, 몇 개의 강제 지점만 opencode 프리미티브에 연결"하는 작업이다.
 2. **강제(enforcement)만 코드로.** "질문을 건너뛰지 못하게 / 계획 없이 실행 못 하게 / 미완료 시 못 끝내게" — 이 셋만 결정적 코드가 필요하고, opencode에선 `question`(블로킹) + `permission.ask`(veto) + `session.finish`(신설) 세 지점으로 커버된다.
