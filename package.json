@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "OpenCode deep-interview and owned primary/explore agents",
+  "description": "OMC-aligned OpenCode deep-interview with session-scoped state and read-only specialists",
   "license": "SEE LICENSE IN THIRD-PARTY-NOTICES.md",
   "exports": {
     ".": "./dist/index.js"
@@ -18,9 +18,11 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "bun build ./src/index.ts --outdir ./dist --target bun --format esm --packages external",
-    "test": "bun test ./tests/state.test.ts ./tests/integration.test.ts"
+    "test": "bun test ./tests",
+    "test:host": "bun ./tests/host-probe.ts"
   },
   "dependencies": {
+    "@ast-grep/napi": "0.31.1",
     "@opencode-ai/plugin": "1.18.30",
     "jsonc-parser": "3.3.1"
   },

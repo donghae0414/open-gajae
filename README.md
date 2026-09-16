@@ -2,110 +2,108 @@
 
 # open-gajae
 
-An OpenCode plugin being aligned with OMC's philosophy and behavioral contracts. OpenCode is the host, not an implementation target; its core remains unchanged.
+An OpenCode plugin with a session-bound `deep-interview` skill, three owned roles, and a small read-only code-research surface. It adapts selected OMC v5.4.0 material; it is **not** a full OMC port and does not add downstream execution workflows.
 
-## Development direction and current status
+## Scope and status
 
-- **Phase 1:** Use OMC as the functional, workflow, and agent-role baseline. Adapt host-specific integration to OpenCode's native APIs and permissions, documenting necessary deviations.
-- **Phase 2:** After Phase 1 is complete, analyze OMX and selectively adopt improvements. OMX is not a Phase 1 design source; OMO is a host-integration reference only, not a product-policy source.
-- **Current implementation:** deep-interview plus owned primary/read-only explore roles still contain mixed OMC/OMX contracts and retained OMO-derived agent guidance. The usage and behavior descriptions below describe that implementation, not completed OMC alignment. Runtime prompts, validation, and tests require a separate coordinated change.
-- **Before implementation alignment:** Define the Phase 1 feature scope, pin the OMC baseline commit, and specify completion checks. The current feature set is not a promise to port all of OMC.
+- The baseline is OMC v5.4.0, commit `5281b19e0d64f8e6dc6767f2130299a88af2dc71`. OMX is not a current behavior source.
+- Implemented scope: `deep-interview`; `open-gajae`, `open-gajae-explore`, and `open-gajae-document-specialist`; session state; native document output; read-only AST/LSP tools; and optional advisory company context.
+- Not provided: ralplan, ultragoal, autopilot, team, ralph, autoresearch, plan execution/bridges, shared session state, or automatic migration/recovery.
+- This documentation describes the implemented contract; it does not establish Phase-1 completion.
 
-See [AGENTS.md](AGENTS.md) for the governing development policy. Source attribution and license conditions remain applicable to retained material throughout the transition.
+See [AGENTS.md](AGENTS.md) for development policy, the [porting guide](docs/analysis/opencode-porting-guide.md) for decisions and evidence, and [third-party notices](THIRD-PARTY-NOTICES.md) for attribution.
 
 ## Build and local registration
 
-Requires Bun and OpenCode compatible with the pinned plugin/SDK **1.18.30**.
+The package uses `@opencode-ai/plugin` 1.18.30. Host probes used OpenCode 1.18.31; that observation is not a general compatibility guarantee.
 
 ```sh
 bun install
 bun run typecheck
-bun test tests/state.test.ts tests/integration.test.ts
+bun run test
 bun run build
+bun run test:host
+bun tests/host-session-probe.ts
+bun tests/package-probe.ts
+bun tests/company-context-probe.ts
 ```
 
-Updating the plugin implementation does not change local configuration. Rebuild `dist/` and restart OpenCode before using a deployed update.
+Keep `dist/`, `skills/`, `prompts/`, `licenses/`, and `THIRD-PARTY-NOTICES.md` together. Rebuild and restart OpenCode after updating a deployed plugin.
 
-Keep `dist/`, `skills/`, `prompts/`, `licenses/`, and `THIRD-PARTY-NOTICES.md` together. The built entry resolves assets relative to the package root. A lone copied `index.js` is not an installation.
-
-After explicitly approving a local configuration change, back up the existing OpenCode JSONC file and edit only its plugin registration, preserving every other field/plugin:
+After explicitly approving a local configuration change, preserve the existing OpenCode JSONC file and change only the relevant plugin entry:
 
 ```jsonc
 { "plugin": ["file:///Users/dongwuk/apps/open-gajae/dist/index.js"] }
 ```
 
-This is an entry example, not an instruction to replace the whole config. A prior local URI used `apps/opengajae` (missing hyphen); replace that entry only after the new bundle exists. On failure restore the original config (and any dedicated settings changed) and restart OpenCode. This repository does not automatically edit your host configuration.
+This is not a replacement configuration. The plugin never edits host configuration. Inspect the installed surface with:
 
 ```sh
 opencode debug skill
 opencode debug agent open-gajae
 opencode debug agent open-gajae-explore
-opencode --model openai/gpt-5.6-luna
-opencode --model openai/gpt-5.6-terra
+opencode debug agent open-gajae-document-specialist
 ```
 
-Check the skill's actual source and `/deep-interview` exposure in the UI. Conflicting explicit commands/explorer definitions and duplicate names in configured skill paths are rejected. `agent.open-gajae` is accepted as a user override of the bundled primary. Also inspect host-discovered/global/remote skill sources: the plugin does not replace the host discovery engine. Choose the primary in the UI; the default agent is not changed.
+## Deep interview and storage
 
-## Usage
+`/deep-interview <idea>` starts requirements clarification. It uses native `question` one question at a time. A denied or unavailable question tool is reported; prose fallback does not substitute for it. A completed spec is not authorization to implement it.
 
-- `/deep-interview <idea>`: start a session-bound requirements interview.
-- `/deep-interview resume`: explicitly reconcile saved state and tool evidence before resuming; cancelled or unresolved pending work requires additional confirmation, never silent resurrection.
-- `/deep-interview cancel`: record cancellation.
-- The same explicit command works from build/plan without changing their agent definitions.
+After reaching the ambiguity threshold and saving the spec, the skill asks whether to finish or refine further. Refinement preserves the current session and history, asks an additional requirements question before rechecking the threshold, and updates the same spec file. The choice itself does not consume a round. The cumulative `maxRounds`, explicit early exit, and cancellation still apply; tool failures are never treated as consent to finish. This is a prompt-level interaction contract, not a host-enforced state machine.
 
-The prompt contract requires the native question tool for one question at a time; tool availability is host-controlled, and the plugin does not force the model to call it. When called, the native tool handles waiting for and receiving the reply, and the model continues naturally after the tool returns. There is no plaintext-answer fallback lifecycle: if the tool is unavailable or denied, stop and report that condition without bypassing it. OMC topology/weighted scoring/ontology combines with OMX same-topic probing, Fact/Judgment labels, rhythm and closure. `[from-code][auto-confirmed]`, `[from-code]`, `[from-research]`, and `[from-user]` are transcript/spec labels, not runtime question `source` values. Descriptive high-confidence facts do not create user rounds; scope/tradeoff decisions remain user-owned.
+State tools are `state_read`, `state_write`, and `state_clear`. They use the trusted current `ToolContext.sessionID`; callers cannot select another session. The session ID is UTF-8 lowercase-hex encoded, and generated paths are:
 
-`state_read`, `state_write`, and `deep_interview_spec` are the only public plugin tools. Model state is a replacement snapshot; explicit fields win and host `_runtime`/`_meta` cannot be submitted. State lives under `.open-gajae/state/sessions/<session>/`; specs under `.open-gajae/specs/<session>/<interview>.md`. Keep these local artifacts private. A saved spec does not authorize implementation or invoke nonexistent downstream workflows.
-
-### Native question permission
-
-OpenCode 1.18.30 defaults custom agents to `question: deny`; its built-in build/plan agents grant the tool separately. The plugin now defaults `open-gajae` to `question: allow` when neither the user's global nor primary-agent permissions contain a rule matching question. Explicit rules (including `*` and permission-name wildcards) stay in native order: global permissions first, individual agent permissions last. The plugin does not append a grant over a user denial or evaluate a separate permission policy. Inspect the effective permission with `opencode debug agent open-gajae`.
-
-No user grant is required for the default behavior. To override it, merge the following into **OpenCode's `opencode.jsonc`**, retaining the rest of your configuration (not the plugin's model configuration). This example disables questions for the primary:
-
-```json
-{
-  "agent": {
-    "open-gajae": {
-      "permission": { "question": "deny" }
-    }
-  }
-}
+```text
+<worktree>/.open-gajae/
+  _session-<encoded-session-id>/
+    state/deep-interview-state.json
+    specs/deep-interview-<slug>.md
+    plans/<slug>.md
 ```
 
-Use `"allow"` or `"ask"` instead to explicitly choose those native actions; an individual rule can override a global rule, just as for build/plan. The explorer's seven denials and duplicate-definition protection remain unchanged. Host tool availability and model compliance are still separate from permission.
+State writes replace the model snapshot; explicit tool fields win and `_meta` is regenerated. `state_clear` deletes only the current session's state JSON. It preserves session documents, other sessions, and legacy files. Invalid/corrupt state is surfaced and preserved rather than reset.
 
-## Owned agents and settings
+State operations for the same canonical file are serialized inside one plugin process and publish JSON with temporary-file rename. This is not IPC locking, a transaction across state and native Write, power-loss durability, or multi-process safety. Native Write is outside that queue: the same-session/same-slug behavior is native overwrite, with no suffix, receipt, index, or automatic recovery.
 
-Settings files: `~/.open-gajae/open-gajae.jsonc` and `<project>/.open-gajae/open-gajae.jsonc`. Per-field precedence is project → user → defaults. Invalid JSONC/unknown keys/types fail with file/key diagnostics rather than silently falling back.
+A user may explicitly name another session's spec or plan as an input. Native Read and its normal permissions apply. The current session must report the path actually read; it must not scan for a latest document or substitute another file. Reading A from B transfers no state, owner, approval, or checkbox and does not authorize source edits or plan execution. B writes only its own state/documents.
 
-OpenCode's `agent.open-gajae` settings override the corresponding bundled primary fields, including model/variant selected by the plugin settings above. Other fields retain their bundled values; permissions follow the precedence described above.
+## Owned roles and settings
+
+- **`open-gajae`** is the primary. It owns edits, decisions, integration, and state write/clear.
+- **`open-gajae-explore`** investigates repository facts read-only. It cannot edit, run bash, delegate, ask questions, or write/clear state.
+- **`open-gajae-document-specialist`** researches documentation and citations. It cannot edit, delegate, ask questions, or write/clear state. Its documented `chub` protocol is read-only; it does not grant arbitrary bash.
+
+Role-specific host permissions are retained. For the two read-only roles, the fixed deny rules are appended after host permission rules (including wildcards), so their mandatory denials cannot be loosened by ordering; all remaining permission evaluation stays native. Settings are read from `~/.open-gajae/open-gajae.jsonc` and `<worktree>/.open-gajae/open-gajae.jsonc`. Fields merge project → user → defaults; unknown keys, invalid JSONC, or invalid values fail with diagnostics. For every owned role, a valid host override takes precedence over project then user `model`/`variant`; omitted fields remain host-owned. There is no provider fallback, tier mapping, or artificial collision rejection.
 
 ```jsonc
 {
-  "deepInterview": { "ambiguityThreshold": 0.20, "maxRounds": 20 },
+  "deepInterview": { "ambiguityThreshold": 0.2, "maxRounds": 20 },
   "agents": {
-    "open-gajae": { "model": "openai/gpt-5.6-luna" },
-    "open-gajae-explore": { "model": "openai/gpt-5.6-terra" }
-  }
+    "open-gajae": { "model": "provider/model", "variant": "variant-name" }
+  },
+  "companyContext": { "tool": "company_context", "onError": "warn" }
 }
 ```
 
-The model allocation is an example, not a default or performance recommendation. Each owned role also accepts an optional `variant`. Missing model/variant properties remain omitted so native current/parent behavior applies. Runtime TUI selection is respected; no per-call normalization, model fallback engine, or semantic variant validator is installed. Native behavior can omit an unavailable configured variant instead of reporting an error. Observe that behavior rather than assuming the setting was enforced.
+`companyContext` is optional. When `tool` names a visible, permitted MCP tool, the primary prompt may call it with `{ "query": "…" }` before crystallizing a spec and treats `{ "context": "…" }` as advisory quoted material. It is no hook, proxy, registration mechanism, or guaranteed call. Unset skips it; `onError` is `warn` by default, or `silent`/`fail`.
 
-`open-gajae` handles general work directly and delegates repository facts only to `open-gajae-explore`. The latter has its own OMC/OMX-derived prompt; it is not an alias of built-in explore. Built-in build/plan/explore/general settings, user permissions, and default agent are unchanged. The leaf adds only seven denials (edit/bash/task/external_directory/question/state_write/deep_interview_spec), never late read/task allows that loosen user restrictions. Inaccessible evidence is reported, not bypassed.
+## Read-only code tools
 
-## Limits and verification
+The plugin registers five read-only tools:
 
-- Interview implementation prohibition is an instruction plus existing host permissions, not a universal product-file guard, descendant isolation engine, or OS sandbox. Unknown MCP tools are not universally isolated.
-- The seven leaf denies are contributed agent rules, not final host policy. OpenCode adds tool-output-directory access and composes parent session `external_directory` rules afterward; those host exceptions can allow external reads. The explorer's repo-local prompt remains binding guidance, not a plugin-enforced final-directory sandbox.
-- Before slash lifecycle mutation, the hook checks the public command's observed `source: skill` and bundled base directory. MCP/foreign skill shadowing fails closed. This detects ownership, not arbitrary malicious template forgery, and cannot undo command-template shell work that the host executes before the hook.
-- There is no deep-interview post-idle continuation, `promptAsync` reinjection, or one-shot correction, budget, or obligation engine. Cancellation, errors, and restart/resume reconcile durable state and actual tool evidence without auto-resuming.
-- Same-process session mutations serialize and use atomic rename. Multiple plugin processes writing the same session concurrently are unsupported. Do not run concurrent writers against those files.
-- Confirmed recovery after a saved partial spec retains the interview ID and the original artifact, using a new `-rN.md` receipt path rather than overwriting it.
-- Custom state has the original 1 MiB UTF-8 / depth 10 / 100 top-level-key bounds. These are not whole-runtime/spec resource quotas.
-- Package tests/fixtures do not prove live model behavior. M0: registration/assets/collision/rollback; M1: interview/topology/labels/ontology/normal or capped spec; M2: question waiting/dismissal/unavailable/denied, cancel/error/restart/resume; M3: owned exploration/model inheritance/explicit model/TUI/denied permissions. Run M0–M3 with ordinary luna and terra and record results separately from automated checks. Authentication and live host inference are not implied by a model appearing in the list.
+- `ast_grep_search` (`@ast-grep/napi` 0.31.1): AST search only; no replace.
+- `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, and `lsp_servers`.
 
-FOLLOWUP-01: add real downstream handoff only when those skills exist. FOLLOWUP-02: future specialists require matching primary routing, model settings, permissions and verification updates; the first owned explorer is already in scope.
+LSP servers are detected and reported, never downloaded. The product has no LSP rename, diagnostics, code-action, or replacement suite. LSP authorization covers the requested file/operation; it is not a sandbox over files a language server may read internally. The AST tool performs its own guarded traversal/read checks. Neither tool expands the explorer's permissions or grants arbitrary shell execution.
 
-See [porting analysis](docs/analysis/opencode-porting-guide.md) and [third-party notices](THIRD-PARTY-NOTICES.md). OMC/OMX MIT and OMO Sustainable Use License conditions are preserved; this is not an unrestricted MIT-only distribution. Reassess terms when distribution purpose changes.
+The only product environment knobs reached by source are `OPEN_GAJAE_LSP_TIMEOUT_MS`, `OPEN_GAJAE_LSP_IDLE_TIMEOUT_MS`, `OPEN_GAJAE_LSP_IDLE_CHECK_INTERVAL_MS`, `OPEN_GAJAE_LSP_CONTAINER_ID`, and `OPEN_GAJAE_PYTHON_LSP=basedpyright`. They are LSP implementation settings, not general configuration.
+
+## Validation evidence and limits
+
+Completed checks include typecheck, unit tests, and build, plus the stable commands above. `bun run test:host` exercises installed OpenCode 1.18.31 plugin load, state/AST/native Write, permission denials (question, Read, edit, state, LSP, and read-only directory Write), native formatter failure after Write publication, and owned-role model/variant precedence. A formatter failure is best-effort post-processing: it does not roll back an already published native Write.
+
+`bun tests/host-session-probe.ts` uses actual A/B OpenCode sessions and a loopback deterministic OpenAI-compatible provider. It covers state write, native question and `/questionreply`, explicit absolute and relative A-document Read from B, B native Write and clear, same-slug behavior, current-session isolation, denied terminal state write after successful document Write, missing-file handling, and denied targeted external-symlink Read without automatic alternatives. It verifies that A's state/source/checkbox/approval bytes remain unchanged.
+
+`bun tests/package-probe.ts` packs the package, installs it into an isolated consumer, and verifies packaged default/config/prompts/skills/state API/AST addon loading and document preservation on clear. `bun tests/company-context-probe.ts` runs a local stdio MCP fake peer through the actual host and deterministic provider, covering unset/absent/denied/valid/invalid/error/hostile responses and all `onError` modes; it also checks the specialist's controlled missing-`chub` behavior.
+
+These are transport and source-contract checks, not proof of LLM obedience, prompt-branch guarantees, injection resistance, semantic model quality, external credentials, or installed language-server semantic correctness. The LSP fixture also covers pooled concurrent leases and recovery, but no LSP server is downloaded. This guide records behavior and evidence scope; independent completion proof belongs in the durable delivery ledger.

@@ -1,15 +1,24 @@
-import { readFile, realpath, readdir } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
 import type { Config } from "@opencode-ai/plugin";
 
-export const agentNames = ["open-gajae", "open-gajae-explore"] as const;
+export const agentNames = [
+  "open-gajae",
+  "open-gajae-explore",
+  "open-gajae-document-specialist",
+] as const;
 type AgentName = (typeof agentNames)[number];
 type ModelSettings = { model?: string; variant?: string };
+type CompanyContextSettings = {
+  tool?: string;
+  onError?: "warn" | "silent" | "fail";
+};
 export interface Settings {
   deepInterview: { ambiguityThreshold: number; maxRounds: number };
   agents: Partial<Record<AgentName, ModelSettings>>;
+  companyContext?: CompanyContextSettings;
 }
 function object(value: unknown, location: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -40,7 +49,7 @@ async function load(path: string): Promise<Partial<Settings>> {
       `${path}:${errors[0].offset}: ${printParseErrorCode(errors[0].error)}`,
     );
   const value = object(parsed, path);
-  keys(value, ["deepInterview", "agents"], path);
+  keys(value, ["deepInterview", "agents", "companyContext"], path);
   const result: Partial<Settings> = {};
   if ("deepInterview" in value) {
     const config = object(value.deepInterview, `${path}.deepInterview`);
@@ -87,6 +96,29 @@ async function load(path: string): Promise<Partial<Settings>> {
       result.agents[name] = config as ModelSettings;
     }
   }
+  if ("companyContext" in value) {
+    const config = object(value.companyContext, `${path}.companyContext`);
+    keys(config, ["tool", "onError"], `${path}.companyContext`);
+    if (
+      "tool" in config &&
+      (typeof config.tool !== "string" ||
+        !config.tool.trim() ||
+        config.tool.trim() !== config.tool)
+    )
+      throw new Error(
+        `${path}.companyContext.tool: expected nonempty trimmed string`,
+      );
+    if (
+      "onError" in config &&
+      config.onError !== "warn" &&
+      config.onError !== "silent" &&
+      config.onError !== "fail"
+    )
+      throw new Error(
+        `${path}.companyContext.onError: expected warn, silent, or fail`,
+      );
+    result.companyContext = config as CompanyContextSettings;
+  }
   return result;
 }
 export async function loadSettings(
@@ -102,6 +134,11 @@ export async function loadSettings(
     if (user.agents?.[name] || project.agents?.[name])
       agents[name] = { ...user.agents?.[name], ...project.agents?.[name] };
   }
+  const companyContext = {
+    onError: "warn" as const,
+    ...user.companyContext,
+    ...project.companyContext,
+  };
   return {
     deepInterview: {
       ambiguityThreshold: 0.2,
@@ -110,6 +147,7 @@ export async function loadSettings(
       ...project.deepInterview,
     },
     agents,
+    companyContext,
   };
 }
 
@@ -119,11 +157,33 @@ export const explorePermissions = {
   edit: "deny",
   bash: "deny",
   task: "deny",
-  external_directory: "deny",
   question: "deny",
   state_write: "deny",
-  deep_interview_spec: "deny",
+  state_clear: "deny",
 } as const;
+
+export const documentSpecialistPermissions = {
+  edit: "deny",
+  task: "deny",
+  question: "deny",
+  state_write: "deny",
+  state_clear: "deny",
+} as const;
+
+function readonlyPermissions(
+  host: NonNullable<NonNullable<Config["agent"]>[string]>["permission"],
+  denied: Record<string, "deny">,
+) {
+  const rules = typeof host === "string" ? { "*": host } : (host ?? {});
+  // Reinsert mandatory denials last: overwriting an existing property alone
+  // would leave it before a host wildcard in OpenCode's ordered rule list.
+  return {
+    ...Object.fromEntries(
+      Object.entries(rules).filter(([name]) => !(name in denied)),
+    ),
+    ...denied,
+  };
+}
 
 // Detect an explicit rule, not its effective action: leave rule ordering and
 // evaluation to OpenCode. Its permission names match case-sensitive * / ? globs.
@@ -142,32 +202,6 @@ function hasQuestionPermission(permission: unknown): boolean {
   );
 }
 
-async function findCollision(root: string, ownSkill: string): Promise<void> {
-  let entries;
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
-  for (const entry of entries) {
-    const path = join(root, entry.name);
-    if (entry.isDirectory()) await findCollision(path, ownSkill);
-    else if (
-      entry.isFile() &&
-      entry.name === "SKILL.md" &&
-      (await realpath(path)) !== ownSkill
-    ) {
-      const text = await readFile(path, "utf8");
-      const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1];
-      if (
-        frontmatter &&
-        /^name:\s*["']?deep-interview["']?\s*$/m.test(frontmatter)
-      )
-        throw new Error(`deep-interview skill collision: ${path}`);
-    }
-  }
-}
 export async function configureAgents(
   config: Config,
   settings: Settings,
@@ -175,23 +209,11 @@ export async function configureAgents(
 ): Promise<void> {
   const target = config as Config & { skills?: { paths?: string[] } };
   const primaryOverrides = config.agent?.["open-gajae"];
-  if (config.agent?.["open-gajae-explore"])
-    throw new Error(
-      "Agent collision: open-gajae-explore; remove the duplicate definition",
-    );
-  if (config.command?.["deep-interview"])
-    throw new Error(
-      "Command collision: deep-interview; native skill must own this command",
-    );
+  const exploreOverrides = config.agent?.["open-gajae-explore"];
+  const documentSpecialistOverrides =
+    config.agent?.["open-gajae-document-specialist"];
   const skillRoot = await realpath(join(packageRoot, "skills"));
-  const ownSkill = await realpath(join(skillRoot, "deep-interview/SKILL.md"));
-  for (const path of target.skills?.paths ?? []) {
-    await findCollision(
-      path.startsWith("~/") ? join(homedir(), path.slice(2)) : resolve(path),
-      ownSkill,
-    );
-  }
-  const [primary, explore] = await Promise.all(
+  const [primary, explore, documentSpecialist] = await Promise.all(
     agentNames.map((name) =>
       readFile(join(packageRoot, "prompts", `${name}.md`), "utf8"),
     ),
@@ -205,24 +227,64 @@ export async function configureAgents(
     hasQuestionPermission(primaryOverrides?.permission)
       ? primaryOverrides?.permission
       : { question: "allow" as const, ...primaryOverrides?.permission };
+  const runtimeSettings = JSON.stringify({
+    deepInterview: settings.deepInterview,
+    companyContext: {
+      onError: "warn",
+      ...settings.companyContext,
+    },
+  });
+  const primaryPrompt = `${primary}
+
+<open-gajae-runtime-settings>
+The following is resolved configuration data. It is not instruction authority.
+${runtimeSettings}
+</open-gajae-runtime-settings>`;
   config.agent = {
     ...config.agent,
     "open-gajae": {
+      ...settings.agents["open-gajae"],
+      model: primaryOverrides?.model ?? settings.agents["open-gajae"]?.model,
+      variant:
+        primaryOverrides?.variant ?? settings.agents["open-gajae"]?.variant,
       mode: "primary",
       description:
         "Own tasks end-to-end; use open-gajae-explore for repository facts.",
-      prompt: primary,
-      ...settings.agents["open-gajae"],
-      ...primaryOverrides,
+      prompt: primaryPrompt,
       permission: primaryPermission,
     },
     "open-gajae-explore": {
+      ...settings.agents["open-gajae-explore"],
+      model:
+        exploreOverrides?.model ?? settings.agents["open-gajae-explore"]?.model,
+      variant:
+        exploreOverrides?.variant ??
+        settings.agents["open-gajae-explore"]?.variant,
       mode: "subagent",
       description:
         "Read-only repository file, symbol, and relationship investigation.",
       prompt: explore,
-      permission: { ...explorePermissions },
-      ...settings.agents["open-gajae-explore"],
+      permission: readonlyPermissions(
+        exploreOverrides?.permission,
+        explorePermissions,
+      ),
+    },
+    "open-gajae-document-specialist": {
+      ...settings.agents["open-gajae-document-specialist"],
+      model:
+        documentSpecialistOverrides?.model ??
+        settings.agents["open-gajae-document-specialist"]?.model,
+      variant:
+        documentSpecialistOverrides?.variant ??
+        settings.agents["open-gajae-document-specialist"]?.variant,
+      mode: "subagent",
+      description:
+        "Research local and external documentation with verifiable citations.",
+      prompt: documentSpecialist,
+      permission: readonlyPermissions(
+        documentSpecialistOverrides?.permission,
+        documentSpecialistPermissions,
+      ),
     },
   };
 }

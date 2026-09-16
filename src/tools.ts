@@ -2,33 +2,53 @@ import path from "node:path";
 import { realpathSync } from "node:fs";
 import { tool, type ToolContext } from "@opencode-ai/plugin";
 import { type ExplicitStatePatch, StateStore } from "./state.js";
+import { astGrepSearchTool } from "./tools/ast-tools.js";
+import {
+  lspDocumentSymbolsTool,
+  lspFindReferencesTool,
+  lspServersTool,
+  lspWorkspaceSymbolsTool,
+} from "./tools/lsp-tools.js";
+
+const readActors = new Set([
+  "open-gajae",
+  "open-gajae-explore",
+  "open-gajae-document-specialist",
+]);
 
 function scope(
   store: StateStore,
-  sessionID: string,
+  context: Pick<ToolContext, "agent" | "sessionID" | "worktree">,
   workingDirectory: string | undefined,
-  contextWorktree: string,
+  operation: "state_read" | "state_write" | "state_clear",
 ) {
+  if (!readActors.has(context.agent))
+    throw new Error("state tools are restricted to owned agents");
   if (
-    workingDirectory &&
+    (operation === "state_write" || operation === "state_clear") &&
+    context.agent !== "open-gajae"
+  )
+    throw new Error(`${operation} is restricted to the primary agent`);
+  if (typeof context.sessionID !== "string" || context.sessionID.length === 0)
+    throw new Error("a native session is required");
+  if (realpathSync(path.resolve(context.worktree)) !== store.worktree)
+    throw new Error("tool context does not match the plugin worktree");
+  if (
+    workingDirectory !== undefined &&
     realpathSync(path.resolve(workingDirectory)) !== store.worktree
   )
     throw new Error("workingDirectory does not match the plugin worktree");
-  if (realpathSync(path.resolve(contextWorktree)) !== store.worktree)
-    throw new Error("tool context does not match the plugin worktree");
-  if (!sessionID) throw new Error("a native session is required");
 }
 
-async function authorizeWrite(
+async function authorize(
   context: Pick<ToolContext, "ask">,
-  permission: "state_write" | "deep_interview_spec",
+  permission: "state_read" | "state_write" | "state_clear",
+  statePath: string,
   sessionID: string,
 ) {
-  // Plugin tools do not receive an automatic permission gate from the host registry.
-  // This preserves the owned explore profile's deny rules rather than bypassing them.
   await context.ask({
     permission,
-    patterns: [sessionID],
+    patterns: [statePath],
     always: [],
     metadata: { sessionID, operation: permission },
   });
@@ -36,8 +56,8 @@ async function authorizeWrite(
 
 const explicitShape = {
   active: tool.schema.boolean().optional(),
-  iteration: tool.schema.number().int().nonnegative().optional(),
-  max_iterations: tool.schema.number().int().positive().optional(),
+  iteration: tool.schema.number().optional(),
+  max_iterations: tool.schema.number().optional(),
   current_phase: tool.schema.string().max(200).optional(),
   task_description: tool.schema.string().max(2000).optional(),
   error: tool.schema.string().max(2000).optional(),
@@ -46,96 +66,100 @@ const explicitShape = {
   completed_at: tool.schema.string().max(100).optional(),
 };
 
-/** Native plugin tools only; all persistence is delegated to the shared StateStore queue. */
+function pathResult(store: StateStore, sessionID: string) {
+  const { statePath, specsDir, plansDir } = store.sessionPaths(sessionID);
+  return { statePath, specsDir, plansDir };
+}
+
+/** Native plugin tools only; all state operations use the current trusted session. */
 export function createTools(store: StateStore) {
   return {
+    ast_grep_search: astGrepSearchTool,
+    lsp_find_references: lspFindReferencesTool,
+    lsp_document_symbols: lspDocumentSymbolsTool,
+    lsp_workspace_symbols: lspWorkspaceSymbolsTool,
+    lsp_servers: lspServersTool,
     state_read: tool({
       description:
         "Read the current session's deep-interview state. It never aggregates or inherits another session's state.",
       args: {
         mode: tool.schema.literal("deep-interview"),
         workingDirectory: tool.schema.string().optional(),
-        session_id: tool.schema.string().optional(),
+        // Retained only to make stale callers fail validation rather than silently selecting a session.
+        session_id: tool.schema.never().optional(),
       },
       async execute(args, context) {
-        const sessionID = args.session_id ?? context.sessionID;
-        if (args.session_id && args.session_id !== context.sessionID)
-          throw new Error("session_id must be the native caller session");
-        scope(store, sessionID, args.workingDirectory, context.worktree);
-        const state = await store.read(sessionID);
-        return state
-          ? JSON.stringify(
-              { path: store.statePath(sessionID), exists: true, state },
-              null,
-              2,
-            )
-          : JSON.stringify({ path: store.statePath(sessionID), exists: false });
+        scope(store, context, args.workingDirectory, "state_read");
+        const paths = pathResult(store, context.sessionID);
+        await authorize(
+          context,
+          "state_read",
+          paths.statePath,
+          context.sessionID,
+        );
+        const state = await store.read(context.sessionID);
+        return JSON.stringify(
+          { ...paths, exists: state !== undefined, state },
+          null,
+          2,
+        );
       },
     }),
     state_write: tool({
       description:
-        "Replace the model-owned deep-interview state snapshot or apply explicit lifecycle metadata to the current native session. Reserved runtime fields cannot be supplied.",
+        "Replace the current session's deep-interview model snapshot. Explicit arguments take priority and every write regenerates metadata.",
       args: {
         mode: tool.schema.literal("deep-interview"),
         workingDirectory: tool.schema.string().optional(),
-        session_id: tool.schema.string().optional(),
+        session_id: tool.schema.never().optional(),
         state: tool.schema
           .record(tool.schema.string(), tool.schema.unknown())
           .optional(),
         ...explicitShape,
       },
       async execute(args, context) {
-        const sessionID = args.session_id ?? context.sessionID;
-        if (args.session_id && args.session_id !== context.sessionID)
-          throw new Error("session_id must be the native caller session");
-        scope(store, sessionID, args.workingDirectory, context.worktree);
-        await authorizeWrite(context, "state_write", sessionID);
+        scope(store, context, args.workingDirectory, "state_write");
+        const paths = pathResult(store, context.sessionID);
+        await authorize(
+          context,
+          "state_write",
+          paths.statePath,
+          context.sessionID,
+        );
         const {
           mode: _mode,
           workingDirectory: _directory,
           session_id: _session,
-          state: custom,
+          state,
           ...explicit
         } = args;
-        let written;
-        // Explicit fields intentionally win over colliding snapshot keys.
-        if (custom)
-          written = await store.replaceModelState(
-            sessionID,
-            custom,
-            "state_write",
-            explicit as ExplicitStatePatch,
-          );
-        else if (Object.keys(explicit).length > 0)
-          written = await store.applyExplicitPatch(
-            sessionID,
-            explicit as ExplicitStatePatch,
-          );
-        if (!written)
-          throw new Error("state_write requires state or an explicit field");
-        return JSON.stringify(
-          { path: store.statePath(sessionID), state: written },
-          null,
-          2,
+        const written = await store.write(
+          context.sessionID,
+          state,
+          explicit as ExplicitStatePatch,
         );
+        return JSON.stringify({ ...paths, state: written }, null, 2);
       },
     }),
-    deep_interview_spec: tool({
+    state_clear: tool({
       description:
-        "Persist the current interview's independent Markdown specification and return its immutable receipt.",
+        "Delete only the current session's deep-interview state file. Session documents are preserved.",
       args: {
-        markdown: tool.schema.string().min(1),
-        termination: tool.schema.enum(["normal", "cancelled", "limit-reached"]),
+        mode: tool.schema.literal("deep-interview"),
+        workingDirectory: tool.schema.string().optional(),
+        session_id: tool.schema.never().optional(),
       },
       async execute(args, context) {
-        scope(store, context.sessionID, undefined, context.worktree);
-        await authorizeWrite(context, "deep_interview_spec", context.sessionID);
-        const receipt = await store.writeSpec(
+        scope(store, context, args.workingDirectory, "state_clear");
+        const paths = pathResult(store, context.sessionID);
+        await authorize(
+          context,
+          "state_clear",
+          paths.statePath,
           context.sessionID,
-          args.markdown,
-          args.termination,
         );
-        return JSON.stringify(receipt, null, 2);
+        const result = await store.clear(context.sessionID);
+        return JSON.stringify({ ...paths, result }, null, 2);
       },
     }),
   };

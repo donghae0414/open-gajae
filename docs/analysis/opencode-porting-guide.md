@@ -1,254 +1,136 @@
-# deep-interview / ralplan / ultragoal — opencode 이식 분석 정리
+# OpenCode 이식 가이드: 현재 계약, 승인 예외, 검증 경계
 
-> **독자:** opencode plugin을 개발하는 개발자
-> **목적:** OMC 기준 개발 정책과 현재 구현 상태를 구분하고, OMC·OMX의 세 워크플로(`deep-interview`, `ralplan`, `ultragoal`)에 대한 과거 비교·이식 제안을 보존한다. 개발 정책의 기준은 [AGENTS.md](../../AGENTS.md)다.
-> **상세 근거 문서:**
-> - [oh-my-claudecode 상세 분석](./oh-my-claudecode-analysis.md)
-> - [oh-my-codex 상세 분석](./oh-my-codex-analysis.md)
+> **상태 (2026-09-16):** 이 문서는 현재 source와 승인된 결정의 배포 문서다. OMC 전체 이식, Phase 1 완료, live model 동작, 또는 설치된 언어 서버의 의미적 정확성을 주장하지 않는다. 완료 증명은 이 문서가 아닌 durable delivery ledger에 기록한다.
+>
+> **기준:** OMC v5.4.0, `5281b19e0d64f8e6dc6767f2130299a88af2dc71`. 개발 정책은 [AGENTS.md](../../AGENTS.md)다. 상세 원문 조사는 [OMC 분석](./oh-my-claudecode-analysis.md)과 [OMX 분석](./oh-my-codex-analysis.md)에 보존한다.
 
----
+## 1. 현재 제품 범위
 
-## 0. 개발 정책과 구현 상태
+현재 제품은 OpenCode 본체를 수정하지 않는 plugin이다. 구현된 범위는 다음으로 한정된다.
 
-### 현재 개발 정책
+- native skill 기반 `deep-interview`와 native `question` 사용
+- 자체 역할 `open-gajae` (primary), `open-gajae-explore` (읽기 전용 repository 조사), `open-gajae-document-specialist` (문서/인용 조사)
+- trusted current session 기반 `state_read`, `state_write`, `state_clear`
+- native Write로 저장하는 세션별 spec 경로와 미래 plan 경로 계약
+- 읽기 전용 `ast_grep_search`, `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`
+- 두 JSONC 설정과 optional advisory `companyContext`
 
-- **Phase 1은 OMC 기준 이식이다.** 기능·철학·워크플로·agent 역할 계약은 OMC를 따른다. OMX와 동등 비교하여 혼합하는 방식은 더 이상 활성 개발 지침이 아니다.
-- **OpenCode는 기술적 기준이다.** 본체는 수정하지 않고 native API·도구·권한·생명주기로 연결한다. OMC의 호스트 전용 계약을 그대로 지원할 수 없으면 차이·이유·기능상 영향을 기록하며 OMX/OMO 정책으로 조용히 대체하지 않는다.
-- **OMX 검토는 Phase 2로 유보한다.** Phase 1 완료 후 장점을 개별 분석·선별한다. OMO는 OpenCode 연결 구현 참고로만 사용한다.
-- **Phase 1 범위·기준 OMC 커밋·완료 검증 조건은 구현 정렬 전에 확정한다.** 현재 deep-interview와 자체 primary/explore가 구현되어 있다는 사실은 전체 OMC 이식이나 세 워크플로의 Phase 1 포함을 의미하지 않는다. 고지에 기록된 과거 파생물 커밋을 새 기준 커밋으로 자동 간주하지 않는다.
-- **문서 정비와 실행 계약 정렬은 별도다.** `prompts/*.md`, `skills/deep-interview/SKILL.md`, 관련 상태 검증·테스트는 후속 구현 변경에서 함께 정렬한다. 안전한 저장 등 기술 장치를 출처만으로 삭제하지 않으며 남은 파생물의 고지·라이선스를 유지한다.
+임계값 도달 후 spec을 저장하면 native `question`으로 인터뷰 종료 또는 추가 구체화를 선택하게 한다. 이는 OMC의 `Refine further` 선택권을 유지하되 후속 실행 메뉴는 제외하는 계약이다. 추가 구체화는 같은 세션·이력·누적 라운드·spec 경로를 유지하고, 기존 낮은 점수만으로 즉시 끝나지 않도록 추가 요구사항 답변 후 점수를 재평가한다. 선택 메뉴는 scoring/round에 포함하지 않는다. `maxRounds` 상한·명시적 조기 종료·취소는 별도로 존중하며, 도구 실패를 완료 동의로 바꾸지 않는다. 이 선택 흐름은 스킬 프롬프트 계약이며 별도 lifecycle hook이나 강제 상태 머신을 추가하지 않는다.
 
-### 현재 구현 계약 — 혼합 상태, OMC 정렬 전
+다음은 제품 기능이 아니다: ralplan, ultragoal, autopilot, team, ralph, autoresearch, plan 실행 bridge, shared/latest/aggregate session 선택, broad/orphan/stranded cleanup, receipt/index/ledger, 자동 migration, SQLite/대체 SQL, IPC/PID lock recovery, Node worker, LSP rename/diagnostic/code-action/replace, LSP server 자동 설치, company-context proxy/등록/강제 hook.
 
-아래는 현재 제품 동작의 기록이며 새 설계의 채택 지침이 아니다. 현재 제품은 본체 무수정 deep-interview 플러그인이며 ralplan/ultragoal은 구현되어 있지 않다.
+OMX의 rhythm, mandatory pressure, four-closure enforcement는 제거된 기능이며 현재 계약이 아니다. OMO는 host 연결 패턴의 역사적 참고일 뿐 제품 정책을 이식한 것이 아니다. GJC의 `_session-…` **디렉터리 패턴만** 참고했으며 GJC의 lock/index/receipt/ledger 코드 전체를 복사하지 않았다.
 
-- `skills.paths`로 bundled SKILL을 등록하고 host의 skill-derived `/deep-interview`를 사용한다. 중복 custom command나 core patch는 없다.
-- 분석한 OMC 리비전의 기본 등록 MJS Stop 경로에는 deep-interview 전용 자동 계속 처리가 없다. 기본 경로에 연결되지 않은 별도 TS 활성 스킬 보강 구현(최대 10회·30분 만료)은 가져오지 않는다.
-- prompt 계약과 실제 native `question` 도구 가용성으로 한 번에 한 질문을 지원한다. 모델의 호출을 강제하지 않으며, 호출된 도구가 실제 대기·응답 수신을 처리한 뒤 모델은 자연스럽게 계속한다. 도구를 사용할 수 없거나 거부되면 plaintext 답변 fallback 없이 중단하고 보고한다.
-- OpenCode 1.18.30의 `agent/agent.ts` 기본값은 custom agent의 `question`을 거부하며 내장 build/plan에 별도 허용한다. 이후 승인된 수정으로 자체 primary도 question을 기본 허용한다. 단 사용자 전역·개별 권한에 question과 일치하는 규칙이 있으면 허용을 추가하지 않고 호스트 평가에 맡긴다. 전역 → 개별 agent 우선순위와 와일드카드 규칙 순서를 보존한다. `agent.open-gajae`는 사용자 덮어쓰기로 수용하며 explorer의 deny 7개와 중복 정의 검사는 유지한다. 등록된 도구 목록과 실제 agent의 사용 권한은 별개다.
-- deep-interview에는 `session.idle` 후 `promptAsync` 재진입, one-shot correction, budget, 또는 obligation 엔진이 없다. 실제 question Asked/Replied/Rejected, tool 결과 및 interruption은 동일 session 저장 연산으로 처리하고 취소·오류·restart/resume에서 durable state와 대조한다. 누락된 after/reject를 답변으로 만들지 않으며 legacy SDK에 없는 `question.list`는 사용하지 않는다.
-- OMC deep-interview snapshot 대체·명시 인자 우선·custom payload 한도와 OMX atomic 저장 패턴을 조합한다. runtime 기록은 모델 snapshot과 분리해 보호한다. 동일 process queue만 보장하며 multi-process lock은 없다.
-- OMC Round0/점수/ontology와 OMX Fact/Judgment·출처 라벨·리듬·Pressure Pass/Closure Audit는 원문 기반 프롬프트 계약이다. transcript/spec의 `[from-code]`, `[from-code][auto-confirmed]`, `[from-research]`, `[from-user]`를 runtime question `source`와 혼동하지 않는다.
-- 자체 `open-gajae` primary와 `open-gajae-explore`만 정의한다. OMC `agents/explore.md`와 OMX `prompts/explore.md`를 동등 원천으로 조합하며 OMO의 custom AgentConfig/model 연결 방식을 참고한다. 내장 explore/general 재사용이나 모델 override가 아니다.
-- 모델 설정은 소유 두 역할에만 적용한다. 미지정은 host 현재/부모 모델 경로, runtime TUI 선택은 유지한다. native가 미존재 variant를 생략할 수 있어 semantic 오류를 항상 보장하지 않는다.
-- host의 configured agent permissions는 user policy 뒤에 결합된다. late allow로 기존 read/task deny를 넓히지 않도록 explore는 edit/bash/task/external_directory/question/state_write/deep_interview_spec의 deny만 추가하고 primary에는 task grant를 넣지 않는다.
-- 이 deny 목록은 최종 host policy와 다르다. `agent.ts:296-310`의 Truncate.GLOB allow 및 `subagent-permissions.ts`의 부모 external_directory 정책 결합은 host 예외로 남는다. 플러그인 최종 deny 엔진이나 core patch로 바꾸지 않고 한계를 문서화한다.
-- public `/command`는 `Command.Info` schema의 source/template를 반환한다(legacy SDK 타입만 source를 생략). 초기화 중 client 호출 없이 실제 command before-hook에서 source와 bundle base-directory를 확인해 MCP/외부 skill 충돌에 의한 잘못된 상태 시딩을 거부한다.
-- 인터뷰의 제품 변경 금지는 원본 수준 안내와 native 권한에 의존한다. 전역 hard guard·자손 격리·OS sandbox·unknown MCP 전체 차단을 주장하지 않는다.
-- FOLLOWUP-01: 실제 downstream skill이 생길 때 인계/승인/취소/실패 처리를 추가한다. FOLLOWUP-02: 최초 자체 explore는 현재 범위이며 이후 specialist 추가 시 primary 라우팅·모델·권한·검증도 함께 갱신한다.
-- 원본 revision과 고지/변경 이유는 [THIRD-PARTY-NOTICES](../../THIRD-PARTY-NOTICES.md)에 기록한다. 설치/사용자 검증은 README를 따른다. fixture 통과는 실제 host/model E2E 성공을 뜻하지 않는다.
+## 2. 결정 기록 — 구현된 동작과 승인 예외
 
----
+### M03 — 단일 process 상태 저장
 
-## 1. 두 원본의 핵심 아키텍처 (과거 비교 기록)
+상태 target마다 module-level queue를 두어 같은 canonical state 파일의 read/write/clear를 하나의 plugin process에서 직렬화한다. write는 고유 temporary file을 만든 뒤 rename한다. 실패한 작업은 해당 호출자에게 보이지만 queue의 후속 작업을 poison하지 않는다.
 
-> **§1~7 전체는 과거 분석·설계 기록이다.** 비교 결론과 merge 추천은 Phase 1 개발 지침이 아니다. `session.finish` 코어 패치 제안은 미채택이며 현재 구현의 필수 조건도 아니다. 기술적 주장과 기능 등가 판정은 해당 기준 소스로 재검증해야 한다.
+이는 IPC lock, process 간 동시 writer 안전성, transaction, fsync/정전 내구성, PID/liveness recovery가 아니다. native Markdown Write는 queue 밖에 있어 state와 문서의 부분 성공이 가능하다.
 
-두 프로젝트 모두 동일한 3계층 + 동일한 설계 사상("판단은 LLM, 강제는 코드")을 쓴다.
+### M04 — root 유지, scope 교체
 
-| 계층 | oh-my-codex | oh-my-claudecode |
-|------|-------------|------------------|
-| ① Hook 런타임 | `codex-native-hook.ts` (UserPromptSubmit/Stop/PreToolUse) | Claude Code hooks (UserPromptSubmit 계열 + Stop persistent-mode) |
-| ② SKILL 계약 | `skills/<n>/SKILL.md` | `skills/<n>/SKILL.md` |
-| ③ 질문/도구 런타임 | `omx question` 자체 CLI + tmux 렌더러 | `AskUserQuestion` 네이티브 |
-| state | `omx state` CLI (단일 writer) | state MCP 도구 |
-| goal | Codex `get_goal/create_goal/update_goal` | Claude `/goal` (네이티브 Stop hook) |
-| subagent | adapted role routing (권한 문제) | `Task` 네이티브 |
+root는 host worktree의 `.open-gajae`다. 상태와 새 산출물은 trusted `ToolContext.sessionID`의 UTF-8 바이트를 소문자 hex로 인코딩한 단일 path component 아래에만 둔다.
 
----
-
-## 2. 세 스킬 기능 등가 비교 (claudecode vs codex)
-
-### 2.1 요약 판정
-
-| 스킬 | "호환 제외 시 동일?" | 판정 근거 |
-|------|----------------------|-----------|
-| **ultragoal** | ✅ **동일** | 호스트 goal 바인딩(Claude `/goal` vs Codex `get_goal/...`)만 다름. ledger·서브커맨드·최종 게이트 전부 동일 |
-| **ralplan** | 🔶 **핵심만 동일** | 합의 엔진(Planner→Architect→Critic 순차 + 재검토 max5 + RALPLAN-DR + deliberate)은 동일. 주변 장치/handoff는 다름 |
-| **deep-interview** | ❌ **기능 자체가 갈라짐** | 채점 차원·가중치·프로파일·고유 게이트가 서로 다른 방향으로 진화 |
-
-### 2.2 deep-interview 세부 차이
-
-| 측면 | oh-my-codex | oh-my-claudecode |
-|------|-------------|------------------|
-| 채점 차원 | 5~6 (intent/outcome/scope/constraints/success/context) | 3~4 (goal/constraints/criteria/context) |
-| 가중치(greenfield) | 0.30/0.25/0.20/0.15/0.10 | 0.40/0.30/0.30 |
-| 프로파일 | 3종 (quick 0.30/5, standard 0.20/12, deep 0.15/20) | 단일 threshold(설정, 기본 0.2) + 고정 라운드(10/20) |
-| 설정 소스 | `.omx/config.toml` | `.claude/settings.json` |
-| **codex 고유** | Fact/Judgment 라우팅, Dialectic Rhythm Guard, Pressure Pass, Non-goals·Decision-Boundaries 필수 게이트 | — |
-| **claudecode 고유** | — | Round 0 Topology 게이트, Ontology 수렴 추적, Challenge Agents(Contrarian/Simplifier/Ontologist) |
-| 질문 UI | omx question (tmux) | AskUserQuestion |
-| 기본 handoff | → ultragoal | → omc-plan `--consensus --direct` |
-
-> 이 고유 기능들은 **전부 SKILL.md의 프롬프트 지시**다(코드 강제 아님). 예: codex의 `[from-code]`/`[from-user]` 라벨은 "never use them as `omx question` `source` values"로 명시된 transcript 라벨일 뿐이다.
-
-### 2.3 ralplan 세부 차이 (핵심 엔진은 동일)
-
-| 측면 | oh-my-codex | oh-my-claudecode |
-|------|-------------|------------------|
-| vague-prompt 게이트 | 개념만 언급 | Pre-Execution Gate 상세(concrete-signal 표, `force:`/`!` 우회) |
-| 부가 장치 | advisory 상태머신, role-routing preflight, durable handoff contract (provenance 강제 계열) | 없음(경량 `pending approval`) |
-| 리뷰어 교차 | — | `--architect codex` / `--critic codex` |
-| 기본 handoff | → ultragoal | → team / ralph |
-
-### 2.4 어느 deep-interview 방식이 나은가 (과거 설계 판단)
-
-단일 우승자는 없다. 서로 다른 실패 모드를 방어한다.
-
-- **codex 우위**: 대화 질·의도(why) 깊이·사용자 노력 절감 (Fact/Judgment 라우팅, Pressure Pass, Non-goals/Decision-Boundaries 게이트). 단, 규칙이 많아 모델 지시 준수 부담이 큼.
-- **claudecode 우위**: 구조적 커버리지·수렴 증거 (Topology 게이트가 멀티컴포넌트 실명 방어, Ontology 수렴이 객관적 종료 신호). 단순해서 실행이 더 견고함.
-
-**용도별 승자:**
-| 상황 | 승자 |
-|------|------|
-| 개념 흐릿한 단일 목적 | codex |
-| 여러 컴포넌트 시스템 | claudecode |
-| 발견 가능한 사실 많은 brownfield | codex |
-| 실행 후 스코프 분쟁 위험 큼 | codex (non-goals 게이트) |
-| 객관적 종료 신호 필요 | claudecode (ontology 수렴) |
-| 모델 지시 준수 불안 | claudecode (단순·견고) |
-
-**과거 merge 제안 — Phase 1 적용 제외:** claudecode의 단순 채점 + Topology + Ontology를 베이스로, codex의 **Fact/Judgment 라우팅**과 **Non-goals/Decision-Boundaries 게이트**, 그리고 intent 차원 하나를 흡수하자는 제안이었다. 기본값은 claudecode 방식, 고위험/고모호 작업엔 codex 방식을 쓰자는 당시 판단이며 현재 개발 정책이 아니다.
-
----
-
-## 3. opencode 하네스 프리미티브 매핑
-
-이식 대상 opencode의 실제 코드 근거 (경로는 `opencode/packages/opencode/src/` 기준).
-
-| 필요 기능 | opencode 프리미티브 | 위치 | 비고 |
-|-----------|--------------------|------|------|
-| 키워드 감지 + 상태 시딩 + 컨텍스트 주입 | **`chat.message` 플러그인 훅** | `session/prompt.ts:1000` | mutable `parts`에 synthetic part push (다운스트림 `:1011`이 소비). 코어 선례: `session/reminders.ts` |
-| 시스템 프롬프트 주입 | `experimental.chat.system.transform` 훅 | `agent/agent.ts:381` | |
-| 구조화 질문 (블로킹) | **`question` 도구 + `Question` 서비스** | `tool/question.ts`, `question/index.ts` | `ask()`가 Deferred로 에이전트 루프 블로킹. 스키마: `options[{label,description}]`, `multiple`, `custom` |
-| subagent (Planner/Architect/Critic) | **`task` 도구** | `tool/task.ts` | `subagent_type` + `prompt`, foreground=순차 await |
-| PreToolUse write 경계 (deny) | **`permission.ask` 훅** + agent `permission` 룰셋 | `plugin/src/index.ts`(Hooks), `permission/index.ts:75` | `output.status="deny"` 가능 |
-| 진행 추적 (goal 대체) | **`todowrite` 도구 + TODO 시스템** | `tool/todo.ts`, `session/todo.ts` | DB 백엔드, 세션 스코프. **opencode엔 네이티브 goal 없음** |
-| state | 플러그인 disk JSON (`FSUtil`) | — | codex `omx state` / OMC state MCP 대체 |
-| **Stop 게이트** | ❌ **네이티브 없음** | `session/prompt.ts:1319` | 코어 패치 필요 (§4) |
-
-### 3.1 결정적 사실 — opencode의 hook 목록
-
-opencode 플러그인 `Hooks` 인터페이스(`plugin/src/index.ts`)에는 다음이 있다: `event`(관찰 전용), `chat.message`, `chat.params/headers`, **`permission.ask`(veto 가능)**, `command.execute.before`, `tool.execute.before/after`, `experimental.chat.system.transform`, `tool.definition` 등.
-
-**하지만 "세션 종료/idle을 거부하는 훅"은 없다.** `event`는 `Promise<void>` 관찰 전용이라 되돌리지 못한다. `plugin.trigger` 발화 지점을 전수 조사한 결과 stop 결정 지점(`prompt.ts:1319`)엔 trigger가 없다. → **Stop hook 형태는 코어 패치로만 가능.**
-
----
-
-## 4. 과거 미채택 제안: `session.finish` 코어 훅 신설
-
-> 아래는 당시 가설과 코드 제안이다. 구현·검증 완료를 뜻하지 않으며 현재의 OpenCode 본체 무수정 정책에서는 적용하지 않는다.
-
-세 워크플로의 Stop 게이트(deep-interview obligation, ralplan `SKILL_STOP_BLOCKERS`, ultragoal reinforcement)는 **모두 이 패치 하나로 커버**된다.
-
-**대응 지점:** `packages/opencode/src/session/prompt.ts:1319`
-```ts
-if (result === "stop") return "break" as const   // 모델이 자연 종료 → 루프 break → 세션 idle
+```text
+<worktree>/.open-gajae/
+  _session-<lowercase-utf8-hex-native-session-id>/
+    state/deep-interview-state.json
+    specs/deep-interview-<slug>.md
+    plans/<slug>.md
 ```
 
-**패치안:**
-```ts
-// plugin/src/index.ts — Hooks 인터페이스에 추가
-"session.finish"?: (
-  input: { sessionID: string; agent: string; finishReason: string },
-  output: { decision: "stop" | "block"; reason?: string },
-) => Promise<void>
-```
-```ts
-// session/prompt.ts:1319 — 코어 분기
-if (result === "stop") {
-  const gate = { decision: "stop" as "stop" | "block", reason: undefined }
-  yield* plugin.trigger("session.finish",
-    { sessionID, agent: agent.name, finishReason: handle.message.finish! }, gate)
-  if (gate.decision === "block") {
-    yield* sessions.injectSyntheticUserPart(sessionID, gate.reason ?? STOP_REASON)
-    continue   // ← "break" 대신 재구동 = Stop veto
-  }
-  return "break" as const
-}
-```
+모델 입력, snapshot의 `session_id`, 또는 tool argument는 다른 세션을 고르지 못한다. missing session ID는 오류다. shared/scoped/latest/aggregate/legacy fallback이나 자동 탐색은 없다. 사용자/프로젝트 JSONC는 이 namespace로 옮기지 않는다.
 
-- 재주입(synthetic part + 루프 지속) 패턴은 **이미 코어에 선례**가 있다: `session/reminders.ts`(synthetic part push), `experimental.compaction.autocontinue`(종료 후 synthetic "continue" 턴). 새 개념이 아니라 기존 패턴의 재배치라 위험이 낮다.
-- 패치 규모: 인터페이스 1줄 + 루프 분기 ~6줄.
+### M05 — native Write와 문서 경로
 
----
+현재 session의 spec은 `specs/deep-interview-<slug>.md`, 미래 plan의 위치는 `plans/<slug>.md`다. Native Write의 same-session/same-slug overwrite를 따른다. custom writer, suffix (`-rN` 등), receipt, active pointer, hash/index는 없다. `plans/`는 위치 계약일 뿐 runnable plan 또는 downstream workflow bridge가 아니다.
 
-## 5. 스킬별 과거 이식 제안
+### M07 — clear 범위
 
-> 현재 구현 명세나 승인된 작업 목록이 아니다. 아래 코어 패치·obligation·혼합 계약·아티팩트 경로 제안은 §0의 현재 구현과 구분한다. Phase 1 포함 여부와 호스트 연결은 별도로 확정·검증한다.
+`state_clear`는 현재 session의 `state/deep-interview-state.json` 하나만 삭제한다. 같은 session의 specs/plans, 다른 session, legacy 자료, summary는 보존한다. 파일이 없으면 side effect 없는 `missing` 결과다. corrupt JSON, permission, I/O 오류는 보존한 채 visible error가 된다. lifecycle event, load, install은 state/documents를 자동 생성·clear·resume하지 않는다.
 
-### 5.1 deep-interview → opencode
+### OMC와의 관계
 
-| 컴포넌트 | 이식 방식 | 코어 패치? |
-|----------|-----------|-----------|
-| 트리거 + 상태 시딩 + 지시문 주입 | `chat.message` 훅 + disk state + synthetic part | ❌ |
-| 구조화 질문 (라운드마다) | **내장 `question` 도구** (블로킹) | ❌ (더 우수 — in-loop 블로킹) |
-| obligation | 플러그인 disk 레코드 (`session.finish`가 검사) | ❌ |
-| Stop 게이트 | **`session.finish` 훅** | ⚠️ 공유 패치 |
-| ambiguity 채점/Topology/Ontology/Fact-Judgment | orchestrator agent 프롬프트 (SKILL 이식) | ❌ |
-| requirements 모드(구현 금지) | 커스텀 agent `permission` 룰셋(edit/write/bash deny) | ❌ (프롬프트보다 강함) |
-| crystallize/handoff | 도구가 `.opencode/specs/…` 작성 → 실행 agent로 handoff | ❌ |
+OMC의 deep-interview snapshot replacement, explicit field precedence, `_meta` regeneration, payload bounds (1 MiB, depth 10, 100 top-level keys), 4/6/8 challenge, 기본 0.2, source pacing/topology/ontology와 역할 계약은 이식 대상이다. 저장 위치, trusted current-session binding, clear scope, queue/durability 범위는 승인된 host 예외다. `_meta`는 일관성 확인 metadata일 뿐 actor 인증, 경로 선택, approval/completion gate가 아니다.
 
-> codex는 `omx question`을 자체 구현해야 했지만(네이티브 fire-and-forget 회피), opencode는 `question` 도구가 **루프-블로킹**이라 그 이유가 사라진다. 재활용이 정답.
+## 3. 다른 세션 문서 입력은 상태 승계가 아니다
 
-### 5.2 ralplan → opencode
+세션 A의 spec/plan 경로를 사용자가 명시하면 세션 B는 host native Read 및 적용되는 read/external-directory permission으로 그 문서를 입력으로 읽을 수 있다. 상대 경로는 현재 host directory에서 해석하고 실제 읽은 경로를 보고한다. 누락, 거부, 읽기 실패는 그대로 보고하며 latest/session scan/다른 파일 대체를 하지 않는다.
 
-| 컴포넌트 | 이식 방식 | 코어 패치? |
-|----------|-----------|-----------|
-| Planner/Architect/Critic 순차 | **`task` 도구** (foreground=순차 await) + 커스텀 agent | ❌ 네이티브 |
-| 재검토 루프(max5) | orchestrator 내부 로직 | ❌ |
-| **planning/execution write 경계** | **`permission.ask` 훅** + agent `permission` 룰셋 | ❌ **네이티브** (PreToolUse-형 훅 존재) |
-| consensus gate (종료 차단) | **`session.finish` 훅** (deep-interview와 동일 패치 재사용) | ✅ 재사용 |
-| Pre-Execution Gate(vague-prompt) | `chat.message` 훅에서 concrete-signal 검사 후 ralplan으로 라우팅 | ❌ |
-| advisory/provenance(codex 부가) | 필요 시 disk state (opencode에선 대부분 불필요) | ❌ |
+A의 문서를 읽어도 B의 `state_read`/`state_write`/`state_clear`는 trusted session B에 고정된다. B의 새 산출물도 B 아래에만 생긴다. A의 state, owner, 진행도, approval, checkbox는 이전되지 않고 A 원문은 수정하지 않는다. 원문 속 명령 또는 승인 문구는 실행 권한이 아니다. 이 계약은 deep-interview의 참고 입력에만 적용되며 plan 실행 bridge를 제공하지 않는다.
 
-> ralplan은 **추가 코어 패치 0개**. write 경계는 opencode가 네이티브로 지원(deep-interview보다 더 깔끔).
+## 4. 역할, 권한, 모델 및 company context
 
-### 5.3 ultragoal → opencode
+| 역할 | 허용된 제품 역할 | 중요한 금지/경계 |
+|---|---|---|
+| `open-gajae` | 수정·통합·결정, state read/write/clear, owned role delegation | host/user permission을 우회하지 않음 |
+| `open-gajae-explore` | repository fact, native Read/Glob/Grep, read-only AST/LSP, state read | edit, bash, task, question, state write/clear 금지 |
+| `open-gajae-document-specialist` | 문서/공개 reference 조사와 citation synthesis | edit, task, question, state write/clear 금지; 문서화된 `chub` read-only protocol은 arbitrary bash allow가 아님 |
 
-| 컴포넌트 | 이식 방식 | 코어 패치? |
-|----------|-----------|-----------|
-| durable ledger(brief/goals/ledger) | 플러그인/CLI가 `.opencode/ultragoal/*` 작성 | ❌ |
-| create/complete/checkpoint/steer/status | 플러그인 도구 또는 CLI | ❌ |
-| 순차 스토리 루프 + 최종 게이트 | orchestrator + `task`(code-reviewer/architect) | ❌ |
-| **goal 포인터 바인딩** | **네이티브 goal 없음** → §5.3.1 | ⚠️ 발산 |
-| Stop reinforcement | **`session.finish` 훅** (재사용) | ✅ 재사용 |
+State read는 세 자체 역할에 한정되고 state write/clear는 primary 전용이다. 도구는 trusted actor, current native session, canonical worktree, native permission을 filesystem/backend보다 먼저 검사한다. Role-specific host permission은 유지한다. 두 read-only 역할의 fixed mandatory deny는 host wildcard를 포함한 host rule 뒤에 재삽입되어 순서로 약화되지 않으며, 그 밖의 permission 평가는 host가 수행한다.
 
-#### 5.3.1 goal-mode 발산 처리
+설정 파일은 `~/.open-gajae/open-gajae.jsonc`와 `<worktree>/.open-gajae/open-gajae.jsonc`다. JSONC는 알려진 key/type을 검증한다. 모든 자체 역할의 `model`/`variant` field는 **host override > project JSONC > user JSONC**이며, 생략은 host/parent behavior에 맡긴다. 유효한 host override를 artificial collision로 거부하지 않는다. provider fallback, tier, retry, model pinning은 없다.
 
-opencode엔 `get_goal/create_goal/update_goal`/`/goal`이 **전혀 없다** (확인 완료). 대신 **TODO 시스템**(`session/todo.ts` + `todowrite` 도구)이 네이티브 진행추적 프리미티브다. 두 옵션:
+`companyContext`는 `{ tool?: string, onError?: "warn" | "silent" | "fail" }`이고 project field가 user field를 덮으며 기본 `onError`는 `warn`이다. tool이 visible·permitted MCP tool이면 primary prompt가 spec crystallization 전에 `{query}`를 보내 `{context}`를 advisory 인용 자료로 받을 수 있다. 미설정은 skip한다. missing/denied/failing/invalid 결과에서 `warn`은 짧게 알리고 계속, `silent`는 알림 없이 계속, `fail`은 crystallization을 멈춘다. 이는 prompt-level best effort이지 hook/proxy/registry/signing/force-call이 아니다.
 
-- **옵션 A (권장, 형태 충실):** Codex/Claude aggregate goal ↔ opencode 세션 todos. `create_goal`→`todowrite`(스토리를 todo로), `update_goal(complete)`→todo status 갱신. opencode TUI가 todo를 렌더하므로 **네이티브 UI 진행 표시**까지 보존.
-- **옵션 B (생략, ledger-only):** goal 포인터는 UI 통합용 코스 포인터일 뿐, 진짜 SSOT는 ledger. opencode엔 `/goal` UI 개념이 없으니 빼도 기능 손실 거의 없음.
+## 5. 유한 read-only 도구 surface
 
-어느 쪽이든 ultragoal 본체(durable 멀티골 추적)는 완전 이식된다.
+### AST
 
----
+`ast_grep_search`는 `@ast-grep/napi` 0.31.1을 사용한다. AST pattern 검색만 제공하며 replace는 없다. 지원 언어와 결과 수는 tool schema가 정한다. addon이 없으면 오류/복구 안내를 내며 "no matches"로 위장하지 않는다. 직접 recursive traversal과 file read 전에 canonical path·symlink·native read 권한을 확인한다. denial은 parse skip으로 숨기지 않는다.
 
-## 6. 과거 이식 체크리스트 — 실행 대상 아님
+### LSP
 
-> 당시 검토 항목을 보존한 목록이다. 미완료 제품 작업이나 Phase 1 완료 조건으로 해석하지 않는다. 코어 패치는 미채택이며 merge 제안은 Phase 1에서 제외한다.
+네 도구는 references, document symbols, workspace symbols, known-server status만 제공한다. server는 보고/실행할 뿐 자동 설치하지 않는다. 요청 파일의 canonical/external 경계와 native `lsp` operation permission을 확인한 뒤 backend를 호출한다. `lsp_servers`도 actor와 operation permission을 확인한다.
 
-- [ ] **코어 패치 1개**: `session.finish` 훅 신설 (`prompt.ts:1319`) — 세 스킬의 Stop 게이트 공유.
-- [ ] `chat.message` 훅: 키워드 감지 + disk state 시딩 + synthetic part 주입 (3스킬 공통 진입점).
-- [ ] 커스텀 agent 정의: deep-interview(question+read only), Planner/Architect/Critic(각 role, read-only), ultragoal orchestrator. `permission` 룰셋으로 requirements/planning 경계 강제.
-- [ ] `question` 도구 재사용 (deep-interview 라운드).
-- [ ] `task` 도구 재사용 (ralplan subagent, ultragoal 최종 리뷰).
-- [ ] `permission.ask` 훅 (ralplan write 경계).
-- [ ] `todowrite` 바인딩 or 생략 (ultragoal goal 포인터).
-- [ ] disk 아티팩트: `.opencode/{specs,plans,ultragoal,context,state}/`.
-- [ ] 당시 merge 검토안: claudecode 베이스 + codex의 Fact/Judgment 라우팅·Non-goals/Decision-Boundaries 게이트 흡수. 현재 Phase 1 적용 제외.
+LSP permission은 요청 operation 경계다. language server가 내부적으로 workspace files를 읽는 것을 매 파일 intercept하는 sandbox도 아니고 agent에게 arbitrary bash 권한을 부여하는 것도 아니다. real server dependency와 semantic correctness는 별도 검증 대상이다.
 
----
+source에서 실제 도달하는 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT_MS`, `OPEN_GAJAE_LSP_IDLE_TIMEOUT_MS`, `OPEN_GAJAE_LSP_IDLE_CHECK_INTERVAL_MS`, `OPEN_GAJAE_LSP_CONTAINER_ID`, `OPEN_GAJAE_PYTHON_LSP=basedpyright`뿐이다. 다른 임의 환경 변수를 제품 설정이라고 주장하지 않는다.
 
-## 7. 과거 분석 결론 — 현재 지침 아님
+## 6. Source → target → exception → test 장부
 
-> 아래 강제 지점과 단일 패치의 충분성은 당시 설계 주장이지 현재 호스트에서 검증된 보장이 아니다. 현재 개발에는 §0과 AGENTS.md를 적용한다.
+아래는 stage-05 revision과 stage-13/14 intent의 유한 매핑을 현재 source 계약에 맞게 요약한 것이다. `E`는 원본/host 조사 근거, `F`는 구현 target, `AC`는 acceptance, `T`는 검증 case다. 역사적 원본 사실을 승인 예외와 동일시하지 않는다.
 
-1. **prompt vs code 구분이 이식의 핵심.** 두 원본의 워크플로 차이는 대부분 SKILL.md(프롬프트) 레벨이다. 하네스 코드는 형태가 공유되므로, 이식이란 "SKILL 계약을 opencode agent 프롬프트로 옮기고, 몇 개의 강제 지점만 opencode 프리미티브에 연결"하는 작업이다.
-2. **강제(enforcement)만 코드로.** "질문을 건너뛰지 못하게 / 계획 없이 실행 못 하게 / 미완료 시 못 끝내게" — 이 셋만 결정적 코드가 필요하고, opencode에선 `question`(블로킹) + `permission.ask`(veto) + `session.finish`(신설) 세 지점으로 커버된다.
-3. **단일 코어 패치로 충분.** 세 워크플로를 함께 이식해도 `session.finish` 하나면 된다. 나머지는 전부 플러그인·agent·기존 도구.
+| 근거 → target | 승인된 대응/예외 | AC | T |
+|---|---|---|---|
+| E01–E04, E12–E13, E17, E20 → F01/F03 | optional selector, shared/aggregate/latest/legacy resolver 대신 trusted current session + deterministic hex path | AC02, AC04 | T01, T04, T07 |
+| E05–E07 → F01/F03 | fresh snapshot, explicit precedence, regenerated `_meta`; no `_runtime`/receipt completion gate | AC03 | T02 |
+| E08–E09 → F02 | OMC SQLite/IPC/liveness/rollback parity 대신 process-local target queue + temp→rename | AC05 | T03 |
+| E10–E11, E15 → F04/F05 | broad/stranded/orphan/cancel-signal/summary lifecycle를 만들지 않고 current state file만 clear | AC06 | T05-a–e |
+| E14 → F05/F07 | session-native spec Write, same-slug overwrite; no custom writer/receipt/suffix; plans는 future path only | AC07 | T06, T10-NATIVE |
+| E16 → F06 | 모든 자체 역할 field별 host > project > user; host inheritance와 valid override 보존 | AC08 | T08 |
+| E18 → F07 | OMC 4/6/8/.2/topology/ontology 유지, OMX enforcement 제거 | AC10 | T09 |
+| E19, E21–E25 → F03/F06/F07 | 실제 explorer + document specialist + read-only LSP/AST; native permission 경계, LSP internal sandbox 없음 | AC04, AC09 | T10-LSP, T10-AST, T10-DOC |
+| E23–E24 → F06/F07 | optional companyContext의 two-JSONC field merge, `{query}` → advisory `{context}`, no proxy/hook | AC09 | T10-CC |
+| stage-14 X01–X06 → F05/F07 | explicit A document Read in B; B-only state/output; no state/approval/checkbox transfer or runnable bridge | AC02, AC06, AC07 | T06, T10-NATIVE |
+| E26 → F08 | historical SQLite host load failure는 보존하되 dependency/probe/SQL product contract는 제거 | AC11, AC12 | distribution/source review + host QA |
 
----
+검증 이름의 의미는 다음과 같다: T01 session encoding/current-only; T02 snapshot/payload/corruption; T03 queue/rename/failure continuation; T04 actor/permission; T05 clear isolation; T06 native Write/partial success; T07 worktree/path containment; T08 model/variant precedence; T09 skill contract; T10 finite native/LSP/AST/document/company-context surface. T03은 다른 process 경쟁 성공을 요구하지 않는다.
 
-*본 정리 문서와 링크된 두 상세 문서는 open-gajae 세션 분석 기반이다. 파일:라인 앵커는 분석 시점(oh-my-codex 0.21.5 / oh-my-claudecode v5.4.0 / 현재 opencode 체크아웃) 기준이며, 구현 착수 전 해당 심볼의 현존을 재확인할 것.*
+## 7. 검증 현황과 한계
+
+다음은 완료된 검증 command와 그 evidence scope다. 이 문서는 실행 횟수나 assertion 수를 completion ledger로 사용하지 않는다.
+
+| 명령 | 보고된 결과 | 무엇을 의미하지 않는가 |
+|---|---|---|
+| `bun run typecheck`, `bun run test`, `bun run build` | source type, unit, build surface 확인 | live host/model behavior 또는 deployment compatibility |
+| `bun run test:host` | installed OpenCode 1.18.31에서 load/state/AST/native Write, question·Read·edit·state·LSP 및 read-only directory Write deny, native formatter failure-after-publication, 세 역할 model/variant precedence 확인 | broad Phase-1 completion |
+| `bun tests/host-session-probe.ts` | actual A/B sessions + loopback deterministic OpenAI-compatible provider에서 question/`/questionreply`, explicit absolute/relative A-document Read in B, B write/clear/same slug, B terminal state-write deny after document success, missing/external-symlink failure without fallback, A bytes preservation 확인 | semantic model quality, LLM obedience, external credential coverage |
+| `bun tests/package-probe.ts` | packed tarball을 isolated consumer에 설치해 packaged default/config/prompts/skills/state API/AST addon과 clear-document preservation 확인 | registry publication 또는 deployed-host compatibility |
+| `bun tests/company-context-probe.ts` | local stdio MCP fake peer를 actual host + deterministic provider로 호출해 unset/absent/denied/valid/invalid/error/hostile response, 모든 `onError`, controlled missing-`chub` 확인 | guaranteed prompt branch, injection resistance, proxy/hook behavior |
+
+host-session probe는 SSE text response를 stream하고 idle을 기다린 뒤 stage를 전환해 actual integration completion을 관찰한다. Company-context probe는 local test transport와 source/runtime policy 계약만 검증하며 hook을 추가하지 않는다. LSP fixture는 real child initialize/didOpen/symbols/references/server error/exit/force-kill과 pooled concurrent lease/recovery를 다루지만, installed language server의 semantic correctness를 검증하지 않는다. 모든 server 설치는 여전히 사용자 책임이다.
+
+## 8. 역사적 분석과 비채택 제안
+
+이전 문서의 OMC/OMX 3-workflow 비교, `session.finish` core patch, TODO/goal 대체, disk ledger, consensus/Stop gate, shared artifact path, SQLite/IPC 선택지는 **역사적 분석 또는 비채택 제안**이다. 현재 구현의 요구사항, acceptance, 또는 실행 승인으로 읽지 않는다. 원본 source line/commit 사실은 상세 분석 문서에서 보존하지만, 실제 제품 동작은 이 문서와 source를 우선해 재확인한다.
+
+특히 OpenCode에 core stop hook을 추가하는 제안은 본체 무수정 정책과 현재 범위 밖이다. 다른 session 문서를 읽는 기능도 future plan execution, owner transfer, approval transfer, or cross-session resume를 의미하지 않는다.
+
+## 9. 출처와 배포
+
+OMC 및 OMO/OMX 관련 파생물의 출처와 조건은 [THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md)에 따른다. OMX runtime functionality가 제거되었어도 실제 보존된 파생 분석/material의 attribution은 유지한다. historical better-sqlite3 host load 실패는 선택 배경으로 보존하지만 현재 제품이 SQLite dependency 또는 probe를 제공한다는 뜻은 아니다.
+
+배포 시 `dist`, `skills`, `prompts`, `licenses`, notices를 함께 유지한다. 사용자 host JSONC, legacy data, 또는 reference repository를 자동 변경·이동·삭제하지 않는다.
