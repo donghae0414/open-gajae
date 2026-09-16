@@ -63,7 +63,7 @@ State tools are `state_read`, `state_write`, and `state_clear`. They use the tru
 
 State writes replace the model snapshot; explicit tool fields win and `_meta` is regenerated. `state_clear` deletes only the current session's state JSON. It preserves session documents, other sessions, and legacy files. Invalid/corrupt state is surfaced and preserved rather than reset.
 
-State operations for the same canonical file are serialized inside one plugin process and publish JSON with temporary-file rename. This is not IPC locking, a transaction across state and native Write, power-loss durability, or multi-process safety. Native Write is outside that queue: the same-session/same-slug behavior is native overwrite, with no suffix, receipt, index, or automatic recovery.
+State operations for the same canonical file are serialized inside one plugin process and publish JSON with temporary-file rename. This is not IPC locking, a transaction across state and document saves, power-loss durability, or multi-process safety. Specs are saved outside that queue using native `write` when available, otherwise `apply_patch`. Further interview results update the same file, with no suffix, receipt, index, or automatic recovery.
 
 A user may explicitly name another session's spec or plan as an input. Native Read and its normal permissions apply. The current session must report the path actually read; it must not scan for a latest document or substitute another file. Reading A from B transfers no state, owner, approval, or checkbox and does not authorize source edits or plan execution. B writes only its own state/documents.
 

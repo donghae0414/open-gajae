@@ -11,7 +11,7 @@
 - native skill 기반 `deep-interview`와 native `question` 사용
 - 자체 역할 `open-gajae` (primary), `open-gajae-explore` (읽기 전용 repository 조사), `open-gajae-document-specialist` (문서/인용 조사)
 - trusted current session 기반 `state_read`, `state_write`, `state_clear`
-- native Write로 저장하는 세션별 spec 경로와 미래 plan 경로 계약
+- native `write` 또는 `apply_patch`로 저장하는 세션별 spec 경로와 미래 plan 경로 계약
 - 읽기 전용 `ast_grep_search`, `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`
 - 두 JSONC 설정과 optional advisory `companyContext`
 
@@ -23,11 +23,19 @@ OMX의 rhythm, mandatory pressure, four-closure enforcement는 제거된 기능�
 
 ## 2. 결정 기록 — 구현된 동작과 승인 예외
 
+| 결정 | 선택 이유 |
+|---|---|
+| OMC 기준, OpenCode 본체 무수정 | 제품 계약은 OMC를 따르고 호스트 차이만 최소한으로 조정한다. |
+| SQLite/IPC 대신 세션별 JSON과 단일 process queue | 검증한 실제 호스트에서 `better-sqlite3` 로드가 실패했고, 대안 검토 후 사용자가 단순 저장 방식을 승인했다. |
+| 다른 세션 문서는 입력으로만 재사용 | 기존 사양은 활용하되 상태·소유권·승인은 이전하지 않는다. |
+| 추가 인터뷰 선택 유지, 실행 bridge 제외 | OMC의 구체화 선택권은 보존하되 후속 실행 workflow는 현재 범위 밖이다. |
+| 모델별 native 파일 도구 사용 | 모델을 바꾸거나 도구를 강제 노출하지 않고 호스트 구성을 존중한다. |
+
 ### M03 — 단일 process 상태 저장
 
 상태 target마다 module-level queue를 두어 같은 canonical state 파일의 read/write/clear를 하나의 plugin process에서 직렬화한다. write는 고유 temporary file을 만든 뒤 rename한다. 실패한 작업은 해당 호출자에게 보이지만 queue의 후속 작업을 poison하지 않는다.
 
-이는 IPC lock, process 간 동시 writer 안전성, transaction, fsync/정전 내구성, PID/liveness recovery가 아니다. native Markdown Write는 queue 밖에 있어 state와 문서의 부분 성공이 가능하다.
+이는 IPC lock, process 간 동시 writer 안전성, transaction, fsync/정전 내구성, PID/liveness recovery가 아니다. native 문서 저장은 queue 밖에 있어 state와 문서의 부분 성공이 가능하다.
 
 ### M04 — root 유지, scope 교체
 
@@ -43,9 +51,9 @@ root는 host worktree의 `.open-gajae`다. 상태와 새 산출물은 trusted `T
 
 모델 입력, snapshot의 `session_id`, 또는 tool argument는 다른 세션을 고르지 못한다. missing session ID는 오류다. shared/scoped/latest/aggregate/legacy fallback이나 자동 탐색은 없다. 사용자/프로젝트 JSONC는 이 namespace로 옮기지 않는다.
 
-### M05 — native Write와 문서 경로
+### M05 — native 파일 도구와 문서 경로
 
-현재 session의 spec은 `specs/deep-interview-<slug>.md`, 미래 plan의 위치는 `plans/<slug>.md`다. Native Write의 same-session/same-slug overwrite를 따른다. custom writer, suffix (`-rN` 등), receipt, active pointer, hash/index는 없다. `plans/`는 위치 계약일 뿐 runnable plan 또는 downstream workflow bridge가 아니다.
+현재 session의 spec은 `specs/deep-interview-<slug>.md`, 미래 plan의 위치는 `plans/<slug>.md`다. native `write`가 있으면 사용하고, 없으면 `apply_patch`로 생성·갱신하며 추가 인터뷰 결과도 같은 파일에 반영한다. OpenCode가 모델에 따라 `write` 대신 `apply_patch`를 제공하므로 특정 쓰기 도구를 강제하지 않는다. custom writer, suffix (`-rN` 등), receipt, active pointer, hash/index는 없다. `plans/`는 위치 계약일 뿐 runnable plan 또는 downstream workflow bridge가 아니다.
 
 ### M07 — clear 범위
 
@@ -99,7 +107,7 @@ source에서 실제 도달하는 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT_MS`, `
 | E05–E07 → F01/F03 | fresh snapshot, explicit precedence, regenerated `_meta`; no `_runtime`/receipt completion gate | AC03 | T02 |
 | E08–E09 → F02 | OMC SQLite/IPC/liveness/rollback parity 대신 process-local target queue + temp→rename | AC05 | T03 |
 | E10–E11, E15 → F04/F05 | broad/stranded/orphan/cancel-signal/summary lifecycle를 만들지 않고 current state file만 clear | AC06 | T05-a–e |
-| E14 → F05/F07 | session-native spec Write, same-slug overwrite; no custom writer/receipt/suffix; plans는 future path only | AC07 | T06, T10-NATIVE |
+| E14 → F05/F07 | native `write`/`apply_patch`로 세션별 spec 저장·같은 경로 갱신; no custom writer/receipt/suffix; plans는 future path only | AC07 | T06, T10-NATIVE |
 | E16 → F06 | 모든 자체 역할 field별 host > project > user; host inheritance와 valid override 보존 | AC08 | T08 |
 | E18 → F07 | OMC 4/6/8/.2/topology/ontology 유지, OMX enforcement 제거 | AC10 | T09 |
 | E19, E21–E25 → F03/F06/F07 | 실제 explorer + document specialist + read-only LSP/AST; native permission 경계, LSP internal sandbox 없음 | AC04, AC09 | T10-LSP, T10-AST, T10-DOC |

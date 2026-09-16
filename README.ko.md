@@ -63,7 +63,7 @@ ambiguity 임계값에 도달해 spec을 저장한 뒤에는 인터뷰를 마칠
 
 상태 쓰기는 model snapshot을 교체합니다. 명시 tool 필드가 우선하며 `_meta`는 매번 다시 만듭니다. `state_clear`는 현재 세션 state JSON 하나만 지우고 같은 세션 문서, 다른 세션, legacy 파일은 보존합니다. 손상/잘못된 상태는 reset하지 않고 보존한 채 오류로 드러냅니다.
 
-동일한 canonical 상태 파일의 연산은 하나의 plugin process 안에서 직렬화되고 temporary file → rename으로 JSON을 게시합니다. IPC lock, state와 native Write의 다중 파일 transaction, 전원 손실 내구성, 다중 process 안전성은 아닙니다. Native Write는 이 queue 밖에 있으므로 같은 세션·같은 slug는 native overwrite 의미이며 suffix, receipt, index, 자동 복구가 없습니다.
+동일한 canonical 상태 파일의 연산은 하나의 plugin process 안에서 직렬화되고 temporary file → rename으로 JSON을 게시합니다. IPC lock, state와 문서 저장의 다중 파일 transaction, 전원 손실 내구성, 다중 process 안전성은 아닙니다. 명세는 이 queue 밖에서 native `write`가 있으면 사용하고, 없으면 `apply_patch`로 저장합니다. 추가 인터뷰 결과는 같은 파일에 갱신하며 suffix, receipt, index, 자동 복구는 없습니다.
 
 사용자가 다른 세션의 spec/plan 경로를 명시하면 입력으로 읽을 수 있습니다. Native Read와 그 권한이 적용되고 실제 읽은 경로를 알려야 합니다. latest 탐색이나 다른 파일 대체는 하지 않습니다. B가 A를 읽어도 state/owner/승인/checkbox가 이전되지 않고 A 원문 편집이나 계획 실행 권한도 생기지 않습니다. B는 자기 state/documents에만 새 결과를 씁니다.
 
