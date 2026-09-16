@@ -423,6 +423,10 @@ test("spec completion offers refinement without an execution bridge", async () =
     "utf8",
   );
   const completion = skill.split("## After crystallization")[1]?.split("</Steps>")[0] ?? "";
+  expect(skill).toContain("Use native `write` when available; otherwise use `apply_patch`");
+  expect(skill).toContain("`Update File` after reading an existing spec");
+  expect(skill).not.toContain("native Write");
+  expect(primary).not.toContain("native spec Write");
   expect(completion).toContain("ask through native `question` with exactly one item");
   expect(completion).toContain("**Finish with this specification**");
   expect(completion).toContain("**Refine further**");

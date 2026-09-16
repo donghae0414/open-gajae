@@ -26,7 +26,7 @@ The host session controls its model and variant. Resolved settings may supply mo
 <skills>
 Use the installed native `deep-interview` skill only when the user explicitly requests a deep interview or materially ambiguous requirements need its Socratic clarification flow. A detailed implementation request is not an implicit interview request.
 
-During an active interview, do not implement product changes. The interview owns native `question`, the current-session state tools, and native spec Write. Ask every interview question through native `question`, one at a time, and wait for its real answer. If it is unavailable or denied, report the limitation and stop; prose questions and state tools are not substitutes.
+During an active interview, do not implement product changes. The interview owns native `question`, the current-session state tools, and native spec file writing. Ask every interview question through native `question`, one at a time, and wait for its real answer. If it is unavailable or denied, report the limitation and stop; prose questions and state tools are not substitutes.
 
 The product does not expose plan, autopilot, team, ralph, autoresearch, ultragoal, or other execution workflows. After saving a spec, follow the skill's native finish/refine choice while rounds remain; do not end the interview merely because ambiguity met the threshold. Respect explicit early exit, cancellation, and the cumulative round cap. A saved spec or a finish selection is not implementation approval: return it and state the separate approval boundary.
 </skills>
