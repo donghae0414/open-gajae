@@ -1,6 +1,8 @@
 // Ralplan host hooks: continuation on idle, keyword/restore on chat.message,
 // the `skill` tool call that replaces OMC's awaiting-confirmation timer, and the
 // `/ralplan` command hook that seeds the state the keyword guard no longer does.
+// `chat.message` also carries the deep-interview keyword, which only injects
+// OMC's magic-keyword guide and seeds no state at all.
 //
 // The idle continuation carries two layers of user-interrupt detection that OMC
 // has no counterpart for, because Claude Code does not run its Stop hook on an
@@ -12,10 +14,14 @@
 // oh-my-openagent (MIT) for the OpenCode-side in-flight and injection patterns.
 
 import type { Hooks } from "@opencode-ai/plugin";
+import { join } from "node:path";
 import {
   applyRalplanGate,
   breakerMessage,
   continuationMessage,
+  DEEP_INTERVIEW_SKILL_NAME,
+  deepInterviewMessage,
+  detectDeepInterviewKeyword,
   detectRalplanKeyword,
   gateMessage,
   INJECTION_MARKERS,
@@ -74,6 +80,7 @@ const ROLE_SUBAGENTS = new Set([
 ]);
 
 const KEYWORD_NOTICE_MARKER = "[MODE: RALPLAN]";
+const DEEP_INTERVIEW_MAGIC_MARKER = "[MAGIC KEYWORD: DEEP-INTERVIEW]";
 
 /**
  * One continuation in flight per session. `session.idle` can arrive again while
@@ -132,7 +139,16 @@ function lastAssistantAborted(messages: unknown[]): boolean {
 export function createHooks(
   store: StateStore,
   client: RalplanClient,
+  packageRoot: string,
 ): RalplanHooks {
+  // The absolute `Read fallback:` path OMC resolved through `resolveSkillPath`;
+  // here it is always this package's own copy, so no existence probe is needed.
+  const deepInterviewSkillPath = join(
+    packageRoot,
+    "skills",
+    DEEP_INTERVIEW_SKILL_NAME,
+    "SKILL.md",
+  );
   /**
    * Where a continuation would be posted: the agent and model inherited from the
    * last real user message. `undefined` means "do not inject at all", and is the
@@ -433,6 +449,21 @@ export function createHooks(
         if (patch) await store.patch(sessionID, patch, RALPLAN_MODE);
         else log("ralplan state already active; skipped re-seed");
       }
+
+      // Step 4b — deep-interview keyword. OMC injects its magic-keyword guide and
+      // seeds nothing for this skill (bridge.ts:1449, keyword-detector.mjs:1793);
+      // the ralplan seed above is untouched, and both blocks ride when both fire
+      // (OMC KEYWORD_PRIORITY puts ralplan first, index.ts:90-95).
+      if (
+        detectDeepInterviewKeyword(text) !== null &&
+        !text.includes(DEEP_INTERVIEW_MAGIC_MARKER)
+      )
+        appended.push(
+          deepInterviewMessage({
+            skillPath: deepInterviewSkillPath,
+            originalPrompt: text,
+          }),
+        );
 
       // Step 5 — gate. Dormant while EXECUTION_GATE_KEYWORDS is empty; the call
       // site stays so enabling it is a one-line change.

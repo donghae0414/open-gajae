@@ -279,6 +279,6 @@ Adapted from OMC v5.4.0 `skills/plan/SKILL.md` and `skills/ralplan/SKILL.md` (MI
 
 **Why there is no question flag.** A native `question` awaits a `Deferred` *inside* tool execution: the `question` tool's `execute` yields `question.ask({ sessionID, questions, tool })` (`opencode/packages/opencode/src/tool/question.ts:22–27`), and `Question.ask` creates the deferred, publishes `Event.Asked`, and returns `Deferred.await(deferred)` (`opencode/packages/opencode/src/question/index.ts:87–115`). The tool call therefore never returns while the question is open, so the session's runner never goes idle. `session.idle` is published only when the session's runner goes idle — `Runner.make`'s `onIdle` calls `status.set(sessionID, { type: "idle" })` (`opencode/packages/opencode/src/session/run-state.ts:60–64`, paired with `onBusy` on the next line), and `SessionStatus.set` publishes `Event.Idle` on that transition (`opencode/packages/opencode/src/session/status.ts:43`). Question-wait versus true idle is therefore distinguished by the host, and the plugin needs no flag of its own.
 
-See THIRD-PARTY-NOTICES.md and licenses/.
+OMC's `ARGUMENTS` placeholder (its closing `Task:` line) is not substituted by any host (Claude Code appends an `ARGUMENTS:` line instead), so each occurrence is replaced by a line describing where the arguments arrive. See THIRD-PARTY-NOTICES.md and licenses/.
 
-Task: {{ARGUMENTS}}
+Task: the user's request is the message that invoked this skill — the `/ralplan` command arguments, or the text that carried the keyword. No placeholder is substituted here.

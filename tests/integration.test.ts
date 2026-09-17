@@ -131,7 +131,7 @@ test("valid host role overrides win without changing unrelated agents or global 
       },
       default_agent: "plan",
       permission: { read: "deny", task: "ask" },
-      command: { "deep-interview": { template: "host command" } },
+      command: { "host-only": { template: "host command" } },
     } as Config;
     await configureAgents(config, settings, resolve("."));
     for (const name of agentNames) {
@@ -146,7 +146,11 @@ test("valid host role overrides win without changing unrelated agents or global 
     expect((config as Config & { default_agent?: string }).default_agent).toBe(
       "plan",
     );
-    expect(config.command?.["deep-interview"]?.template).toBe("host command");
+    // An unrelated host command survives. `ralplan` and `deep-interview` are
+    // deliberately NOT asserted here: the plugin shadows the host's
+    // skill-derived commands of those names by design
+    // (`opencode/packages/opencode/src/command/index.ts:141`).
+    expect(config.command?.["host-only"]?.template).toBe("host command");
   }));
 test("unset model and variant remain absent for host inheritance; roles stay read-only", async () =>
   fixture(async (root, home) => {
@@ -546,6 +550,10 @@ test("consensus roles register as read-only subagents and expose the ralplan com
     expect(typeof template).toBe("string");
     expect(template).toContain("ralplan");
     expect(template).toContain("$ARGUMENTS");
+    const interview = config.command?.["deep-interview"]?.template;
+    expect(typeof interview).toBe("string");
+    expect(interview).toContain("deep-interview");
+    expect(interview).toContain("$ARGUMENTS");
     await writeFile(
       join(root, ".open-gajae/open-gajae.jsonc"),
       JSON.stringify({
@@ -613,4 +621,18 @@ test("ralplan skill keeps the consensus contract and offers no execution path", 
   );
   expect(outsideNote).not.toMatch(/\*\*compact\*\*/i);
   expect(outsideNote).not.toMatch(/(?:\/\s*compact|compact\s*\/)/i);
+});
+
+test("neither SKILL.md carries the unsubstituted OMC arguments placeholder", async () => {
+  // OMC's trailing `Task: {{ARGUMENTS}}` is substituted by no host here: the
+  // explicit commands pass `$ARGUMENTS` through their own templates instead.
+  for (const skill of ["deep-interview", "ralplan"]) {
+    const body = await readFile(
+      new URL(`../skills/${skill}/SKILL.md`, import.meta.url),
+      "utf8",
+    );
+    expect(`${skill}: ${body.includes("{{ARGUMENTS}}")}`).toBe(
+      `${skill}: false`,
+    );
+  }
 });

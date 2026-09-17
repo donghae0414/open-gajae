@@ -354,7 +354,9 @@ ${runtimeSettings}
     },
   };
   // No `agent`, so the command runs on the session's current agent; Config.command
-  // entries have no `variant` field.
+  // entries have no `variant` field. Both entries shadow the host's skill-derived
+  // commands of the same name (`opencode/packages/opencode/src/command/index.ts:141`),
+  // so the turn carries this short template instead of the whole SKILL.md body.
   config.command = {
     ...config.command,
     ralplan: {
@@ -362,6 +364,12 @@ ${runtimeSettings}
         "Consensus planning: Planner → Architect → Critic until agreement",
       template:
         "Load the `ralplan` skill and run its consensus planning workflow for: $ARGUMENTS",
+    },
+    "deep-interview": {
+      description:
+        "Socratic requirements interview with ambiguity scoring; ends at an independent spec",
+      template:
+        "Load the `deep-interview` skill and run its Socratic interview for: $ARGUMENTS",
     },
   };
 }

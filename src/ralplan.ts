@@ -17,6 +17,9 @@ export const INJECTION_MARKERS = [
   "<ralplan-continuation>", // OMC src/hooks/persistent-mode/index.ts:2147
   "<session-restore>", // OMC src/hooks/bridge.ts:2074
   "<ralplan-notice>", // host addition: wraps the keyword, breaker and gate notices
+  // Host addition: wraps OMC's `[MAGIC KEYWORD: DEEP-INTERVIEW]` guide, which
+  // OMC emitted bare as `additionalContext` (scripts/keyword-detector.mjs:1544).
+  "<deep-interview-notice>",
 ] as const;
 
 export type InjectionMarker = (typeof INJECTION_MARKERS)[number];
@@ -28,6 +31,18 @@ export const RALPLAN_KEYWORD = /\b(ralplan)\b|(랄플랜)|(ラルプラン)/i; /
 export const RALPLAN_STOP_BLOCKER_MAX = 30; // OMC persistent-mode/index.ts:1876
 export const RALPLAN_STOP_BLOCKER_TTL_MS = 45 * 60 * 1000; // OMC persistent-mode/index.ts:1877
 export const RALPLAN_SKILL_NAME = "ralplan"; // skill/command name the host confirms
+
+export const DEEP_INTERVIEW_KEYWORD =
+  /\b(deep[\s-]interview|ouroboros)\b|(딥인터뷰)|(ディープインタビュー)/i; // OMC keyword-detector/index.ts:58
+/**
+ * The upstream Ouroboros CLI invocation form at the start of the prompt.
+ * OMC keyword-detector/index.ts:71, used as this keyword's skip predicate (:83-85).
+ */
+export const OUROBOROS_BRAND_AT_START = /^\s*\/?(?:ouroboros|ooo)\b/i;
+export const DEEP_INTERVIEW_SKILL_NAME = "deep-interview";
+
+/** OMC scripts/keyword-detector.mjs:37. */
+const SKILL_INVOCATION_USER_REQUEST_MAX = 1200;
 
 /**
  * Dormant by design (spec c6). OMC seeds this with `ralph`, `autopilot` and
@@ -873,6 +888,35 @@ function isInformationalKeywordContext(text: string, position: number, keywordLe
 }
 
 
+// OMC keyword-detector/index.ts:733-757. The generic guard every keyword except
+// `ralplan` uses: only `isInformationalKeywordContext` filters a match, with no
+// explicit-invocation requirement on top.
+function findActionableKeywordMatch(
+  text: string,
+  pattern: RegExp,
+): { keyword: string; position: number } | null {
+  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+  const globalPattern = new RegExp(pattern.source, flags);
+
+  for (const match of text.matchAll(globalPattern)) {
+    if (match.index === undefined) {
+      continue;
+    }
+
+    const keyword = match[0];
+    if (isInformationalKeywordContext(text, match.index, keyword.length, keyword)) {
+      continue;
+    }
+
+    return {
+      keyword,
+      position: match.index,
+    };
+  }
+
+  return null;
+}
+
 function findActionableRalplanMatch(
   text: string,
   pattern: RegExp,
@@ -915,5 +959,76 @@ export function detectRalplanKeyword(
   return findActionableRalplanMatch(
     sanitizeForKeywordDetection(text),
     RALPLAN_KEYWORD,
+  );
+}
+
+/**
+ * `deep-interview` fires where OMC's detector would fire it. Unlike `ralplan`
+ * this uses OMC's generic guard (`findActionableKeywordMatch`), which only
+ * excludes informational context — an explicit invocation context is not
+ * required, exactly as in OMC (`keyword-detector/index.ts:853-856`).
+ *
+ * The `ouroboros`/`ooo` CLI skip is OMC's `KEYWORD_SKIP_PREDICATES` entry
+ * (`index.ts:83-85`). Verified against OMC: the predicate is applied to the
+ * SANITIZED text, not the raw prompt (`index.ts:848-851` calls it with
+ * `cleanedText`), so this port sanitizes first and tests the result.
+ */
+export function detectDeepInterviewKeyword(
+  text: string,
+): { keyword: string; position: number } | null {
+  const cleaned = sanitizeForKeywordDetection(text);
+  if (OUROBOROS_BRAND_AT_START.test(cleaned)) return null;
+  return findActionableKeywordMatch(cleaned, DEEP_INTERVIEW_KEYWORD);
+}
+
+/** OMC scripts/keyword-detector.mjs:90-95, verbatim. */
+export function compactHookText(
+  text: string,
+  maxChars = SKILL_INVOCATION_USER_REQUEST_MAX,
+): string {
+  const notice =
+    '\n...[truncated; original user prompt remains available in the conversation]';
+  if (!text || text.length <= maxChars) return text || '';
+  if (maxChars <= notice.length) return notice.slice(0, Math.max(0, maxChars));
+  return `${text.slice(0, maxChars - notice.length).trimEnd()}${notice}`;
+}
+
+/**
+ * OMC's `createSkillInvocation` body (`scripts/keyword-detector.mjs:1544-1568`)
+ * for the `deep-interview` skill, with three host substitutions:
+ *
+ * - `Preferred invocation: /oh-my-claudecode:deep-interview` → `/deep-interview`,
+ *   the command `src/config.ts` registers.
+ * - OMC's `existsSync(skillPath)` branch is dropped. `skillPath` here is computed
+ *   from this package's own root, so the "locate skills/<name>/SKILL.md in the
+ *   active install" fallback OMC emitted for a missing path has no case to cover.
+ * - OMC's ralph-loop notice is omitted: it is `skillName === 'ralph'` only.
+ *
+ * `args` mirrors OMC's `createSkillInvocation` signature, but the keyword path
+ * always passes `''` (OMC `scripts/keyword-detector.mjs:1793` pushes
+ * `{ name: 'deep-interview', args: '' }`), so the hook never supplies one.
+ */
+export function deepInterviewMessage({
+  skillPath,
+  originalPrompt,
+  args = "",
+}: {
+  skillPath: string;
+  originalPrompt: string;
+  args?: string;
+}): string {
+  const argsSection = args ? `\nArguments: ${args}` : "";
+  return wrapInjected(
+    "<deep-interview-notice>",
+    `[MAGIC KEYWORD: ${DEEP_INTERVIEW_SKILL_NAME.toUpperCase()}]
+
+Skill routing detected: ${DEEP_INTERVIEW_SKILL_NAME}
+Preferred invocation: /${DEEP_INTERVIEW_SKILL_NAME}${args ? ` ${args}` : ""}
+Read fallback: open ${skillPath} and follow its SKILL.md instructions.${argsSection}
+
+User request (compact echo; original prompt remains authoritative):
+${compactHookText(originalPrompt)}
+
+IMPORTANT: Start the ${DEEP_INTERVIEW_SKILL_NAME} workflow immediately. If the slash invocation is unavailable, read the SKILL.md at the fallback path instead of relying on this compact guide.`,
   );
 }

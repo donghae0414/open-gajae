@@ -517,7 +517,18 @@ try {
     throw new Error(
       `native-ralplan-command: command.ralplan.template is ${JSON.stringify(ralplanTemplate)}`,
     );
-  // The resolved config is ~60KB; keep only the asserted slice in the report.
+  // Same parsed-field assertion for the second explicit command. Both shadow the
+  // host's skill-derived commands of the same name.
+  const deepInterviewTemplate =
+    resolvedConfig.command?.["deep-interview"]?.template;
+  if (
+    typeof deepInterviewTemplate !== "string" ||
+    !deepInterviewTemplate.includes("deep-interview")
+  )
+    throw new Error(
+      `native-deep-interview-command: command["deep-interview"].template is ${JSON.stringify(deepInterviewTemplate)}`,
+    );
+  // The resolved config is ~60KB; keep only the two asserted commands in the report.
   debugConfig.stdout = JSON.stringify({ command: resolvedConfig.command });
   const roles = [
     "open-gajae",

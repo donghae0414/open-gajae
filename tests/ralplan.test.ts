@@ -5,7 +5,10 @@ import * as ralplan from "../src/ralplan";
 import {
   applyRalplanGate,
   breakerMessage,
+  compactHookText,
   continuationMessage,
+  deepInterviewMessage,
+  detectDeepInterviewKeyword,
   detectRalplanKeyword,
   EXECUTION_GATE_KEYWORDS,
   gateMessage,
@@ -187,6 +190,11 @@ const BUILDERS: Record<string, () => string> = {
   keywordMessage: () => keywordMessage(),
   restoreMessage: () => restoreMessage({ active: true, started_at: iso(0) }),
   gateMessage: () => gateMessage(["ralph"]),
+  deepInterviewMessage: () =>
+    deepInterviewMessage({
+      skillPath: "/x/skills/deep-interview/SKILL.md",
+      originalPrompt: "딥인터뷰 하고 싶어",
+    }),
 };
 
 test("every exported message builder emits a marked block", () => {
@@ -205,6 +213,9 @@ test("every exported message builder emits a marked block", () => {
   expect(keywordMessage()).toContain("[MODE: RALPLAN]");
   expect(restoreMessage({ active: true })).toContain("[RALPLAN MODE RESTORED]");
   expect(gateMessage(["ralph", "team"])).toContain("Redirecting ralph, team");
+  expect(BUILDERS.deepInterviewMessage!()).toContain(
+    "[MAGIC KEYWORD: DEEP-INTERVIEW]",
+  );
 });
 
 test("restoreMessage reports the stored origin, phase and confirmation status", () => {
@@ -358,4 +369,123 @@ test("the OMC ASCII/Korean asymmetry is ported verbatim", () => {
   // symmetrized, because the guard is a contract with OMC.
   expect(fired("랄플랜 이거 정리해줘")).toBe(true);
   expect(fired("ralplan 이거 정리해줘")).toBe(false);
+});
+
+// --- deep-interview keyword and magic-keyword guide -------------------------
+//
+// The corpus is OMC's own, from
+// `oh-my-claudecode/src/hooks/keyword-detector/__tests__/index.test.ts`
+// (deep-interview cases at 2073-2131 and 2212-2215), and every string below was
+// cross-checked against OMC's live `detectKeywordsWithType` so a divergence
+// shows up here as a failing case.
+
+const interviewed = (text: string) => detectDeepInterviewKeyword(text) !== null;
+
+test("the deep-interview keyword fires on OMC's actionable phrasings", () => {
+  const fires = [
+    "딥인터뷰", // OMC index.test.ts:2074
+    "딥인터뷰 좀 해줘", // OMC index.test.ts:2129
+    "ディープインタビュー",
+    "ディープインタビューしたい", // OMC index.test.ts:2213
+    "please use ouroboros to clarify my requirements", // OMC index.test.ts:2122
+    "deep interview 하고 싶어",
+    "deep-interview this idea",
+  ];
+  for (const text of fires)
+    expect(`${text} → ${interviewed(text)}`).toBe(`${text} → true`);
+});
+
+test("the deep-interview keyword is quiet in OMC's informational and CLI cases", () => {
+  const quiet = [
+    "딥 인터뷰", // OMC index.test.ts:2080 — spaced, so the regex never matches
+    "고객 딥 인터뷰 질문지를 만들어줘", // OMC index.test.ts:2086
+    "딥인터뷰 방법 소개해줘", // OMC index.test.ts:397
+    // The `ouroboros`/`ooo` CLI skip predicate, OMC index.test.ts:2096-2117.
+    'ouroboros auto "Add /healthz endpoint"',
+    'ooo auto "Add /healthz endpoint"',
+    '/ouroboros:auto "Add /healthz endpoint"',
+    "ouroboros run",
+    // Our own `/deep-interview` command template (`src/config.ts`). Its only
+    // `deep-interview` sits inside backticks, which `removeCodeBlocks` strips.
+    // This is the expansion that now reaches `chat.message` for the slash
+    // command, because the explicit entry shadows the host's skill-derived one.
+    "Load the `deep-interview` skill and run its Socratic interview for: refactor this",
+  ];
+  for (const text of quiet)
+    expect(`${text} → ${interviewed(text)}`).toBe(`${text} → false`);
+
+  // Every injected builder, so a re-entering injection can never re-fire even
+  // if the marker guard in `src/hooks.ts` were removed.
+  for (const [name, build] of Object.entries(BUILDERS))
+    expect(`${name} → ${interviewed(build())}`).toBe(`${name} → false`);
+});
+
+test("the raw deep-interview SKILL.md body fires, and only the shadowing command keeps it out", async () => {
+  // Measured, not assumed: OMC's own detector fires `deep-interview` on this
+  // body too (cross-checked with `detectKeywordsWithType`), because the generic
+  // guard has no explicit-invocation requirement and the body names the skill
+  // in actionable prose. The guard is NOT weakened to hide this. What keeps the
+  // body out of `chat.message` is the explicit `/deep-interview` command in
+  // `src/config.ts`, which shadows the host's skill-derived expansion
+  // (`opencode/packages/opencode/src/command/index.ts:141`), so the turn
+  // carries the short template asserted quiet above.
+  const body = await readFile(
+    new URL("../skills/deep-interview/SKILL.md", import.meta.url),
+    "utf8",
+  );
+  expect(body).toContain("deep-interview");
+  expect(interviewed(body)).toBe(true);
+});
+
+test("deepInterviewMessage reproduces OMC's magic-keyword guide", () => {
+  const message = deepInterviewMessage({
+    skillPath: "/x/skills/deep-interview/SKILL.md",
+    originalPrompt: "딥인터뷰 하고 싶어",
+  });
+  expect(message.startsWith("<deep-interview-notice>")).toBe(true);
+  expect(message).toContain("[MAGIC KEYWORD: DEEP-INTERVIEW]");
+  expect(message).toContain("Skill routing detected: deep-interview");
+  // The keyword path always passes no args (OMC keyword-detector.mjs:1793).
+  expect(message).toContain("Preferred invocation: /deep-interview\n");
+  expect(message).toContain(
+    "Read fallback: open /x/skills/deep-interview/SKILL.md and follow its SKILL.md instructions.",
+  );
+  expect(message).not.toContain("Arguments:");
+  expect(message).toContain(
+    "User request (compact echo; original prompt remains authoritative):\n딥인터뷰 하고 싶어",
+  );
+  expect(message).toContain(
+    "IMPORTANT: Start the deep-interview workflow immediately.",
+  );
+
+  // `args` mirrors OMC's `createSkillInvocation` signature even though the hook
+  // never supplies one.
+  const withArgs = deepInterviewMessage({
+    skillPath: "/x/skills/deep-interview/SKILL.md",
+    originalPrompt: "x",
+    args: "foo",
+  });
+  expect(withArgs).toContain("Preferred invocation: /deep-interview foo");
+  expect(withArgs).toContain("Arguments: foo");
+});
+
+test("the echoed prompt is compacted at OMC's 1200-character budget", () => {
+  // OMC's notice starts with a newline (`keyword-detector.mjs:91`).
+  const truncation =
+    "\n...[truncated; original user prompt remains available in the conversation]";
+  const long = "딥인터뷰 ".repeat(300).slice(0, 1500);
+  expect(long).toHaveLength(1500);
+  const echo = compactHookText(long);
+  expect(echo.length).toBeLessThanOrEqual(1200);
+  expect(echo.endsWith(truncation)).toBe(true);
+  expect(
+    deepInterviewMessage({ skillPath: "/x/SKILL.md", originalPrompt: long }),
+  ).toContain(truncation);
+
+  // Verbatim OMC edge cases (`scripts/keyword-detector.mjs:90-95`).
+  expect(compactHookText("")).toBe("");
+  expect(compactHookText("", 10)).toBe("");
+  expect(compactHookText("short")).toBe("short");
+  // A budget no larger than the notice yields a bare prefix of the notice.
+  expect(compactHookText("x".repeat(200), 10)).toBe(truncation.slice(0, 10));
 });

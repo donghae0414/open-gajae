@@ -9,7 +9,7 @@ const plugin: Plugin = async ({ worktree, client }) => {
   const settings = await loadSettings(worktree);
   const store = new StateStore(worktree);
   const packageRoot = fileURLToPath(new URL("../", import.meta.url));
-  const hooks = createHooks(store, client);
+  const hooks = createHooks(store, client, packageRoot);
   return {
     tool: createTools(store),
     config: async (config) => configureAgents(config, settings, packageRoot),

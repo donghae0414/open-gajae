@@ -50,7 +50,7 @@ opencode debug agent open-gajae-critic
 
 ## Deep interview와 저장소
 
-`/deep-interview <idea>`는 요구사항 명확화를 시작합니다. native `question`을 한 번에 하나씩 사용합니다. 권한 거부 또는 도구 부재는 보고하며, 일반 문장 질문으로 대체하지 않습니다. 저장된 spec은 구현 승인이 아닙니다.
+`/deep-interview <idea>`는 요구사항 명확화를 시작합니다. 플러그인이 이 커맨드를 명시적으로 등록하므로 host가 skill에서 만든 같은 이름의 커맨드는 가려지고, skill 본문은 메시지로 확장되지 않고 `skill` 도구로 로드됩니다. 일반 텍스트의 `deep interview`/`deep-interview`/`딥인터뷰`/`ディープインタビュー`/`ouroboros` 키워드도 같은 skill로 진입합니다. OMC와 같이 정보성 문맥(질문, 인용·참조 언급, 코드·표·인용 블록 안의 텍스트)만 제외되며, `ouroboros`/`ooo` CLI 형식으로 시작하는 메시지는 무시합니다. 키워드 턴에는 OMC의 `[MAGIC KEYWORD: DEEP-INTERVIEW]` 안내가 주입되고 state는 만들지 않습니다. deep-interview에는 OMC와 같이 idle 연속 주입이 없으며, 질문이 열려 있는 동안은 native `question` 도구가 세션을 붙잡습니다. skill은 native `question`을 한 번에 하나씩 사용합니다. 권한 거부 또는 도구 부재는 보고하며, 일반 문장 질문으로 대체하지 않습니다. 저장된 spec은 구현 승인이 아닙니다.
 
 ambiguity 임계값에 도달해 spec을 저장한 뒤에는 인터뷰를 마칠지 더 구체화할지 묻습니다. 추가 인터뷰는 현재 세션과 이력을 유지하며, 임계값을 다시 확인하기 전에 요구사항 질문을 하나 더 하고 같은 spec 파일을 갱신합니다. 선택 메뉴 자체는 라운드에 포함하지 않습니다. 누적 `maxRounds`, 명시적 조기 종료와 취소는 그대로 적용하며, 도구 실패를 종료 동의로 취급하지 않습니다. 이는 프롬프트 수준의 대화 계약이며 호스트가 강제하는 상태 머신은 아닙니다.
 
@@ -72,7 +72,7 @@ ambiguity 임계값에 도달해 spec을 저장한 뒤에는 인터뷰를 마칠
 
 ## Ralplan
 
-`/ralplan [--interactive] [--deliberate] <task>`는 합의 계획을 시작합니다. 일반 텍스트의 `ralplan`/`랄플랜` 키워드도 같은 skill로 진입하지만, OMC와 같이 호출 문맥에서만 동작합니다: 직접 호출 접두(`$ralplan`, `!ralplan`, `force: ralplan`), 활성화 동사(`use`, `run`, `start`, `please`, `let's`), 또는 메시지 맨 앞의 키워드. 질문, 인용·참조 언급, 코드·표·인용 블록 안의 텍스트는 발화하지 않으며, 슬래시 커맨드가 메시지로 확장한 다른 skill 본문도 발화하지 않습니다. 키워드는 모든 primary agent에서 동작하지만, agent가 `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic`인 메시지는 키워드 hook이 무시합니다.
+`/ralplan [--interactive] [--deliberate] <task>`는 합의 계획을 시작합니다. 일반 텍스트의 `ralplan`/`랄플랜` 키워드도 같은 skill로 진입하지만, OMC와 같이 호출 문맥에서만 동작합니다: 직접 호출 접두(`$ralplan`, `!ralplan`, `force: ralplan`), 활성화 동사(`use`, `run`, `start`, `please`, `let's`), 또는 메시지 맨 앞의 키워드. 질문, 인용·참조 언급, 코드·표·인용 블록 안의 텍스트는 발화하지 않으며, 슬래시 커맨드가 메시지로 확장한 다른 skill 본문도 발화하지 않습니다. 키워드는 모든 primary agent에서 동작하지만, agent가 `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic`인 메시지는 키워드 hook이 무시합니다. 한 메시지에 ralplan과 deep-interview 키워드가 함께 있으면 두 안내가 ralplan부터 순서대로 주입되고 ralplan state만 시딩됩니다.
 
 native `question` 세 개는 항상 켜져 있습니다. Planner 초안 직후의 intent 확인, 합의 종료 후 확인, 그리고 `Refine further`/`Stop here`를 제공하는 최종 승인 질문입니다. `--interactive`는 draft review만 추가합니다. `--deliberate`는 pre-mortem과 확장된 test plan을 추가하며, 명시적 고위험 신호에서 자동으로 켜집니다.
 

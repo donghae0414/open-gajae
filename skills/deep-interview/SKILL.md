@@ -66,7 +66,7 @@ Deep Interview threshold: <resolvedThresholdPercent> (source: <resolvedThreshold
 
 ## Phase 1: Initialize
 
-1. **Parse the user's idea** from `{{ARGUMENTS}}`
+1. **Parse the user's idea** from the invoking message: the `/deep-interview` command arguments, or the text that carried the keyword
 2. **Detect brownfield vs greenfield**:
    - Use bounded native `task(subagent_type:"open-gajae-explore")` only when repository evidence is needed and native permission allows it.
    - If source files exist AND the user's idea references modifying/extending something: **brownfield**
@@ -692,6 +692,6 @@ Each mode is used exactly once, then normal Socratic questioning resumes. Modes 
 
 ## Source and host substitutions
 
-Adapted from OMC v5.4.0 `skills/deep-interview/SKILL.md` (MIT). Its substantive Purpose, usage criteria, Phase 0–4 structure, Round 0 topology, question-generation prompt, scoring prompt/formulas, Round 1 ontology special case, `>50%` rename rule, reports, 4/6/8 challenge prompts, examples, and 20-round default are retained. Host substitutions are OpenCode native `question`, `task`, `state_read`, `state_write`, Read, and `write`/`apply_patch`; resolved Open-gajae JSONC settings; trusted-current-session state results; `{specsDir}/deep-interview-{slug}.md`; and advisory `companyContext`. OMC settings/state paths, Claude-only models/tools, session selectors, and receipts are removed. The downstream ralplan consensus-planning bridge is retained; the autopilot/team/ralph/autoresearch/ultragoal execution bridges are removed. OMX rhythm, mandatory pressure, and four-closure enforcement are not retained. See THIRD-PARTY-NOTICES.md and licenses/.
+Adapted from OMC v5.4.0 `skills/deep-interview/SKILL.md` (MIT). Its substantive Purpose, usage criteria, Phase 0–4 structure, Round 0 topology, question-generation prompt, scoring prompt/formulas, Round 1 ontology special case, `>50%` rename rule, reports, 4/6/8 challenge prompts, examples, and 20-round default are retained. Host substitutions are OpenCode native `question`, `task`, `state_read`, `state_write`, Read, and `write`/`apply_patch`; resolved Open-gajae JSONC settings; trusted-current-session state results; `{specsDir}/deep-interview-{slug}.md`; and advisory `companyContext`. OMC settings/state paths, Claude-only models/tools, session selectors, and receipts are removed. The downstream ralplan consensus-planning bridge is retained; the autopilot/team/ralph/autoresearch/ultragoal execution bridges are removed. OMX rhythm, mandatory pressure, and four-closure enforcement are not retained. OMC's `ARGUMENTS` placeholder (its closing `Task:` line and the Phase 1 parse step) is not substituted by any host (Claude Code appends an `ARGUMENTS:` line instead), so each occurrence is replaced by a line describing where the arguments arrive. See THIRD-PARTY-NOTICES.md and licenses/.
 
-Task: {{ARGUMENTS}}
+Task: the user's request is the message that invoked this skill — the `/deep-interview` command arguments, or the text that carried the keyword. No placeholder is substituted here.

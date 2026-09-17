@@ -6,7 +6,13 @@ import { dirname, join } from "node:path";
 import type { Hooks } from "@opencode-ai/plugin";
 import { createHooks, type RalplanClient, type RalplanHooks } from "../src/hooks";
 import { continuationMessage } from "../src/ralplan";
-import { RALPLAN_MODE, StateStore, type ExplicitStatePatch } from "../src/state";
+import {
+  DEEP_INTERVIEW_MODE,
+  RALPLAN_MODE,
+  StateStore,
+  type ExplicitStatePatch,
+  type StateMode,
+} from "../src/state";
 
 type ChatInput = Parameters<NonNullable<Hooks["chat.message"]>>[0];
 type ChatOutput = Parameters<NonNullable<Hooks["chat.message"]>>[1];
@@ -20,6 +26,8 @@ type PromptBody = {
   model?: { providerID: string; modelID: string };
   parts: Array<{ type: "text"; text: string; synthetic?: boolean }>;
 };
+
+const PACKAGE_ROOT = new URL("../", import.meta.url).pathname;
 
 const MODEL = { providerID: "openai", modelID: "gpt-5.6-luna" };
 const USER = { info: { role: "user", agent: "open-gajae", model: MODEL } };
@@ -73,7 +81,14 @@ async function fixture(
     const root = await fs.realpath(dir);
     const store = new StateStore(root);
     const { client, calls } = fakeClient(options);
-    await run({ root, store, hooks: createHooks(store, client), calls });
+    // The real plugin root, so `deepInterviewSkillPath` points at the shipped
+    // `skills/deep-interview/SKILL.md` exactly as it does at runtime.
+    await run({
+      root,
+      store,
+      hooks: createHooks(store, client, PACKAGE_ROOT),
+      calls,
+    });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -144,11 +159,23 @@ const seed = (store: StateStore, sessionID: string, patch: ExplicitStatePatch) =
 const raw = (store: StateStore, sessionID: string) =>
   readFile(store.statePath(sessionID, RALPLAN_MODE), "utf8");
 
-async function missing(store: StateStore, sessionID: string) {
+async function missing(
+  store: StateStore,
+  sessionID: string,
+  mode: StateMode = RALPLAN_MODE,
+) {
   return fs
-    .lstat(store.statePath(sessionID, RALPLAN_MODE))
+    .lstat(store.statePath(sessionID, mode))
     .then(() => false)
     .catch(() => true);
+}
+
+/** Neither mode left a state file behind. */
+async function noState(store: StateStore, sessionID: string) {
+  return (
+    (await missing(store, sessionID, RALPLAN_MODE)) &&
+    (await missing(store, sessionID, DEEP_INTERVIEW_MODE))
+  );
 }
 
 function strip(state: Record<string, unknown> | undefined) {
@@ -705,21 +732,32 @@ test("the /ralplan same-turn mark protects one message and no more", async () =>
   });
 });
 
-test("R18 — an expanded deep-interview skill body changes nothing", async () => {
+test("R18 — an expanded deep-interview skill body seeds nothing", async () => {
   await fixture(async ({ store, hooks, calls }) => {
     const id = nextSession("deep-interview-expansion");
     const body = await readFile(
       new URL("../skills/deep-interview/SKILL.md", import.meta.url),
       "utf8",
     );
-    // What OpenCode actually delivers for `/deep-interview <args>`: the whole
-    // SKILL.md plus the base-directory tail
-    // (`opencode/packages/opencode/src/command/index.ts:140-149`).
+    // What OpenCode delivered for `/deep-interview <args>` BEFORE this plugin
+    // registered its own `deep-interview` command: the whole SKILL.md plus the
+    // base-directory tail (`opencode/packages/opencode/src/command/index.ts:140-149`).
+    // The explicit entry in `src/config.ts` now shadows that expansion, so this
+    // text no longer reaches `chat.message` for the slash command.
     const expanded = `${body}\n\nBase directory for this skill: /x/skills/deep-interview\nRelative paths in this skill (e.g., scripts/, references/) are relative to this base directory.`;
     expect(expanded).toContain("ralplan");
 
-    expect(await deliver(hooks, id, expanded)).toHaveLength(0);
-    expect(await missing(store, id)).toBe(true);
+    // The ralplan half of R18 is unchanged: no ralplan notice, no state, no
+    // continuation. The body does fire the deep-interview keyword — measured
+    // against OMC's own detector, which fires on it too (see the matching case
+    // in tests/ralplan.test.ts) — so one magic block rides, and it seeds
+    // nothing at all.
+    const appended = await deliver(hooks, id, expanded);
+    expect(appended).toHaveLength(1);
+    expect(String((appended[0] as unknown as { text: string }).text)).toContain(
+      "[MAGIC KEYWORD: DEEP-INTERVIEW]",
+    );
+    expect(await noState(store, id)).toBe(true);
     expect(calls).toHaveLength(0);
   });
 });
@@ -839,5 +877,89 @@ test("event types other than idle and error are ignored", async () => {
     } as unknown as EventInput);
     expect(calls).toHaveLength(0);
     expect((await store.read(id, RALPLAN_MODE))?.breaker_count).toBeUndefined();
+  });
+});
+
+test("the deep-interview keyword appends the magic block and writes no state", async () => {
+  await fixture(async ({ store, hooks, calls }) => {
+    const id = nextSession("di-keyword");
+    const appended = await deliver(hooks, id, "딥인터뷰 하고 싶어");
+    expect(appended).toHaveLength(1);
+    const text = String((appended[0] as unknown as { text: string }).text);
+    expect(text.startsWith("<deep-interview-notice>")).toBe(true);
+    expect(text).toContain("[MAGIC KEYWORD: DEEP-INTERVIEW]");
+    expect(text).toContain("Preferred invocation: /deep-interview");
+    // `createHooks` resolves the fallback against the real package root.
+    expect(text).toContain("skills/deep-interview/SKILL.md and follow");
+
+    // Unlike ralplan, this keyword seeds nothing in either mode.
+    expect(await noState(store, id)).toBe(true);
+    expect(calls).toHaveLength(0);
+
+    // G2: the injected block fed back in is ignored, so it cannot re-inject.
+    expect(await deliver(hooks, id, text)).toHaveLength(0);
+    expect(await noState(store, id)).toBe(true);
+  });
+});
+
+test("the three role subagents are denied for the deep-interview keyword", async () => {
+  await fixture(async ({ store, hooks }) => {
+    for (const agent of [
+      "open-gajae-planner",
+      "open-gajae-architect",
+      "open-gajae-critic",
+    ]) {
+      const id = nextSession("di-role");
+      expect(
+        await deliver(hooks, id, "딥인터뷰 하고 싶어", agent),
+      ).toHaveLength(0);
+      expect(await noState(store, id)).toBe(true);
+    }
+  });
+});
+
+test("both keywords in one message inject ralplan first, then deep-interview, and seed ralplan only", async () => {
+  await fixture(async ({ store, hooks }) => {
+    const id = nextSession("di-both");
+    // Cross-checked against OMC's `detectKeywordsWithType`, which returns
+    // ["ralplan", "deep-interview"] in that order for this string
+    // (KEYWORD_PRIORITY, keyword-detector/index.ts:90-95).
+    const appended = await deliver(
+      hooks,
+      id,
+      "랄플랜 세워줘, 그 전에 딥인터뷰 해줘",
+    );
+    expect(appended).toHaveLength(2);
+    const texts = appended.map((part) =>
+      String((part as unknown as { text: string }).text),
+    );
+    expect(texts[0]).toContain("[MODE: RALPLAN]");
+    expect(texts[1]).toContain("[MAGIC KEYWORD: DEEP-INTERVIEW]");
+
+    // Only ralplan seeds; deep-interview never writes state.
+    expect((await store.read(id, RALPLAN_MODE))?.active).toBe(true);
+    expect(await missing(store, id, DEEP_INTERVIEW_MODE)).toBe(true);
+  });
+});
+
+test("the /deep-interview command template changes nothing", async () => {
+  await fixture(async ({ store, hooks, calls }) => {
+    const id = nextSession("di-command");
+    // The `command.execute.before` hook only knows `ralplan`, so the explicit
+    // `/deep-interview` command seeds nothing.
+    await commandCall(hooks, id, "deep-interview");
+    expect(await noState(store, id)).toBe(true);
+
+    // And its expanded template is quiet: the only `deep-interview` sits in
+    // backticks, which `removeCodeBlocks` strips.
+    expect(
+      await deliver(
+        hooks,
+        id,
+        "Load the `deep-interview` skill and run its Socratic interview for: refactor this",
+      ),
+    ).toHaveLength(0);
+    expect(await noState(store, id)).toBe(true);
+    expect(calls).toHaveLength(0);
   });
 });
