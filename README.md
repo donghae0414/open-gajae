@@ -72,7 +72,7 @@ A user may explicitly name another session's spec or plan as an input. Native Re
 
 ## Ralplan
 
-`/ralplan [--interactive] [--deliberate] <task>` starts consensus planning. The `ralplan` and `랄플랜` keywords enter the same skill from plain text. The keyword works from any primary agent. Messages whose agent is `open-gajae-planner`, `open-gajae-architect`, or `open-gajae-critic` are ignored by the keyword hook.
+`/ralplan [--interactive] [--deliberate] <task>` starts consensus planning. The `ralplan` and `랄플랜` keywords enter the same skill from plain text, but only in an invocation context, as in OMC: a direct prefix (`$ralplan`, `!ralplan`, `force: ralplan`), an activation verb (`use`, `run`, `start`, `please`, `let's`), or the keyword at the start of the message. Questions, quoted or referenced mentions, and text inside code, tables, or block quotes do not activate it, and neither does the body of another skill that a slash command expands into the message. The keyword works from any primary agent. Messages whose agent is `open-gajae-planner`, `open-gajae-architect`, or `open-gajae-critic` are ignored by the keyword hook.
 
 Three native `question` prompts are always on: an intent check after the Planner draft, a post-consensus check, and a final approval question offering `Refine further` and `Stop here`. `--interactive` adds only the draft review. `--deliberate` adds a pre-mortem and an expanded test plan, and it auto-enables on explicit high-risk signals.
 
@@ -90,7 +90,7 @@ State tools accept `mode: "deep-interview" | "ralplan"`. The default is `deep-in
 
 A continuation hook re-prompts the session on `session.idle` while ralplan state is active. It inherits the agent and model from the last user message. A circuit breaker stops reinforcement after 30 injections, and the breaker counter expires after 45 minutes. When the user interrupts a turn with Esc (a `MessageAbortedError` on `session.error`, or an abort error left on the last assistant message), that idle is skipped and the breaker is not advanced; state stays active, so continuation resumes after the user's next turn.
 
-`awaiting_confirmation` marks a state that the keyword seeded before the model opened the skill. The host clears it when it observes the `skill` invocation or the `/ralplan` command; no timer clears it. A stale seed is cleared by the next user message that carries no ralplan keyword.
+`awaiting_confirmation` marks a state that the keyword or the `/ralplan` command seeded before the model opened the skill. The host clears it when it observes the `skill` invocation; no timer clears it. A stale seed is cleared by the next user message that carries no ralplan keyword.
 
 `[RALPLAN MODE RESTORED]` appears at most once per resume and only within the same session. State is per-session; there is no cross-session resume.
 

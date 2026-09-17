@@ -384,7 +384,7 @@ test("a corrupt state file leaves every hook inert and the file byte-identical",
 
 test("the ralplan keyword appends the notice and seeds state", async () => {
   await fixture(async ({ store, hooks, calls }) => {
-    for (const text of ["ralplan 이거 정리해줘", "랄플랜 <task>"]) {
+    for (const text of ["ralplan 계획 세워줘", "랄플랜 <task>"]) {
       const id = nextSession("keyword");
       const appended = await deliver(hooks, id, text);
       expect(appended).toHaveLength(1);
@@ -486,7 +486,7 @@ test("restore fires on a real resume only, never on the turn after seeding", asy
 test("started_at is written once and survives later hook writes", async () => {
   await fixture(async ({ store, hooks }) => {
     const id = nextSession("started-at");
-    await deliver(hooks, id, "ralplan 정리해줘");
+    await deliver(hooks, id, "ralplan 계획 세워줘");
     const seeded = await store.read(id, RALPLAN_MODE);
     await skillCall(hooks, id, { name: "ralplan" });
     await idle(hooks, id);
@@ -526,19 +526,41 @@ test("the skill tool call confirms a seeded ralplan state and nothing else does"
   });
 });
 
-test("the ralplan command clears the flag and other commands do not", async () => {
+test("the ralplan command seeds the state and other commands do not", async () => {
   await fixture(async ({ store, hooks }) => {
-    const cleared = nextSession("cmd-clear");
-    await seed(store, cleared, {
+    // The template the command expands to is quiet under the ported guard, so
+    // this hook is the only seeding path left for `/ralplan` (plan §4, mirroring
+    // OMC's `[RALPLAN INIT]` branch). It never clears.
+    const seeded = nextSession("cmd-seed");
+    await commandCall(hooks, seeded, "ralplan");
+    const state = await store.read(seeded, RALPLAN_MODE);
+    expect(state?.active).toBe(true);
+    expect(state?.awaiting_confirmation).toBe(true);
+    expect(state?.current_phase).toBe("ralplan");
+    expect(state?.breaker_count).toBe(0);
+    expect(state?.started_at).toBe(state?.restored_at as string);
+
+    // An already-active session is left exactly as it was: `seedState` returns
+    // undefined, so nothing is written and nothing is cleared.
+    const active = nextSession("cmd-active");
+    await seed(store, active, {
       active: true,
       awaiting_confirmation: true,
       current_phase: "ralplan",
     });
-    await commandCall(hooks, cleared, "ralplan");
-    expect((await store.read(cleared, RALPLAN_MODE))?.awaiting_confirmation).toBe(
-      false,
+    const unchanged = await raw(store, active);
+    await commandCall(hooks, active, "ralplan");
+    expect(await raw(store, active)).toBe(unchanged);
+
+    // An inactive leftover is re-armed rather than resumed.
+    const inactive = nextSession("cmd-inactive");
+    await seed(store, inactive, { active: false, current_phase: "ralplan" });
+    await commandCall(hooks, inactive, "ralplan");
+    expect((await store.read(inactive, RALPLAN_MODE))?.awaiting_confirmation).toBe(
+      true,
     );
 
+    // Any other command writes nothing at all.
     const kept = nextSession("cmd-keep");
     await seed(store, kept, {
       active: true,
@@ -549,8 +571,8 @@ test("the ralplan command clears the flag and other commands do not", async () =
     await commandCall(hooks, kept, "deep-interview");
     expect(await raw(store, kept)).toBe(untouched);
 
-    const empty = nextSession("cmd-empty");
-    await commandCall(hooks, empty, "ralplan");
+    const empty = nextSession("cmd-other-empty");
+    await commandCall(hooks, empty, "deep-interview");
     expect(await missing(store, empty)).toBe(true);
   });
 });
@@ -625,35 +647,80 @@ test("F1 — a stale seed then a real entry write never raises a restore banner"
   });
 });
 
-test("F7 — a /ralplan command turn ends with the confirmation flag cleared", async () => {
+test("F7 — the /ralplan sequence seeds once and the skill call clears it", async () => {
   await fixture(async ({ store, hooks, calls }) => {
     const id = nextSession("f7");
 
-    // 1. `command.execute.before` runs first and no-ops: there is no state yet.
+    // 1. `command.execute.before` is the seeding authority now.
     await commandCall(hooks, id, "ralplan");
-    expect(await missing(store, id)).toBe(true);
+    const seeded = await store.read(id, RALPLAN_MODE);
+    expect(seeded?.active).toBe(true);
+    expect(seeded?.awaiting_confirmation).toBe(true);
+    expect(typeof seeded?.started_at).toBe("string");
+    expect(seeded?.started_at).toBe(seeded?.restored_at as string);
+    const afterSeed = await raw(store, id);
 
-    // 2. The expanded template reaches `chat.message` and re-seeds the flag.
+    // 2. The expanded template reaches `chat.message` and is quiet: its only
+    // `ralplan` is inside backticks, so nothing is appended and, because
+    // `started_at` equals `restored_at`, no restore banner fires either. The
+    // byte comparison is the single-write assertion.
     const appended = await deliver(
       hooks,
       id,
-      "Run the ralplan consensus planning workflow on: tidy up the hooks",
+      "Load the `ralplan` skill and run its consensus planning workflow for: tidy up the hooks",
     );
-    expect(appended).toHaveLength(1);
-    expect((await store.read(id, RALPLAN_MODE))?.awaiting_confirmation).toBe(true);
+    expect(appended).toHaveLength(0);
+    expect(await raw(store, id)).toBe(afterSeed);
 
     // An idle between events 2 and 3 is silenced by the seed.
     await idle(hooks, id);
     expect(calls).toHaveLength(0);
 
-    // 3. The `skill` call is the authority and clears the flag.
+    // 3. The `skill` call is the sole confirmation path.
     await skillCall(hooks, id, { name: "ralplan" });
-    expect((await store.read(id, RALPLAN_MODE))?.awaiting_confirmation).not.toBe(true);
+    expect((await store.read(id, RALPLAN_MODE))?.awaiting_confirmation).toBe(false);
 
     // An idle after event 3 reinforces.
     await idle(hooks, id);
     expect(calls).toHaveLength(1);
     expect(calls[0].parts[0].text).toContain("REINFORCEMENT 1/30");
+  });
+});
+
+test("the /ralplan same-turn mark protects one message and no more", async () => {
+  await fixture(async ({ store, hooks }) => {
+    const id = nextSession("cmd-mark");
+    await commandCall(hooks, id, "ralplan");
+
+    // The template turn consumes the mark and leaves the seed alone.
+    expect(await deliver(hooks, id, "Load the `ralplan` skill and run it")).toHaveLength(
+      0,
+    );
+    expect((await store.read(id, RALPLAN_MODE))?.awaiting_confirmation).toBe(true);
+
+    // The next quiet message is an ordinary turn, so the unacted seed is stale
+    // and step 2 clears it exactly as it would for a keyword-seeded one.
+    expect(await deliver(hooks, id, "그건 됐고 다른 걸 해줘")).toHaveLength(0);
+    expect(await missing(store, id)).toBe(true);
+  });
+});
+
+test("R18 — an expanded deep-interview skill body changes nothing", async () => {
+  await fixture(async ({ store, hooks, calls }) => {
+    const id = nextSession("deep-interview-expansion");
+    const body = await readFile(
+      new URL("../skills/deep-interview/SKILL.md", import.meta.url),
+      "utf8",
+    );
+    // What OpenCode actually delivers for `/deep-interview <args>`: the whole
+    // SKILL.md plus the base-directory tail
+    // (`opencode/packages/opencode/src/command/index.ts:140-149`).
+    const expanded = `${body}\n\nBase directory for this skill: /x/skills/deep-interview\nRelative paths in this skill (e.g., scripts/, references/) are relative to this base directory.`;
+    expect(expanded).toContain("ralplan");
+
+    expect(await deliver(hooks, id, expanded)).toHaveLength(0);
+    expect(await missing(store, id)).toBe(true);
+    expect(calls).toHaveLength(0);
   });
 });
 

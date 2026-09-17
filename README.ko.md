@@ -72,7 +72,7 @@ ambiguity 임계값에 도달해 spec을 저장한 뒤에는 인터뷰를 마칠
 
 ## Ralplan
 
-`/ralplan [--interactive] [--deliberate] <task>`는 합의 계획을 시작합니다. 일반 텍스트의 `ralplan`/`랄플랜` 키워드도 같은 skill로 진입합니다. 키워드는 모든 primary agent에서 동작하지만, agent가 `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic`인 메시지는 키워드 hook이 무시합니다.
+`/ralplan [--interactive] [--deliberate] <task>`는 합의 계획을 시작합니다. 일반 텍스트의 `ralplan`/`랄플랜` 키워드도 같은 skill로 진입하지만, OMC와 같이 호출 문맥에서만 동작합니다: 직접 호출 접두(`$ralplan`, `!ralplan`, `force: ralplan`), 활성화 동사(`use`, `run`, `start`, `please`, `let's`), 또는 메시지 맨 앞의 키워드. 질문, 인용·참조 언급, 코드·표·인용 블록 안의 텍스트는 발화하지 않으며, 슬래시 커맨드가 메시지로 확장한 다른 skill 본문도 발화하지 않습니다. 키워드는 모든 primary agent에서 동작하지만, agent가 `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic`인 메시지는 키워드 hook이 무시합니다.
 
 native `question` 세 개는 항상 켜져 있습니다. Planner 초안 직후의 intent 확인, 합의 종료 후 확인, 그리고 `Refine further`/`Stop here`를 제공하는 최종 승인 질문입니다. `--interactive`는 draft review만 추가합니다. `--deliberate`는 pre-mortem과 확장된 test plan을 추가하며, 명시적 고위험 신호에서 자동으로 켜집니다.
 
@@ -90,7 +90,7 @@ native `question` 세 개는 항상 켜져 있습니다. Planner 초안 직후�
 
 continuation hook은 ralplan state가 active인 동안 `session.idle`마다 세션에 다시 프롬프트를 넣습니다. agent와 model은 마지막 user 메시지에서 상속합니다. circuit breaker는 30회 주입에서 멈추고, breaker 카운터는 45분이 지나면 만료됩니다. 사용자가 Esc로 턴을 중단한 경우(`session.error`의 `MessageAbortedError`, 또는 마지막 assistant 메시지에 남은 abort 오류)에는 그 idle을 건너뛰고 breaker도 올리지 않습니다. state는 active로 남아 있으므로 다음 사용자 턴이 끝나면 continuation이 다시 동작합니다.
 
-`awaiting_confirmation`은 키워드가 state를 시딩했지만 모델이 아직 skill을 열지 않은 상태를 뜻합니다. host가 `skill` 호출 또는 `/ralplan` 커맨드를 관찰하면 지워지며, 타이머로는 지워지지 않습니다. 남겨진 seed는 ralplan 키워드가 없는 다음 사용자 메시지가 지웁니다.
+`awaiting_confirmation`은 키워드 또는 `/ralplan` 커맨드가 state를 시딩했지만 모델이 아직 skill을 열지 않은 상태를 뜻합니다. host가 `skill` 호출을 관찰하면 지워지며, 타이머로는 지워지지 않습니다. 남겨진 seed는 ralplan 키워드가 없는 다음 사용자 메시지가 지웁니다.
 
 `[RALPLAN MODE RESTORED]`는 같은 세션 안에서 재개당 최대 한 번만 나타납니다. state는 세션별이므로 세션 간 복원은 없습니다.
 

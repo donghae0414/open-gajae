@@ -1,5 +1,6 @@
 // Ralplan host hooks: continuation on idle, keyword/restore on chat.message,
-// and the two confirmation hooks that replace OMC's awaiting-confirmation timer.
+// the `skill` tool call that replaces OMC's awaiting-confirmation timer, and the
+// `/ralplan` command hook that seeds the state the keyword guard no longer does.
 //
 // The idle continuation carries two layers of user-interrupt detection that OMC
 // has no counterpart for, because Claude Code does not run its Stop hook on an
@@ -15,12 +16,13 @@ import {
   applyRalplanGate,
   breakerMessage,
   continuationMessage,
+  detectRalplanKeyword,
   gateMessage,
   INJECTION_MARKERS,
   keywordMessage,
-  RALPLAN_KEYWORD,
   RALPLAN_SKILL_NAME,
   restoreMessage,
+  sanitizeForKeywordDetection,
   seedState,
   shouldContinue,
 } from "./ralplan.js";
@@ -264,6 +266,18 @@ export function createHooks(
    */
   const abortedAt = new Map<string, number>();
 
+  /**
+   * Sessions whose `/ralplan` command hook has just seeded, awaiting the
+   * `chat.message` of that same turn. The expanded command template is quiet
+   * under the keyword guard, so without this mark step 2 would read the seed
+   * the command hook wrote microseconds earlier as a stale one and clear it,
+   * undoing the only seeding path `/ralplan` has left. Step 2 means "a seed a
+   * previous turn left unacted on"; a seed from this turn is not that. The mark
+   * is consumed by the next `chat.message`, whatever that message decides, so a
+   * command turn that never produces one cannot leave an entry behind.
+   */
+  const commandSeeded = new Set<string>();
+
   const event: RalplanHooks["event"] = async ({ event }) => {
     if (event.type === "session.error") {
       const sessionID = event.properties.sessionID;
@@ -369,7 +383,10 @@ export function createHooks(
 
       const text = texts.join("\n");
       const sessionID = input.sessionID;
-      const detected = RALPLAN_KEYWORD.test(text) ? ["ralplan"] : [];
+      // OMC's guard, computed once and used by both step 2 and step 4: a mention,
+      // a question, a quoted example or a pasted skill body is not an invocation.
+      const cleaned = sanitizeForKeywordDetection(text);
+      const detected = detectRalplanKeyword(text) !== null ? ["ralplan"] : [];
       let state = await readState(sessionID);
       const appended: string[] = [];
 
@@ -377,10 +394,12 @@ export function createHooks(
       // A keyword the model never acted on cannot leave a permanently
       // active-but-silent state. Clearing here, before the restore check, also
       // means such a seed can never raise a restore banner on a later turn.
+      const seededThisTurn = commandSeeded.delete(sessionID);
       if (
         state?.active === true &&
         state.awaiting_confirmation === true &&
-        detected.length === 0
+        detected.length === 0 &&
+        !seededThisTurn
       ) {
         try {
           await store.clear(sessionID, RALPLAN_MODE);
@@ -417,7 +436,7 @@ export function createHooks(
 
       // Step 5 — gate. Dormant while EXECUTION_GATE_KEYWORDS is empty; the call
       // site stays so enabling it is a one-line change.
-      const gate = applyRalplanGate(detected, text);
+      const gate = applyRalplanGate(detected, cleaned);
       if (gate.gateApplied) appended.push(gateMessage(gate.gatedKeywords));
 
       if (appended.length === 0) return;
@@ -452,15 +471,29 @@ export function createHooks(
     }
   };
 
-  // Belt-and-braces by design: a `/ralplan` turn fires this before the
-  // seeding `chat.message`, so it cannot be the authority. The `skill` tool
-  // call that follows is.
+  // The explicit-slash seeding path, and the only one left for `/ralplan`: the
+  // command expands to a template whose only `ralplan` sits inside backticks, so
+  // the `chat.message` guard reads it as quiet and never seeds. This mirrors
+  // OMC's `[RALPLAN INIT]` branch (`bridge.ts:1539-1550`,
+  // `seedRalplanStartupState`), which seeds off the raw slash invocation rather
+  // than off keyword detection. It never clears: `tool.execute.before` with
+  // `skill(name="ralplan")` is the sole confirmation path.
   const commandExecuteBefore: RalplanHooks["command.execute.before"] = async (
     input,
   ) => {
     try {
       if (input.command !== RALPLAN_SKILL_NAME) return;
-      await confirmRalplan(input.sessionID);
+      const sessionID = input.sessionID;
+      // Set before the read, so the mark is in place even if the write below
+      // throws on a corrupt state file: the template message that follows must
+      // never be the thing that clears an awaiting seed.
+      commandSeeded.add(sessionID);
+      const state = await readState(sessionID);
+      // `seedState` returns undefined for an already-active state, so an
+      // in-progress session is left exactly as it was.
+      const patch = seedState(state, new Date().toISOString());
+      if (patch) await store.patch(sessionID, patch, RALPLAN_MODE);
+      else log("ralplan state already active; /ralplan skipped re-seed");
     } catch (error) {
       log("command.execute.before handler failed", error);
     }
