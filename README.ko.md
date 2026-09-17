@@ -88,7 +88,7 @@ native `question` 세 개는 항상 켜져 있습니다. Planner 초안 직후�
 
 상태 도구는 `mode: "deep-interview" | "ralplan"`을 받습니다. 기본값은 `deep-interview`이므로 기존 deep-interview 동작은 바뀌지 않습니다.
 
-continuation hook은 ralplan state가 active인 동안 `session.idle`마다 세션에 다시 프롬프트를 넣습니다. agent와 model은 마지막 user 메시지에서 상속합니다. circuit breaker는 30회 주입에서 멈추고, breaker 카운터는 45분이 지나면 만료됩니다.
+continuation hook은 ralplan state가 active인 동안 `session.idle`마다 세션에 다시 프롬프트를 넣습니다. agent와 model은 마지막 user 메시지에서 상속합니다. circuit breaker는 30회 주입에서 멈추고, breaker 카운터는 45분이 지나면 만료됩니다. 사용자가 Esc로 턴을 중단한 경우(`session.error`의 `MessageAbortedError`, 또는 마지막 assistant 메시지에 남은 abort 오류)에는 그 idle을 건너뛰고 breaker도 올리지 않습니다. state는 active로 남아 있으므로 다음 사용자 턴이 끝나면 continuation이 다시 동작합니다.
 
 `awaiting_confirmation`은 키워드가 state를 시딩했지만 모델이 아직 skill을 열지 않은 상태를 뜻합니다. host가 `skill` 호출 또는 `/ralplan` 커맨드를 관찰하면 지워지며, 타이머로는 지워지지 않습니다. 남겨진 seed는 ralplan 키워드가 없는 다음 사용자 메시지가 지웁니다.
 

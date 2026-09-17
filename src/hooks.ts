@@ -1,6 +1,11 @@
 // Ralplan host hooks: continuation on idle, keyword/restore on chat.message,
 // and the two confirmation hooks that replace OMC's awaiting-confirmation timer.
 //
+// The idle continuation carries two layers of user-interrupt detection that OMC
+// has no counterpart for, because Claude Code does not run its Stop hook on an
+// interrupt while OpenCode still publishes `session.idle`. See `ABORT_WINDOW_MS`
+// and `lastAssistantAborted`.
+//
 // Source: oh-my-claudecode v5.4.0 (MIT) — `persistent-mode/index.ts` checkRalplan,
 // `bridge.ts` session restore, keyword seeding and confirmSkillModeStates — and
 // oh-my-openagent (MIT) for the OpenCode-side in-flight and injection patterns.
@@ -75,6 +80,15 @@ const KEYWORD_NOTICE_MARKER = "[MODE: RALPLAN]";
  */
 const inFlight = new Set<string>();
 
+/**
+ * How long after a `session.error` carrying `MessageAbortedError` an arriving
+ * `session.idle` is still attributed to that user interrupt rather than to a
+ * stalled model. Value from oh-my-openagent
+ * `packages/omo-opencode/src/hooks/todo-continuation-enforcer/constants.ts:20`
+ * (`ABORT_WINDOW_MS = 3000`), where it guards the same event-then-idle race.
+ */
+const ABORT_WINDOW_MS = 3000;
+
 function log(message: string, error?: unknown) {
   if (error === undefined) console.warn(`[open-gajae:ralplan] ${message}`);
   else console.warn(`[open-gajae:ralplan] ${message}:`, error);
@@ -94,24 +108,59 @@ function normalizeMessages(raw: unknown): unknown[] {
   return [];
 }
 
+/**
+ * Abort detection, layer 2: the last assistant turn carries the interrupt on
+ * `info.error`. OpenCode's `session/processor.ts` `halt(AbortError)` records
+ * `MessageAbortedError` there when the user presses Esc; `AbortError` is the
+ * other shape the host can leave behind. Port of oh-my-openagent
+ * `todo-continuation-enforcer/abort-detection.ts` `isLastAssistantMessageAborted`.
+ */
+function lastAssistantAborted(messages: unknown[]): boolean {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const entry = messages[index];
+    const info = isRecord(entry) ? entry.info : undefined;
+    if (!isRecord(info) || info.role !== "assistant") continue;
+    const error = info.error;
+    const name = isRecord(error) ? error.name : undefined;
+    return name === "MessageAbortedError" || name === "AbortError";
+  }
+  return false;
+}
+
 export function createHooks(
   store: StateStore,
   client: RalplanClient,
 ): RalplanHooks {
   /**
-   * Post `text` into the session as a synthetic user prompt, inheriting the
-   * agent and model of the last real user message. Never throws.
+   * Where a continuation would be posted: the agent and model inherited from the
+   * last real user message. `undefined` means "do not inject at all", and is the
+   * single answer for every reason not to — the messages call failed, the last
+   * assistant turn was aborted, or there is no user message to inherit from.
+   *
+   * This runs before any breaker write, so the breaker only advances when an
+   * injection is actually attempted. Never throws.
    */
-  async function inject(sessionID: string, text: string): Promise<void> {
+  async function resolveTarget(
+    sessionID: string,
+  ): Promise<
+    | { agent?: string; model?: { providerID: string; modelID: string } }
+    | undefined
+  > {
     let raw: unknown;
     try {
       raw = await client.session.messages({ path: { id: sessionID } });
     } catch (error) {
       log("could not list session messages; skipping injection", error);
-      return;
+      return undefined;
     }
 
     const messages = normalizeMessages(raw);
+
+    if (lastAssistantAborted(messages)) {
+      log("last assistant turn was aborted; skipping continuation");
+      return undefined;
+    }
+
     let agent: string | undefined;
     let model: { providerID: string; modelID: string } | undefined;
     let found = false;
@@ -138,15 +187,29 @@ export function createHooks(
     // would silently switch the session to the default agent.
     if (!found) {
       log("no user message in session; skipping injection");
-      return;
+      return undefined;
     }
 
+    return { agent, model };
+  }
+
+  /**
+   * Post `text` into the session as a synthetic user prompt. Never throws.
+   */
+  async function inject(
+    sessionID: string,
+    text: string,
+    target: {
+      agent?: string;
+      model?: { providerID: string; modelID: string };
+    },
+  ): Promise<void> {
     try {
       await client.session.promptAsync({
         path: { id: sessionID },
         body: {
-          ...(agent ? { agent } : {}),
-          ...(model ? { model } : {}),
+          ...(target.agent ? { agent: target.agent } : {}),
+          ...(target.model ? { model: target.model } : {}),
           parts: [{ type: "text", text, synthetic: true }],
         },
       });
@@ -190,7 +253,29 @@ export function createHooks(
     }
   }
 
+  /**
+   * Abort detection, layer 1. When the user presses Esc, OpenCode's
+   * `session/processor.ts` halts the turn, publishes `session.error` with a
+   * `MessageAbortedError`, and only then goes idle. Claude Code never runs OMC's
+   * Stop hook on an interrupt, so OMC has no equivalent; this is the
+   * oh-my-openagent pattern (`ralph-loop/event-handler-impl.ts` `session.error`
+   * plus `isAbortError`). The mark is consumed by the next idle, whatever that
+   * idle decides, so a non-ralplan session cannot leave an entry behind.
+   */
+  const abortedAt = new Map<string, number>();
+
   const event: RalplanHooks["event"] = async ({ event }) => {
+    if (event.type === "session.error") {
+      const sessionID = event.properties.sessionID;
+      if (typeof sessionID !== "string" || sessionID.length === 0) return;
+      const error: unknown = event.properties.error;
+      if (isRecord(error) && error.name === "MessageAbortedError") {
+        abortedAt.set(sessionID, Date.now());
+        log(`recorded user interrupt for ${sessionID}`);
+      }
+      return;
+    }
+
     if (event.type !== "session.idle") return;
     const sessionID = event.properties.sessionID;
     if (typeof sessionID !== "string" || sessionID.length === 0) return;
@@ -204,6 +289,19 @@ export function createHooks(
       // A subagent runs in its own session with its own directory, so this read
       // returns undefined and the decision is `skip` at the first clause.
       const state = await readState(sessionID);
+
+      // Layer 1, ahead of every state write: an idle the user caused must
+      // neither inject nor advance the breaker. The ralplan state is left
+      // `active`, so the next real user turn resumes continuation normally.
+      const interruptedAt = abortedAt.get(sessionID);
+      if (interruptedAt !== undefined) {
+        abortedAt.delete(sessionID);
+        if (Date.now() - interruptedAt < ABORT_WINDOW_MS) {
+          log("user interrupt; skipping continuation");
+          return;
+        }
+      }
+
       const decision = shouldContinue(state, Date.now());
 
       if (decision.kind === "skip") {
@@ -211,6 +309,10 @@ export function createHooks(
           await store.patch(sessionID, { breaker_count: 0 }, RALPLAN_MODE);
         return;
       }
+
+      // Layer 2, and the agent/model lookup, both before the breaker write.
+      const target = await resolveTarget(sessionID);
+      if (!target) return;
 
       if (decision.kind === "breaker") {
         await store.patch(
@@ -223,7 +325,7 @@ export function createHooks(
           },
           RALPLAN_MODE,
         );
-        await inject(sessionID, breakerMessage());
+        await inject(sessionID, breakerMessage(), target);
         return;
       }
 
@@ -235,7 +337,7 @@ export function createHooks(
         },
         RALPLAN_MODE,
       );
-      await inject(sessionID, continuationMessage(decision.count));
+      await inject(sessionID, continuationMessage(decision.count), target);
     } catch (error) {
       log("session.idle handler failed", error);
     } finally {

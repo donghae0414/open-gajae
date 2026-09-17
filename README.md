@@ -88,7 +88,7 @@ Session artifacts extend the existing session contract:
 
 State tools accept `mode: "deep-interview" | "ralplan"`. The default is `deep-interview`, so existing deep-interview behavior is unchanged.
 
-A continuation hook re-prompts the session on `session.idle` while ralplan state is active. It inherits the agent and model from the last user message. A circuit breaker stops reinforcement after 30 injections, and the breaker counter expires after 45 minutes.
+A continuation hook re-prompts the session on `session.idle` while ralplan state is active. It inherits the agent and model from the last user message. A circuit breaker stops reinforcement after 30 injections, and the breaker counter expires after 45 minutes. When the user interrupts a turn with Esc (a `MessageAbortedError` on `session.error`, or an abort error left on the last assistant message), that idle is skipped and the breaker is not advanced; state stays active, so continuation resumes after the user's next turn.
 
 `awaiting_confirmation` marks a state that the keyword seeded before the model opened the skill. The host clears it when it observes the `skill` invocation or the `/ralplan` command; no timer clears it. A stale seed is cleared by the next user message that carries no ralplan keyword.
 

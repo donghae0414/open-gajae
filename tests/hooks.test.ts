@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, setSystemTime } from "bun:test";
 import { promises as fs } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -44,6 +44,9 @@ function fakeClient(
     session: {
       async messages() {
         if (options.messagesReject) throw new Error("session.messages failed");
+        // A function lets one test script a different transcript per call.
+        if (typeof options.messages === "function")
+          return (options.messages as () => unknown)();
         return options.messages ?? [USER];
       },
       async promptAsync(input) {
@@ -108,6 +111,20 @@ const idle = (hooks: RalplanHooks, sessionID: string) =>
   hooks.event({
     event: { type: "session.idle", properties: { sessionID } },
   } as unknown as EventInput);
+
+/** A `session.error` event, the shape OpenCode publishes when a turn halts. */
+const sessionError = (hooks: RalplanHooks, sessionID: string, name: string) =>
+  hooks.event({
+    event: {
+      type: "session.error",
+      properties: { sessionID, error: { name, data: {} } },
+    },
+  } as unknown as EventInput);
+
+/** An assistant message carrying the host's interrupt marker. */
+const abortedAssistant = (name: string) => ({
+  info: { role: "assistant", error: { name, data: {} } },
+});
 
 const skillCall = (hooks: RalplanHooks, sessionID: string, args: unknown) =>
   hooks["tool.execute.before"](
@@ -294,8 +311,9 @@ test("a session with no user message gets no injection", async () => {
       await seed(store, id, ACTIVE);
       await idle(hooks, id);
       expect(calls).toHaveLength(0);
-      // The breaker still advanced, so the next idle retries.
-      expect((await store.read(id, RALPLAN_MODE))?.breaker_count).toBe(1);
+      // The breaker only advances when an injection is actually attempted, so
+      // a turn that injects nothing must not spend one of the thirty.
+      expect((await store.read(id, RALPLAN_MODE))?.breaker_count).toBeUndefined();
     },
     { messages: [ASSISTANT] },
   );
@@ -636,5 +654,123 @@ test("F7 — a /ralplan command turn ends with the confirmation flag cleared", a
     await idle(hooks, id);
     expect(calls).toHaveLength(1);
     expect(calls[0].parts[0].text).toContain("REINFORCEMENT 1/30");
+  });
+});
+
+test("a session.error abort silences the idle that follows it", async () => {
+  await fixture(async ({ store, hooks, calls }) => {
+    const id = nextSession("abort-event");
+    await seed(store, id, ACTIVE);
+
+    await sessionError(hooks, id, "MessageAbortedError");
+    await idle(hooks, id);
+
+    expect(calls).toHaveLength(0);
+    const state = await store.read(id, RALPLAN_MODE);
+    // Skip only: the breaker is untouched and ralplan stays active, so the next
+    // real user turn resumes continuation.
+    expect(state?.breaker_count).toBeUndefined();
+    expect(state?.breaker_updated_at).toBeUndefined();
+    expect(state?.active).toBe(true);
+  });
+});
+
+test("an aborted last assistant message silences the idle", async () => {
+  for (const name of ["MessageAbortedError", "AbortError"]) {
+    await fixture(
+      async ({ store, hooks, calls }) => {
+        const id = nextSession("abort-message");
+        await seed(store, id, ACTIVE);
+        await idle(hooks, id);
+
+        expect(calls).toHaveLength(0);
+        const state = await store.read(id, RALPLAN_MODE);
+        expect(state?.breaker_count).toBeUndefined();
+        expect(state?.active).toBe(true);
+      },
+      { messages: [USER, abortedAssistant(name)] },
+    );
+  }
+});
+
+test("continuation resumes on the idle after an abort was skipped", async () => {
+  await fixture(
+    async ({ store, hooks, calls }) => {
+      const id = nextSession("abort-recover");
+      await seed(store, id, ACTIVE);
+
+      await sessionError(hooks, id, "MessageAbortedError");
+      await idle(hooks, id);
+      expect(calls).toHaveLength(0);
+
+      // The mark is consumed by that one idle; the next is an ordinary stall.
+      await idle(hooks, id);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].parts[0].text).toContain("REINFORCEMENT 1/30");
+      expect((await store.read(id, RALPLAN_MODE))?.breaker_count).toBe(1);
+    },
+    { messages: [USER, ASSISTANT] },
+  );
+});
+
+test("a session.error that is not an abort leaves the continuation alone", async () => {
+  await fixture(async ({ store, hooks, calls }) => {
+    const id = nextSession("provider-error");
+    await seed(store, id, ACTIVE);
+
+    await sessionError(hooks, id, "ProviderError");
+    await idle(hooks, id);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].parts[0].text).toContain("REINFORCEMENT 1/30");
+    expect((await store.read(id, RALPLAN_MODE))?.breaker_count).toBe(1);
+  });
+});
+
+test("an abort mark older than the window does not silence the idle", async () => {
+  await fixture(async ({ store, hooks, calls }) => {
+    const id = nextSession("abort-stale");
+    await seed(store, id, ACTIVE);
+
+    const base = Date.now();
+    try {
+      setSystemTime(base);
+      await sessionError(hooks, id, "MessageAbortedError");
+      // ABORT_WINDOW_MS is 3000; 4s later the idle is an ordinary stall.
+      setSystemTime(base + 4000);
+      await idle(hooks, id);
+    } finally {
+      setSystemTime();
+    }
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].parts[0].text).toContain("REINFORCEMENT 1/30");
+    expect((await store.read(id, RALPLAN_MODE))?.breaker_count).toBe(1);
+  });
+});
+
+test("a session.error for another session does not silence this one", async () => {
+  await fixture(async ({ store, hooks, calls }) => {
+    const aborted = nextSession("abort-other");
+    const running = nextSession("abort-running");
+    await seed(store, running, ACTIVE);
+
+    await sessionError(hooks, aborted, "MessageAbortedError");
+    await idle(hooks, running);
+
+    expect(calls).toHaveLength(1);
+    expect((await store.read(running, RALPLAN_MODE))?.breaker_count).toBe(1);
+  });
+});
+
+test("event types other than idle and error are ignored", async () => {
+  await fixture(async ({ store, hooks, calls }) => {
+    const id = nextSession("other-event");
+    await seed(store, id, ACTIVE);
+    await hooks.event({
+      event: { type: "message.updated", properties: { sessionID: id } },
+    } as unknown as EventInput);
+    expect(calls).toHaveLength(0);
+    expect((await store.read(id, RALPLAN_MODE))?.breaker_count).toBeUndefined();
   });
 });
