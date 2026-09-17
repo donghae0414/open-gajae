@@ -13,6 +13,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { continuationMessage, INJECTION_MARKERS } from "../src/ralplan";
 
 // This is an integration fixture: it drives the installed OpenCode server and a local
 // OpenAI-compatible provider. It does not emulate OpenCode tools or plugin contexts.
@@ -28,6 +29,16 @@ const home = join(base, "home");
 const events: Array<Record<string, unknown>> = [];
 const providerRequests: Array<Record<string, unknown>> = [];
 const hostLogs: { stdout: string; stderr: string } = { stdout: "", stderr: "" };
+// Workstream 0 spike, kept as a permanent regression probe. The observer is a
+// throwaway second plugin written into this fixture's scratch directory, not a
+// hook in src/index.ts: it observes the same host `plugin.trigger("chat.message",
+// …)` call, mutates nothing, and leaves the shipped plugin clean.
+const ralplanProbeLog = join(base, "ralplan-chat-message.log");
+const ralplanObserverPlugin = join(base, "ralplan-chat-message-observer.mjs");
+// Shared by the fixture provider's task call and the log matcher below, so the
+// two cannot drift apart and silently turn the spike inconclusive.
+const ralplanSubagentPrompt =
+  "Report one repository fact for the ralplan subagent spike.";
 let child: ChildProcess | undefined;
 let provider: ReturnType<typeof Bun.serve> | undefined;
 let failed = false;
@@ -300,6 +311,36 @@ async function main() {
   if (git.exitCode !== 0)
     fail(`Fixture git init failed: ${git.stderr.toString()}`);
   await writeFile(join(root, "sample.ts"), "export const fixture = true;\n");
+  // The markers are interpolated from the module under test, so the observer
+  // cannot drift from what the builders actually emit.
+  await writeFile(
+    ralplanObserverPlugin,
+    `import { appendFile } from "node:fs/promises";
+const MARKERS = ${JSON.stringify(INJECTION_MARKERS)};
+const LOG = ${JSON.stringify(ralplanProbeLog)};
+export default async () => ({
+  "chat.message": async (input, output) => {
+    const text = (output.parts ?? [])
+      .filter((part) => part.type === "text")
+      .map((part) => (typeof part.text === "string" ? part.text : ""))
+      .join("");
+    await appendFile(
+      LOG,
+      JSON.stringify({
+        sessionID: input.sessionID,
+        agent: input.agent ?? null,
+        agentFieldPresent: "agent" in input,
+        variant: input.variant ?? null,
+        variantFieldPresent: "variant" in input,
+        markerHit: MARKERS.find((marker) => text.includes(marker)) ?? null,
+        textHead: text.slice(0, 160),
+      }) + "\\n",
+      "utf8",
+    );
+  },
+});
+`,
+  );
 
   let stage:
     | "initial"
@@ -320,7 +361,12 @@ async function main() {
     | "missing-read"
     | "missing-done"
     | "symlink-read"
-    | "symlink-done" = "initial";
+    | "symlink-done"
+    | "ralplan-continuation"
+    | "ralplan-continuation-done"
+    | "ralplan-task"
+    | "ralplan-task-child"
+    | "ralplan-task-done" = "initial";
   let statePaths: { statePath: string; specsDir: string } | undefined;
   let secondStatePaths: { statePath: string; specsDir: string } | undefined;
   let expectedDocument: string | undefined;
@@ -569,6 +615,30 @@ async function main() {
               filePath: symlinkPath,
             });
           }
+          // Workstream 0 spike: the model turn itself is irrelevant here. What
+          // is observed is whether the plugin's own `chat.message` hook fired
+          // for the injected continuation prompt, and under which agent.
+          if (stage === "ralplan-continuation") {
+            stage = "ralplan-continuation-done";
+            return textResponse("Ralplan continuation turn observed.");
+          }
+          if (stage === "ralplan-task") {
+            if (!available.includes("task"))
+              return new Response(
+                "native task was not exposed to provider for the subagent spike",
+                { status: 400 },
+              );
+            stage = "ralplan-task-child";
+            return toolResponse("task", "call_fixture_ralplan_task", {
+              description: "Ralplan subagent probe",
+              prompt: ralplanSubagentPrompt,
+              subagent_type: "open-gajae-explore",
+            });
+          }
+          if (stage === "ralplan-task-child") {
+            stage = "ralplan-task-done";
+            return textResponse("Subagent turn observed.");
+          }
           if (
             stage === "b-done" ||
             stage === "b-denied-done" ||
@@ -599,7 +669,10 @@ async function main() {
     OPENCODE_DISABLE_MODELS_FETCH: "1",
     OPENCODE_DISABLE_AUTOUPDATE: "1",
     OPENCODE_CONFIG_CONTENT: JSON.stringify({
-      plugin: [pathToFileURL(join(packageRoot, "dist/index.js")).href],
+      plugin: [
+        pathToFileURL(join(packageRoot, "dist/index.js")).href,
+        pathToFileURL(ralplanObserverPlugin).href,
+      ],
       permission: { "*": "allow" },
       model: "fixture/fixture-model",
       provider: {
@@ -1081,6 +1154,134 @@ async function main() {
     },
     15_000,
   );
+  // --- Workstream 0 host-behavior spike (permanent regression probe) ---------
+  // R12 asks whether a prompt this plugin injects re-enters this plugin's own
+  // `chat.message` hook, and under which agent. `client.session.promptAsync`
+  // from a plugin and this POST reach the identical host path
+  // (opencode/packages/opencode/src/session/prompt.ts:999-1009), so driving it
+  // here observes exactly what a plugin-side injection would produce.
+  const ralplanSession = await api("/session", { method: "POST", body: "{}" });
+  if (!isRecord(ralplanSession) || typeof ralplanSession.id !== "string")
+    fail("Ralplan spike session create did not return an id");
+  const ralplanSessionID = ralplanSession.id;
+  const continuationText = continuationMessage(1);
+  if (!continuationText.includes("<ralplan-continuation>"))
+    fail("continuationMessage did not carry its injection marker");
+  stage = "ralplan-continuation";
+  await api(`/session/${encodeURIComponent(ralplanSessionID)}/prompt_async`, {
+    method: "POST",
+    body: JSON.stringify({
+      agent: "open-gajae",
+      model: { providerID: "fixture", modelID: "fixture-model" },
+      parts: [{ type: "text", text: continuationText }],
+    }),
+  });
+  await waitFor(
+    "ralplan continuation provider completion",
+    async () => (stage === "ralplan-continuation-done" ? true : undefined),
+    20_000,
+  );
+  await waitForIdle(ralplanSessionID, "ralplan continuation idle");
+
+  stage = "ralplan-task";
+  await api(`/session/${encodeURIComponent(ralplanSessionID)}/prompt_async`, {
+    method: "POST",
+    body: JSON.stringify({
+      agent: "open-gajae",
+      model: { providerID: "fixture", modelID: "fixture-model" },
+      parts: [
+        {
+          type: "text",
+          text: "Delegate the ralplan subagent probe to open-gajae-explore.",
+        },
+      ],
+    }),
+  });
+  await waitFor(
+    "ralplan subagent provider completion",
+    async () => (stage === "ralplan-task-done" ? true : undefined),
+    30_000,
+  );
+  await waitForIdle(ralplanSessionID, "ralplan subagent idle");
+
+  type RalplanProbeLine = {
+    sessionID: string;
+    agent: string | null;
+    agentFieldPresent: boolean;
+    variant: string | null;
+    variantFieldPresent: boolean;
+    markerHit: string | null;
+    textHead: string;
+  };
+  const ralplanProbeLines = await waitFor(
+    "ralplan chat.message observer log (the observer plugin must be loaded)",
+    async () => {
+      const text = await readFile(ralplanProbeLog, "utf8").catch(
+        () => undefined,
+      );
+      if (!text) return undefined;
+      const lines = text
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as RalplanProbeLine);
+      // Wait for both spike turns rather than reporting a partial log.
+      return lines.some((line) => line.markerHit === "<ralplan-continuation>") &&
+        lines.some((line) => line.textHead.includes(ralplanSubagentPrompt))
+        ? lines
+        : undefined;
+    },
+    20_000,
+  );
+  const continuationLine = ralplanProbeLines.find(
+    (line) =>
+      line.sessionID === ralplanSessionID &&
+      line.markerHit === "<ralplan-continuation>",
+  );
+  if (!continuationLine)
+    fail(
+      `Ralplan continuation did not re-enter chat.message for its own session: ${JSON.stringify(ralplanProbeLines)}`,
+    );
+  if (!continuationLine.agentFieldPresent || !continuationLine.agent)
+    fail(
+      `Ralplan continuation chat.message carried no agent field: ${JSON.stringify(continuationLine)}`,
+    );
+  // The subagent turn is the child session created by the task tool
+  // (opencode/packages/opencode/src/tool/task.ts:157-161, agent: next.name).
+  const subagentLine = ralplanProbeLines.find(
+    (line) =>
+      line.sessionID !== ralplanSessionID &&
+      line.textHead.includes(ralplanSubagentPrompt),
+  );
+  if (!subagentLine)
+    fail(
+      `Task subagent turn produced no chat.message in a child session: ${JSON.stringify(ralplanProbeLines)}`,
+    );
+  // G1's deny-list is a list of subagent names, so it only works while the host
+  // reports the subagent's own name here. Fail loudly if that ever changes.
+  if (subagentLine.agent !== "open-gajae-explore")
+    fail(
+      `Task subagent chat.message did not carry the subagent name: ${JSON.stringify(subagentLine)}`,
+    );
+  const ralplanSpike = {
+    branch:
+      continuationLine.agent === "open-gajae"
+        ? "(a) chat.message fires for the injected continuation with the agent passed to promptAsync"
+        : "(a-variant) chat.message fires for the injected continuation, but under a different agent",
+    injectedReentersChatMessage: true,
+    continuationAgent: continuationLine.agent,
+    continuationAgentMatchesPrompt: continuationLine.agent === "open-gajae",
+    subagentSessionID: subagentLine.sessionID,
+    subagentAgent: subagentLine.agent,
+    subagentAgentIsSubagentName:
+      subagentLine.agent === "open-gajae-explore",
+    // Plan Q2: `variant` is an input field on the chat.message hook in the
+    // pinned SDK. Record what 1.18.31 actually delivers.
+    variantFieldPresentOnHook: continuationLine.variantFieldPresent,
+    continuationVariant: continuationLine.variant,
+    logPath: ralplanProbeLog,
+    lines: ralplanProbeLines,
+  };
+
   const providerToolCalls = events.filter(
     (event) => event.kind === "provider-tool-call",
   );
@@ -1138,6 +1339,8 @@ async function main() {
           "B: configured native Write denial preserves prior document",
           "adversarial: read(missing A path)",
           "adversarial: read(denied external symlink)",
+          "ralplan spike: prompt(continuationMessage) chat.message re-entry",
+          "ralplan spike: task(open-gajae-explore) child chat.message agent",
         ],
         evidence: {
           state,
@@ -1167,6 +1370,7 @@ async function main() {
             ),
             providerToolCalls,
           },
+          ralplanSpike,
           providerRequests: providerRequests.length,
           events,
         },

@@ -1,7 +1,13 @@
 import path from "node:path";
 import { realpathSync } from "node:fs";
 import { tool, type ToolContext } from "@opencode-ai/plugin";
-import { type ExplicitStatePatch, StateStore } from "./state.js";
+import {
+  DEEP_INTERVIEW_MODE,
+  type ExplicitStatePatch,
+  RALPLAN_MODE,
+  type StateMode,
+  StateStore,
+} from "./state.js";
 import { astGrepSearchTool } from "./tools/ast-tools.js";
 import {
   lspDocumentSymbolsTool,
@@ -64,11 +70,28 @@ const explicitShape = {
   plan_path: tool.schema.string().max(500).optional(),
   started_at: tool.schema.string().max(100).optional(),
   completed_at: tool.schema.string().max(100).optional(),
+  awaiting_confirmation: tool.schema.boolean().optional(),
+  breaker_count: tool.schema.number().optional(),
+  breaker_updated_at: tool.schema.string().max(100).optional(),
+  deactivated_reason: tool.schema.string().max(200).optional(),
+  restored_at: tool.schema.string().max(100).optional(),
 };
 
-function pathResult(store: StateStore, sessionID: string) {
-  const { statePath, specsDir, plansDir } = store.sessionPaths(sessionID);
-  return { statePath, specsDir, plansDir };
+const modeArg = tool.schema
+  .enum([DEEP_INTERVIEW_MODE, RALPLAN_MODE])
+  .default(DEEP_INTERVIEW_MODE);
+
+/** Direct callers may omit `mode`; only host-parsed args carry the schema default. */
+function resolveMode(mode: StateMode | undefined): StateMode {
+  return mode ?? DEEP_INTERVIEW_MODE;
+}
+
+function pathResult(store: StateStore, sessionID: string, mode: StateMode) {
+  const { statePath, specsDir, plansDir, draftsDir } = store.sessionPaths(
+    sessionID,
+    mode,
+  );
+  return { statePath, specsDir, plansDir, draftsDir };
 }
 
 /** Native plugin tools only; all state operations use the current trusted session. */
@@ -81,23 +104,24 @@ export function createTools(store: StateStore) {
     lsp_servers: lspServersTool,
     state_read: tool({
       description:
-        "Read the current session's deep-interview state. It never aggregates or inherits another session's state.",
+        "Read the current session's deep-interview or ralplan state. It never aggregates or inherits another session's state.",
       args: {
-        mode: tool.schema.literal("deep-interview"),
+        mode: modeArg,
         workingDirectory: tool.schema.string().optional(),
         // Retained only to make stale callers fail validation rather than silently selecting a session.
         session_id: tool.schema.never().optional(),
       },
       async execute(args, context) {
         scope(store, context, args.workingDirectory, "state_read");
-        const paths = pathResult(store, context.sessionID);
+        const mode = resolveMode(args.mode);
+        const paths = pathResult(store, context.sessionID, mode);
         await authorize(
           context,
           "state_read",
           paths.statePath,
           context.sessionID,
         );
-        const state = await store.read(context.sessionID);
+        const state = await store.read(context.sessionID, mode);
         return JSON.stringify(
           { ...paths, exists: state !== undefined, state },
           null,
@@ -107,9 +131,9 @@ export function createTools(store: StateStore) {
     }),
     state_write: tool({
       description:
-        "Replace the current session's deep-interview model snapshot. Explicit arguments take priority and every write regenerates metadata.",
+        "Replace the current session's deep-interview or ralplan model snapshot. Explicit arguments take priority and every write regenerates metadata.",
       args: {
-        mode: tool.schema.literal("deep-interview"),
+        mode: modeArg,
         workingDirectory: tool.schema.string().optional(),
         session_id: tool.schema.never().optional(),
         state: tool.schema
@@ -119,7 +143,8 @@ export function createTools(store: StateStore) {
       },
       async execute(args, context) {
         scope(store, context, args.workingDirectory, "state_write");
-        const paths = pathResult(store, context.sessionID);
+        const mode = resolveMode(args.mode);
+        const paths = pathResult(store, context.sessionID, mode);
         await authorize(
           context,
           "state_write",
@@ -137,28 +162,30 @@ export function createTools(store: StateStore) {
           context.sessionID,
           state,
           explicit as ExplicitStatePatch,
+          mode,
         );
         return JSON.stringify({ ...paths, state: written }, null, 2);
       },
     }),
     state_clear: tool({
       description:
-        "Delete only the current session's deep-interview state file. Session documents are preserved.",
+        "Delete only the current session's deep-interview or ralplan state file. Session documents are preserved.",
       args: {
-        mode: tool.schema.literal("deep-interview"),
+        mode: modeArg,
         workingDirectory: tool.schema.string().optional(),
         session_id: tool.schema.never().optional(),
       },
       async execute(args, context) {
         scope(store, context, args.workingDirectory, "state_clear");
-        const paths = pathResult(store, context.sessionID);
+        const mode = resolveMode(args.mode);
+        const paths = pathResult(store, context.sessionID, mode);
         await authorize(
           context,
           "state_clear",
           paths.statePath,
           context.sessionID,
         );
-        const result = await store.clear(context.sessionID);
+        const result = await store.clear(context.sessionID, mode);
         return JSON.stringify({ ...paths, result }, null, 2);
       },
     }),

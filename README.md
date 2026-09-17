@@ -2,13 +2,13 @@
 
 # open-gajae
 
-An OpenCode plugin with a session-bound `deep-interview` skill, three owned roles, and a small read-only code-research surface. It adapts selected OMC v5.4.0 material; it is **not** a full OMC port and does not add downstream execution workflows.
+An OpenCode plugin with session-bound `deep-interview` and `ralplan` skills, six owned roles, and a small read-only code-research surface. It adapts selected OMC v5.4.0 material; it is **not** a full OMC port and does not add downstream execution workflows.
 
 ## Scope and status
 
 - The baseline is OMC v5.4.0, commit `5281b19e0d64f8e6dc6767f2130299a88af2dc71`. OMX is not a current behavior source.
-- Implemented scope: `deep-interview`; `open-gajae`, `open-gajae-explore`, and `open-gajae-document-specialist`; session state; native document output; read-only AST/LSP tools; and optional advisory company context.
-- Not provided: ralplan, ultragoal, autopilot, team, ralph, autoresearch, plan execution/bridges, shared session state, or automatic migration/recovery.
+- Implemented scope: `deep-interview` and `ralplan`; `open-gajae`, `open-gajae-explore`, and `open-gajae-document-specialist`; the `open-gajae-planner`, `open-gajae-architect`, and `open-gajae-critic` consensus roles; session state; native document output; read-only AST/LSP tools; and optional advisory company context.
+- `ralplan` is implemented and ends at a plan marked `pending approval`. Not provided: ultragoal, autopilot, team, ralph, autoresearch, plan execution handoff (the deep-interview → ralplan planning bridge is provided), shared session state, or automatic migration/recovery.
 - This documentation describes the implemented contract; it does not establish Phase-1 completion.
 
 See [AGENTS.md](AGENTS.md) for development policy, the [porting guide](docs/analysis/opencode-porting-guide.md) for decisions and evidence, and [third-party notices](THIRD-PARTY-NOTICES.md) for attribution.
@@ -43,6 +43,9 @@ opencode debug skill
 opencode debug agent open-gajae
 opencode debug agent open-gajae-explore
 opencode debug agent open-gajae-document-specialist
+opencode debug agent open-gajae-planner
+opencode debug agent open-gajae-architect
+opencode debug agent open-gajae-critic
 ```
 
 ## Deep interview and storage
@@ -67,19 +70,51 @@ State operations for the same canonical file are serialized inside one plugin pr
 
 A user may explicitly name another session's spec or plan as an input. Native Read and its normal permissions apply. The current session must report the path actually read; it must not scan for a latest document or substitute another file. Reading A from B transfers no state, owner, approval, or checkbox and does not authorize source edits or plan execution. B writes only its own state/documents.
 
+## Ralplan
+
+`/ralplan [--interactive] [--deliberate] <task>` starts consensus planning. The `ralplan` and `랄플랜` keywords enter the same skill from plain text. The keyword works from any primary agent. Messages whose agent is `open-gajae-planner`, `open-gajae-architect`, or `open-gajae-critic` are ignored by the keyword hook.
+
+Three native `question` prompts are always on: an intent check after the Planner draft, a post-consensus check, and a final approval question offering `Refine further` and `Stop here`. `--interactive` adds only the draft review. `--deliberate` adds a pre-mortem and an expanded test plan, and it auto-enables on explicit high-risk signals.
+
+Session artifacts extend the existing session contract:
+
+```text
+<worktree>/.open-gajae/
+  _session-<encoded-session-id>/
+    plans/<slug>.md
+    drafts/<slug>.md
+    state/ralplan-state.json
+```
+
+State tools accept `mode: "deep-interview" | "ralplan"`. The default is `deep-interview`, so existing deep-interview behavior is unchanged.
+
+A continuation hook re-prompts the session on `session.idle` while ralplan state is active. It inherits the agent and model from the last user message. A circuit breaker stops reinforcement after 30 injections, and the breaker counter expires after 45 minutes.
+
+`awaiting_confirmation` marks a state that the keyword seeded before the model opened the skill. The host clears it when it observes the `skill` invocation or the `/ralplan` command; no timer clears it. A stale seed is cleared by the next user message that carries no ralplan keyword.
+
+`[RALPLAN MODE RESTORED]` appears at most once per resume and only within the same session. State is per-session; there is no cross-session resume.
+
+No execution skill exists. The plan stays `pending approval`.
+
+Follow-up development note: when ultragoal or autopilot ships, extend the final approval options with `Approve execution via ultragoal`, or OMC's `team`/`ralph`/`compact`/`Request changes`/`Reject`, and call `state_write(mode="ralplan", active=false)` before handing off.
+
 ## Owned roles and settings
 
 - **`open-gajae`** is the primary. It owns edits, decisions, integration, and state write/clear.
 - **`open-gajae-explore`** investigates repository facts read-only. It cannot edit, run bash, delegate, ask questions, or write/clear state.
 - **`open-gajae-document-specialist`** researches documentation and citations. It cannot edit, delegate, ask questions, or write/clear state. Its documented `chub` protocol is read-only; it does not grant arbitrary bash.
+- **`open-gajae-planner`**, **`open-gajae-architect`**, and **`open-gajae-critic`** are the ralplan consensus roles. All three run as `mode: subagent` and are read-only: edit, task, question, state write, and state clear are denied. They carry no default model; set one through the settings `agents` map.
 
-Role-specific host permissions are retained. For the two read-only roles, the fixed deny rules are appended after host permission rules (including wildcards), so their mandatory denials cannot be loosened by ordering; all remaining permission evaluation stays native. Settings are read from `~/.open-gajae/open-gajae.jsonc` and `<worktree>/.open-gajae/open-gajae.jsonc`. Fields merge project → user → defaults; unknown keys, invalid JSONC, or invalid values fail with diagnostics. For every owned role, a valid host override takes precedence over project then user `model`/`variant`; omitted fields remain host-owned. There is no provider fallback, tier mapping, or artificial collision rejection.
+Role-specific host permissions are retained. For the five read-only roles, the fixed deny rules are appended after host permission rules (including wildcards), so their mandatory denials cannot be loosened by ordering; all remaining permission evaluation stays native. Settings are read from `~/.open-gajae/open-gajae.jsonc` and `<worktree>/.open-gajae/open-gajae.jsonc`. Fields merge project → user → defaults; unknown keys, invalid JSONC, or invalid values fail with diagnostics. For every owned role, a valid host override takes precedence over project then user `model`/`variant`; omitted fields remain host-owned. There is no provider fallback, tier mapping, or artificial collision rejection.
 
 ```jsonc
 {
   "deepInterview": { "ambiguityThreshold": 0.2, "maxRounds": 20 },
   "agents": {
-    "open-gajae": { "model": "provider/model", "variant": "variant-name" }
+    "open-gajae": { "model": "provider/model", "variant": "variant-name" },
+    "open-gajae-planner": { "model": "openai/gpt-5.6-luna" },
+    "open-gajae-architect": { "model": "openai/gpt-5.6-terra" },
+    "open-gajae-critic": { "model": "openai/gpt-5.6-terra" }
   },
   "companyContext": { "tool": "company_context", "onError": "warn" }
 }
@@ -102,7 +137,7 @@ The only product environment knobs reached by source are `OPEN_GAJAE_LSP_TIMEOUT
 
 Completed checks include typecheck, unit tests, and build, plus the stable commands above. `bun run test:host` exercises installed OpenCode 1.18.31 plugin load, state/AST/native Write, permission denials (question, Read, edit, state, LSP, and read-only directory Write), native formatter failure after Write publication, and owned-role model/variant precedence. A formatter failure is best-effort post-processing: it does not roll back an already published native Write.
 
-`bun tests/host-session-probe.ts` uses actual A/B OpenCode sessions and a loopback deterministic OpenAI-compatible provider. It covers state write, native question and `/questionreply`, explicit absolute and relative A-document Read from B, B native Write and clear, same-slug behavior, current-session isolation, denied terminal state write after successful document Write, missing-file handling, and denied targeted external-symlink Read without automatic alternatives. It verifies that A's state/source/checkbox/approval bytes remain unchanged.
+`bun tests/host-session-probe.ts` uses actual A/B OpenCode sessions and a loopback deterministic OpenAI-compatible provider. It covers state write, native question and `/questionreply`, explicit absolute and relative A-document Read from B, B native Write and clear, same-slug behavior, current-session isolation, denied terminal state write after successful document Write, missing-file handling, and denied targeted external-symlink Read without automatic alternatives. It verifies that A's state/source/checkbox/approval bytes remain unchanged. It also covers the ralplan continuation re-entry probe.
 
 `bun tests/package-probe.ts` packs the package, installs it into an isolated consumer, and verifies packaged default/config/prompts/skills/state API/AST addon loading and document preservation on clear. `bun tests/company-context-probe.ts` runs a local stdio MCP fake peer through the actual host and deterministic provider, covering unset/absent/denied/valid/invalid/error/hostile responses and all `onError` modes; it also checks the specialist's controlled missing-`chub` behavior.
 

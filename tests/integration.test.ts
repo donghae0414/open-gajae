@@ -389,8 +389,22 @@ test("read-only catalog is finite and no lifecycle/custom spec mutation surface 
       new URL("../src/index.ts", import.meta.url),
       "utf8",
     );
-    expect(index).not.toContain("createHooks");
-    expect(index).not.toContain("session.idle");
+    // The only assertion that the plugin returns all four ralplan hook keys:
+    // tests/host-probe.ts shells out to `opencode debug …` and never sees the
+    // object `createHooks` returns.
+    expect(index).toContain("createHooks");
+    for (const key of [
+      "event",
+      "chat.message",
+      "tool.execute.before",
+      "command.execute.before",
+    ]) {
+      expect(index).toContain(key);
+      const escaped = key.replace(/\./g, "\\.");
+      expect(index).toMatch(
+        new RegExp(`(?:"${escaped}"|${escaped}):\\s*hooks`),
+      );
+    }
   }));
 // Original source literals are deliberate contract tests, not expected values derived from the port.
 test("OMC scoring and challenge rules retained without OMX runtime gates", async () => {
@@ -413,7 +427,7 @@ test("OMC scoring and challenge rules retained without OMX runtime gates", async
   expect(skill).not.toMatch(/temperature\s*[:=]\s*0\.1/i);
 });
 
-test("spec completion offers refinement without an execution bridge", async () => {
+test("spec completion offers refinement and the ralplan consensus bridge only", async () => {
   const skill = await readFile(
     new URL("../skills/deep-interview/SKILL.md", import.meta.url),
     "utf8",
@@ -422,25 +436,50 @@ test("spec completion offers refinement without an execution bridge", async () =
     new URL("../prompts/open-gajae.md", import.meta.url),
     "utf8",
   );
-  const completion = skill.split("## After crystallization")[1]?.split("</Steps>")[0] ?? "";
-  expect(skill).toContain("Use native `write` when available; otherwise use `apply_patch`");
+  const completion =
+    skill.split("## After crystallization")[1]?.split("</Steps>")[0] ?? "";
+  expect(skill).toContain(
+    "Use native `write` when available; otherwise use `apply_patch`",
+  );
   expect(skill).toContain("`Update File` after reading an existing spec");
   expect(skill).not.toContain("native Write");
   expect(primary).not.toContain("native spec Write");
-  expect(completion).toContain("ask through native `question` with exactly one item");
+  expect(completion).toContain(
+    "ask through native `question` with exactly one item",
+  );
   expect(completion).toContain("**Finish with this specification**");
   expect(completion).toContain("**Refine further**");
   expect(completion).toContain("Keep the same trusted current session");
-  expect(completion).toContain("even when ambiguity is already below threshold");
-  expect(completion).toContain("menu selection itself is not a requirements round or a scoring event");
+  expect(completion).toContain(
+    "even when ambiguity is already below threshold",
+  );
+  expect(completion).toContain(
+    "menu selection itself is not a requirements round or a scoring event",
+  );
   expect(completion).toContain("same `{specsDir}/deep-interview-{slug}.md`");
-  expect(completion).toContain("Keep the interview active while waiting for the choice");
+  expect(completion).toContain(
+    "Keep the interview active while waiting for the choice",
+  );
   expect(completion).toContain('current_phase: "completed"');
-  expect(completion).toContain("cumulative hard cap, including refinement rounds");
+  expect(completion).toContain(
+    "cumulative hard cap, including refinement rounds",
+  );
   expect(completion).toContain("explicit early-exit choice or cancellation");
-  expect(completion).toContain("never interpret that failure as a finish selection");
-  expect(completion).toContain("Do not offer, invoke, or bridge");
-  expect(primary).toContain("do not end the interview merely because ambiguity met the threshold");
+  expect(completion).toContain(
+    "never interpret that failure as a finish selection",
+  );
+  expect(completion).toContain("Refine with ralplan consensus");
+  expect(completion).toContain(
+    "call the native `skill` tool with name `ralplan`",
+  );
+  // The bridge is the single permitted exception; the same block must still
+  // forbid every execution workflow by name.
+  expect(completion).toContain(
+    "Do not offer, invoke, or bridge to autopilot, team, ralph, autoresearch, ultragoal, or any other execution workflow",
+  );
+  expect(primary).toContain(
+    "do not end the interview merely because ambiguity met the threshold",
+  );
 });
 
 test("company-context prompt exposes advisory failure policies without an automatic hook", async () =>
@@ -477,3 +516,101 @@ test("company-context prompt exposes advisory failure policies without an automa
       expect(prompt).toContain("If the tool is unset, skip the call");
     }
   }));
+
+const consensusRoles = [
+  "open-gajae-planner",
+  "open-gajae-architect",
+  "open-gajae-critic",
+] as const;
+
+test("consensus roles register as read-only subagents and expose the ralplan command", async () =>
+  fixture(async (root, home) => {
+    const config: Config = {};
+    await configureAgents(config, await loadSettings(root, home), resolve("."));
+    for (const name of consensusRoles) {
+      expect(config.agent?.[name]?.mode).toBe("subagent");
+      const permission = config.agent?.[name]?.permission as Record<
+        string,
+        unknown
+      >;
+      for (const rule of [
+        "edit",
+        "task",
+        "question",
+        "state_write",
+        "state_clear",
+      ])
+        expect(permission[rule]).toBe("deny");
+    }
+    const template = config.command?.ralplan?.template;
+    expect(typeof template).toBe("string");
+    expect(template).toContain("ralplan");
+    expect(template).toContain("$ARGUMENTS");
+    await writeFile(
+      join(root, ".open-gajae/open-gajae.jsonc"),
+      JSON.stringify({
+        agents: Object.fromEntries(
+          consensusRoles.map((name) => [name, { model: "test/role" }]),
+        ),
+      }),
+    );
+    const settings = await loadSettings(root, home);
+    for (const name of consensusRoles)
+      expect(settings.agents[name]).toEqual({ model: "test/role" });
+    await writeFile(
+      join(root, ".open-gajae/open-gajae.jsonc"),
+      JSON.stringify({ agents: { "open-gajae-reviewer": { model: "a/b" } } }),
+    );
+    await expect(loadSettings(root, home)).rejects.toThrow();
+  }));
+
+// Original source literals are deliberate contract tests, not expected values derived from the port.
+test("ralplan skill keeps the consensus contract and offers no execution path", async () => {
+  const skill = await readFile(
+    new URL("../skills/ralplan/SKILL.md", import.meta.url),
+    "utf8",
+  );
+  expect(skill).not.toContain("Skill(");
+  expect(skill).not.toMatch(/codex/i);
+  expect(skill).not.toMatch(/--(direct|review|consensus)\b/);
+  for (let step = 0; step <= 9; step += 1)
+    expect(skill).toMatch(new RegExp(`^${step}\\. `, "m"));
+  expect(skill).toContain("- `--interactive`:");
+  expect(skill).toContain("- `--deliberate`:");
+  expect(skill).toContain(
+    "Critic returns one of `REJECT`, `REVISE`, `ACCEPT-WITH-RESERVATIONS`, `ACCEPT`",
+  );
+  expect(skill).toContain(
+    "`ACCEPT` and `ACCEPT-WITH-RESERVATIONS` = APPROVE; `REVISE` = ITERATE; `REJECT` = REJECT",
+  );
+  expect(skill).toContain("**Refine further**");
+  expect(skill).toContain("**Stop here**");
+
+  // `team` and `ralph` legitimately appear inside the copied Pre-Execution Gate
+  // section (example prompts, signal table, troubleshooting) and in the ultragoal
+  // follow-up note. Nowhere else may name an execution workflow.
+  const gateStart = skill.indexOf("## Pre-Execution Gate");
+  const gateEnd = skill.indexOf("## Source and host substitutions");
+  const noteStart = skill.indexOf("> **Follow-up development note.**");
+  expect(gateStart).toBeGreaterThan(-1);
+  expect(gateEnd).toBeGreaterThan(gateStart);
+  expect(noteStart).toBeGreaterThan(-1);
+  expect(noteStart).toBeLessThan(gateStart);
+  const noteEnd = skill.indexOf("\n\n", noteStart);
+  expect(noteEnd).toBeGreaterThan(noteStart);
+  const outsideNote = skill.slice(0, noteStart) + skill.slice(noteEnd);
+  const outside =
+    skill.slice(0, noteStart) +
+    skill.slice(noteEnd, gateStart) +
+    skill.slice(gateEnd);
+  expect(outside).not.toMatch(/\bteam\b/i);
+  expect(outside).not.toMatch(/\bralph\b/i);
+
+  // `compact` survives only as the adjective in "compact RALPLAN-DR summary",
+  // never as one of OMC's execution options.
+  expect((outsideNote.match(/compact/gi) ?? []).length).toBe(
+    (outsideNote.match(/compact \*\*RALPLAN-DR summary\*\*/gi) ?? []).length,
+  );
+  expect(outsideNote).not.toMatch(/\*\*compact\*\*/i);
+  expect(outsideNote).not.toMatch(/(?:\/\s*compact|compact\s*\/)/i);
+});

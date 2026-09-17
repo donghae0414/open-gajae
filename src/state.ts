@@ -4,12 +4,15 @@ import path from "node:path";
 
 // State and payload-boundary behavior draws on OMC MIT sources; project notices carry attribution.
 export const DEEP_INTERVIEW_MODE = "deep-interview" as const;
+export const RALPLAN_MODE = "ralplan" as const;
+
+export type StateMode = typeof DEEP_INTERVIEW_MODE | typeof RALPLAN_MODE;
 
 export type StateMeta = {
-  mode: typeof DEEP_INTERVIEW_MODE;
+  mode: StateMode;
   sessionId: string;
   updatedAt: string;
-  updatedBy: "state_write_tool";
+  updatedBy: "state_write_tool" | "ralplan_hook";
 };
 
 /** Model-owned fields are open-ended. `_meta` is regenerated on every write. */
@@ -25,6 +28,11 @@ export type ExplicitStatePatch = {
   plan_path?: string;
   started_at?: string;
   completed_at?: string;
+  awaiting_confirmation?: boolean;
+  breaker_count?: number;
+  breaker_updated_at?: string;
+  deactivated_reason?: string;
+  restored_at?: string;
 };
 
 export type SessionPaths = {
@@ -32,6 +40,7 @@ export type SessionPaths = {
   statePath: string;
   specsDir: string;
   plansDir: string;
+  draftsDir: string;
 };
 
 const MAX_PAYLOAD_BYTES = 1_048_576;
@@ -95,6 +104,9 @@ function validateExplicitPatch(patch: ExplicitStatePatch) {
     ["plan_path", 500],
     ["started_at", 100],
     ["completed_at", 100],
+    ["breaker_updated_at", 100],
+    ["restored_at", 100],
+    ["deactivated_reason", 200],
   ] as const) {
     const value = patch[key];
     if (
@@ -105,9 +117,12 @@ function validateExplicitPatch(patch: ExplicitStatePatch) {
         `${key} must be a non-empty string up to ${max} characters`,
       );
   }
-  if (patch.active !== undefined && typeof patch.active !== "boolean")
-    throw new Error("active must be a boolean");
-  for (const key of ["iteration", "max_iterations"] as const) {
+  for (const key of ["active", "awaiting_confirmation"] as const) {
+    const value = patch[key];
+    if (value !== undefined && typeof value !== "boolean")
+      throw new Error(`${key} must be a boolean`);
+  }
+  for (const key of ["iteration", "max_iterations", "breaker_count"] as const) {
     const value = patch[key];
     if (
       value !== undefined &&
@@ -197,21 +212,25 @@ export class StateStore {
     this.root = path.join(this.worktree, ".open-gajae");
   }
 
-  sessionPaths(sessionID: string): SessionPaths {
+  sessionPaths(
+    sessionID: string,
+    mode: StateMode = DEEP_INTERVIEW_MODE,
+  ): SessionPaths {
     const sessionDir = path.join(
       this.root,
       `_session-${encodeSessionID(sessionID)}`,
     );
     return {
       sessionDir,
-      statePath: path.join(sessionDir, "state", "deep-interview-state.json"),
+      statePath: path.join(sessionDir, "state", `${mode}-state.json`),
       specsDir: path.join(sessionDir, "specs"),
       plansDir: path.join(sessionDir, "plans"),
+      draftsDir: path.join(sessionDir, "drafts"),
     };
   }
 
-  statePath(sessionID: string) {
-    return this.sessionPaths(sessionID).statePath;
+  statePath(sessionID: string, mode: StateMode = DEEP_INTERVIEW_MODE) {
+    return this.sessionPaths(sessionID, mode).statePath;
   }
 
   private async inspectParent(file: string, create: boolean): Promise<boolean> {
@@ -256,8 +275,9 @@ export class StateStore {
 
   private async readFile(
     sessionID: string,
+    mode: StateMode = DEEP_INTERVIEW_MODE,
   ): Promise<InterviewState | undefined> {
-    const file = this.statePath(sessionID);
+    const file = this.statePath(sessionID, mode);
     if (!(await this.inspectParent(file, false))) return undefined;
     const stat = await fs.lstat(file).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined;
@@ -310,17 +330,21 @@ export class StateStore {
     }
   }
 
-  async read(sessionID: string): Promise<InterviewState | undefined> {
-    const target = this.statePath(sessionID);
-    return enqueue(target, () => this.readFile(sessionID));
+  async read(
+    sessionID: string,
+    mode: StateMode = DEEP_INTERVIEW_MODE,
+  ): Promise<InterviewState | undefined> {
+    const target = this.statePath(sessionID, mode);
+    return enqueue(target, () => this.readFile(sessionID, mode));
   }
 
   async write(
     sessionID: string,
     state: Record<string, unknown> = {},
     explicit: ExplicitStatePatch = {},
+    mode: StateMode = DEEP_INTERVIEW_MODE,
   ): Promise<InterviewState> {
-    const target = this.statePath(sessionID);
+    const target = this.statePath(sessionID, mode);
     const stateSnapshot = snapshotState(state);
     const explicitSnapshot = { ...explicit };
     const payload = payloadError(stateSnapshot);
@@ -328,12 +352,12 @@ export class StateStore {
     validateExplicitPatch(explicitSnapshot);
 
     return enqueue(target, async () => {
-      await this.readFile(sessionID);
+      await this.readFile(sessionID, mode);
       const next: InterviewState = {
         ...stateSnapshot,
         ...explicitSnapshot,
         _meta: {
-          mode: DEEP_INTERVIEW_MODE,
+          mode,
           sessionId: sessionID,
           updatedAt: now(),
           updatedBy: "state_write_tool",
@@ -346,10 +370,45 @@ export class StateStore {
     });
   }
 
-  async clear(sessionID: string): Promise<"deleted" | "missing"> {
-    const target = this.statePath(sessionID);
+  /**
+   * Read-modify-write for trusted hook callers. Explicit fields are validated
+   * exactly as `write` validates them, so no unvalidated key can reach the file.
+   */
+  async patch(
+    sessionID: string,
+    explicit: ExplicitStatePatch,
+    mode: StateMode = DEEP_INTERVIEW_MODE,
+  ): Promise<InterviewState> {
+    const target = this.statePath(sessionID, mode);
+    const explicitSnapshot = { ...explicit };
+    validateExplicitPatch(explicitSnapshot);
+
     return enqueue(target, async () => {
-      const current = await this.readFile(sessionID);
+      const current = (await this.readFile(sessionID, mode)) ?? {};
+      const next: InterviewState = {
+        ...current,
+        ...explicitSnapshot,
+        _meta: {
+          mode,
+          sessionId: sessionID,
+          updatedAt: now(),
+          updatedBy: "ralplan_hook",
+        },
+      };
+      const error = payloadError(next, true);
+      if (error) throw new Error(error);
+      await this.atomicWrite(target, next);
+      return next;
+    });
+  }
+
+  async clear(
+    sessionID: string,
+    mode: StateMode = DEEP_INTERVIEW_MODE,
+  ): Promise<"deleted" | "missing"> {
+    const target = this.statePath(sessionID, mode);
+    return enqueue(target, async () => {
+      const current = await this.readFile(sessionID, mode);
       if (!current) return "missing";
       await fs.unlink(target);
       return "deleted";

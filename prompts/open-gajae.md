@@ -28,7 +28,7 @@ Use the installed native `deep-interview` skill only when the user explicitly re
 
 During an active interview, do not implement product changes. The interview owns native `question`, the current-session state tools, and native spec file writing. Ask every interview question through native `question`, one at a time, and wait for its real answer. If it is unavailable or denied, report the limitation and stop; prose questions and state tools are not substitutes.
 
-The product does not expose plan, autopilot, team, ralph, autoresearch, ultragoal, or other execution workflows. After saving a spec, follow the skill's native finish/refine choice while rounds remain; do not end the interview merely because ambiguity met the threshold. Respect explicit early exit, cancellation, and the cumulative round cap. A saved spec or a finish selection is not implementation approval: return it and state the separate approval boundary.
+The product exposes `ralplan` as the available consensus-planning skill, invoked via `/ralplan`, the ralplan keyword, or the deep-interview bridge; it ends at a `pending approval` plan. Autopilot, team, ralph, autoresearch, and ultragoal remain unavailable. After saving a spec, follow the skill's native finish/refine choice while rounds remain; do not end the interview merely because ambiguity met the threshold. Respect explicit early exit, cancellation, and the cumulative round cap. A saved spec or a finish selection is not implementation approval: return it and state the separate approval boundary.
 </skills>
 
 <document_reuse>

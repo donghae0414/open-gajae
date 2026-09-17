@@ -35,6 +35,7 @@ test("session paths are trusted-ID encoded and read does not create directories"
     );
     expect(paths.specsDir).toBe(join(paths.sessionDir, "specs"));
     expect(paths.plansDir).toBe(join(paths.sessionDir, "plans"));
+    expect(paths.draftsDir).toBe(join(paths.sessionDir, "drafts"));
     expect(await store.read("A.b/%")).toBeUndefined();
     await expect(fs.lstat(paths.sessionDir)).rejects.toMatchObject({
       code: "ENOENT",
@@ -287,5 +288,85 @@ test("corrupt and mismatched owner state remains visible and is never reset or c
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
+  });
+});
+
+test("ralplan mode writes a sibling state file and never touches deep-interview state", async () => {
+  await fixture(async (root) => {
+    const store = new StateStore(root);
+    const deep = store.sessionPaths("s");
+    const ralplan = store.sessionPaths("s", "ralplan");
+    expect(ralplan.statePath).toBe(
+      join(ralplan.sessionDir, "state", "ralplan-state.json"),
+    );
+    expect(ralplan.sessionDir).toBe(deep.sessionDir);
+    expect(ralplan.draftsDir).toBe(deep.draftsDir);
+    expect(store.statePath("s", "ralplan")).toBe(ralplan.statePath);
+
+    await store.write("s", { owner: "deep-interview" });
+    const untouched = await readFile(deep.statePath, "utf8");
+    const written = await store.write(
+      "s",
+      { owner: "ralplan" },
+      { active: true },
+      "ralplan",
+    );
+    expect(written._meta).toMatchObject({
+      mode: "ralplan",
+      sessionId: "s",
+      updatedBy: "state_write_tool",
+    });
+    expect(await readFile(deep.statePath, "utf8")).toBe(untouched);
+    expect((await store.read("s"))?.owner).toBe("deep-interview");
+    expect((await store.read("s", "ralplan"))?.owner).toBe("ralplan");
+
+    expect(await store.clear("s", "ralplan")).toBe("deleted");
+    expect(await store.clear("s", "ralplan")).toBe("missing");
+    await expect(readFile(ralplan.statePath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await readFile(deep.statePath, "utf8")).toBe(untouched);
+    expect((await store.read("s"))?.owner).toBe("deep-interview");
+  });
+});
+
+test("patch merges explicit fields into the stored snapshot and validates their types", async () => {
+  await fixture(async (root) => {
+    const store = new StateStore(root);
+    await store.write(
+      "s",
+      { goal: "retained" },
+      { active: true, started_at: "2026-01-01T00:00:00.000Z" },
+      "ralplan",
+    );
+    const patched = await store.patch(
+      "s",
+      { breaker_count: 1, awaiting_confirmation: false },
+      "ralplan",
+    );
+    expect(patched).toMatchObject({
+      goal: "retained",
+      active: true,
+      started_at: "2026-01-01T00:00:00.000Z",
+      breaker_count: 1,
+      awaiting_confirmation: false,
+      _meta: { mode: "ralplan", sessionId: "s", updatedBy: "ralplan_hook" },
+    });
+    expect(await store.read("s", "ralplan")).toMatchObject({
+      goal: "retained",
+      breaker_count: 1,
+    });
+    expect(await store.read("s")).toBeUndefined();
+
+    await expect(
+      store.patch("s", { breaker_count: "3" } as never, "ralplan"),
+    ).rejects.toThrow("breaker_count must be a finite number");
+    await expect(
+      store.patch("s", { awaiting_confirmation: "yes" } as never, "ralplan"),
+    ).rejects.toThrow("awaiting_confirmation must be a boolean");
+    expect((await store.read("s", "ralplan"))?.breaker_count).toBe(1);
+
+    const created = await store.patch("s", { restored_at: "now" }, "ralplan");
+    expect(created.goal).toBe("retained");
   });
 });

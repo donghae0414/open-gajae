@@ -1,0 +1,373 @@
+// Ralplan host hooks: continuation on idle, keyword/restore on chat.message,
+// and the two confirmation hooks that replace OMC's awaiting-confirmation timer.
+//
+// Source: oh-my-claudecode v5.4.0 (MIT) — `persistent-mode/index.ts` checkRalplan,
+// `bridge.ts` session restore, keyword seeding and confirmSkillModeStates — and
+// oh-my-openagent (MIT) for the OpenCode-side in-flight and injection patterns.
+
+import type { Hooks } from "@opencode-ai/plugin";
+import {
+  applyRalplanGate,
+  breakerMessage,
+  continuationMessage,
+  gateMessage,
+  INJECTION_MARKERS,
+  keywordMessage,
+  RALPLAN_KEYWORD,
+  RALPLAN_SKILL_NAME,
+  restoreMessage,
+  seedState,
+  shouldContinue,
+} from "./ralplan.js";
+import { RALPLAN_MODE, type StateStore } from "./state.js";
+
+/**
+ * The client surface these hooks use, declared structurally so a fake in a test
+ * satisfies it. The host's `ctx.client` satisfies it too.
+ */
+export type RalplanClient = {
+  session: {
+    messages(input: { path: { id: string } }): Promise<unknown>;
+    promptAsync(input: {
+      path: { id: string };
+      body: {
+        agent?: string;
+        model?: { providerID: string; modelID: string };
+        parts: Array<{ type: "text"; text: string; synthetic?: boolean }>;
+      };
+    }): Promise<unknown>;
+  };
+};
+
+/** The host's `Part` union, taken from the hook signature so the SDK stays an
+ * indirect dependency. */
+type ChatMessagePart = Parameters<
+  NonNullable<Hooks["chat.message"]>
+>[1]["parts"][number];
+
+export type RalplanHooks = Required<
+  Pick<
+    Hooks,
+    "event" | "chat.message" | "tool.execute.before" | "command.execute.before"
+  >
+>;
+
+/**
+ * G1's deny-list. These three are the read-only ralplan role subagents from
+ * `src/config.ts`; a `task` turn arrives carrying the child's agent name, and
+ * these roles have `state_write` denied, so seeding state into their sessions
+ * would create a file they could never clear. Every other value — including
+ * `undefined` — proceeds, because `agent` is optional on the hook input and the
+ * host has more than one primary.
+ */
+const ROLE_SUBAGENTS = new Set([
+  "open-gajae-planner",
+  "open-gajae-architect",
+  "open-gajae-critic",
+]);
+
+const KEYWORD_NOTICE_MARKER = "[MODE: RALPLAN]";
+
+/**
+ * One continuation in flight per session. `session.idle` can arrive again while
+ * the injected prompt is still being posted; without this the plugin would
+ * stack reinforcements. Pattern from oh-my-openagent's ralph-loop event handler.
+ */
+const inFlight = new Set<string>();
+
+function log(message: string, error?: unknown) {
+  if (error === undefined) console.warn(`[open-gajae:ralplan] ${message}`);
+  else console.warn(`[open-gajae:ralplan] ${message}:`, error);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The SDK's `"fields"` response style returns `{ data, error, request, response }`;
+ * a fake may return the bare array. Accept both, and anything else as empty.
+ */
+function normalizeMessages(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  if (isRecord(raw) && Array.isArray(raw.data)) return raw.data;
+  return [];
+}
+
+export function createHooks(
+  store: StateStore,
+  client: RalplanClient,
+): RalplanHooks {
+  /**
+   * Post `text` into the session as a synthetic user prompt, inheriting the
+   * agent and model of the last real user message. Never throws.
+   */
+  async function inject(sessionID: string, text: string): Promise<void> {
+    let raw: unknown;
+    try {
+      raw = await client.session.messages({ path: { id: sessionID } });
+    } catch (error) {
+      log("could not list session messages; skipping injection", error);
+      return;
+    }
+
+    const messages = normalizeMessages(raw);
+    let agent: string | undefined;
+    let model: { providerID: string; modelID: string } | undefined;
+    let found = false;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const entry = messages[index];
+      const info = isRecord(entry) ? entry.info : undefined;
+      if (!isRecord(info) || info.role !== "user") continue;
+      found = true;
+      if (typeof info.agent === "string" && info.agent.length > 0)
+        agent = info.agent;
+      const candidate = info.model;
+      if (
+        isRecord(candidate) &&
+        typeof candidate.providerID === "string" &&
+        typeof candidate.modelID === "string"
+      )
+        model = {
+          providerID: candidate.providerID,
+          modelID: candidate.modelID,
+        };
+      break;
+    }
+    // Without a user message there is no agent to inherit, and omitting `agent`
+    // would silently switch the session to the default agent.
+    if (!found) {
+      log("no user message in session; skipping injection");
+      return;
+    }
+
+    try {
+      await client.session.promptAsync({
+        path: { id: sessionID },
+        body: {
+          ...(agent ? { agent } : {}),
+          ...(model ? { model } : {}),
+          parts: [{ type: "text", text, synthetic: true }],
+        },
+      });
+    } catch (error) {
+      // No retry: the breaker count stays incremented, so the next idle retries.
+      log("continuation prompt failed", error);
+    }
+  }
+
+  /**
+   * Read ralplan state, treating any store error as "no active ralplan".
+   * The store preserves a corrupt or foreign state file; this never deletes or
+   * rewrites one, it just goes inert for the turn.
+   */
+  async function readState(
+    sessionID: string,
+  ): Promise<Record<string, unknown> | undefined> {
+    try {
+      return await store.read(sessionID, RALPLAN_MODE);
+    } catch (error) {
+      log("ralplan state unreadable; treating session as inactive", error);
+      return undefined;
+    }
+  }
+
+  /**
+   * The port of OMC's PreToolUse `Skill` branch (`confirmSkillModeStates`):
+   * clear `awaiting_confirmation` once the host observes the skill being loaded.
+   */
+  async function confirmRalplan(sessionID: string): Promise<void> {
+    try {
+      const state = await readState(sessionID);
+      if (!state || state.awaiting_confirmation !== true) return;
+      await store.patch(
+        sessionID,
+        { awaiting_confirmation: false },
+        RALPLAN_MODE,
+      );
+    } catch (error) {
+      log("could not confirm ralplan skill load", error);
+    }
+  }
+
+  const event: RalplanHooks["event"] = async ({ event }) => {
+    if (event.type !== "session.idle") return;
+    const sessionID = event.properties.sessionID;
+    if (typeof sessionID !== "string" || sessionID.length === 0) return;
+
+    if (inFlight.has(sessionID)) {
+      log(`continuation already in flight for ${sessionID}`);
+      return;
+    }
+    inFlight.add(sessionID);
+    try {
+      // A subagent runs in its own session with its own directory, so this read
+      // returns undefined and the decision is `skip` at the first clause.
+      const state = await readState(sessionID);
+      const decision = shouldContinue(state, Date.now());
+
+      if (decision.kind === "skip") {
+        if (decision.resetBreaker)
+          await store.patch(sessionID, { breaker_count: 0 }, RALPLAN_MODE);
+        return;
+      }
+
+      if (decision.kind === "breaker") {
+        await store.patch(
+          sessionID,
+          {
+            active: false,
+            breaker_count: 0,
+            deactivated_reason: "stop_breaker_exhausted",
+            completed_at: new Date().toISOString(),
+          },
+          RALPLAN_MODE,
+        );
+        await inject(sessionID, breakerMessage());
+        return;
+      }
+
+      await store.patch(
+        sessionID,
+        {
+          breaker_count: decision.count,
+          breaker_updated_at: new Date().toISOString(),
+        },
+        RALPLAN_MODE,
+      );
+      await inject(sessionID, continuationMessage(decision.count));
+    } catch (error) {
+      log("session.idle handler failed", error);
+    } finally {
+      inFlight.delete(sessionID);
+    }
+  };
+
+  const chatMessage: RalplanHooks["chat.message"] = async (input, output) => {
+    try {
+      // G1 — role-subagent deny-list. `undefined` proceeds.
+      if (typeof input.agent === "string" && ROLE_SUBAGENTS.has(input.agent))
+        return;
+
+      const texts: string[] = [];
+      for (const part of output.parts) {
+        if (part.type !== "text") continue;
+        texts.push(typeof part.text === "string" ? part.text : "");
+      }
+
+      // G2 — this plugin's own injected prompts re-enter here, and the
+      // continuation text contains the word "ralplan". Matching on the marker
+      // tags also ignores a message a user hand-pastes from an earlier turn.
+      for (const text of texts) {
+        if (INJECTION_MARKERS.some((marker) => text.includes(marker))) {
+          log("ignoring plugin-injected message");
+          return;
+        }
+      }
+
+      const text = texts.join("\n");
+      const sessionID = input.sessionID;
+      const detected = RALPLAN_KEYWORD.test(text) ? ["ralplan"] : [];
+      let state = await readState(sessionID);
+      const appended: string[] = [];
+
+      // Step 2 — stale-seed cleanup, the sole replacement for the deleted TTL.
+      // A keyword the model never acted on cannot leave a permanently
+      // active-but-silent state. Clearing here, before the restore check, also
+      // means such a seed can never raise a restore banner on a later turn.
+      if (
+        state?.active === true &&
+        state.awaiting_confirmation === true &&
+        detected.length === 0
+      ) {
+        try {
+          await store.clear(sessionID, RALPLAN_MODE);
+        } catch (error) {
+          log("could not clear stale ralplan seed", error);
+        }
+        state = undefined;
+      }
+
+      // Step 3 — restore, once per resume. The `started_at`-present clause is
+      // load-bearing: a state re-created after step 2 cleared a stale seed must
+      // not read as a resume.
+      if (state?.active === true && typeof state.started_at === "string") {
+        const restoredAt = state.restored_at;
+        const isResume =
+          typeof restoredAt !== "string" || restoredAt < state.started_at;
+        if (isResume) {
+          appended.push(restoreMessage(state));
+          await store.patch(
+            sessionID,
+            { restored_at: new Date().toISOString() },
+            RALPLAN_MODE,
+          );
+        }
+      }
+
+      // Step 4 — keyword.
+      if (detected.length > 0 && !text.includes(KEYWORD_NOTICE_MARKER)) {
+        appended.push(keywordMessage());
+        const patch = seedState(state, new Date().toISOString());
+        if (patch) await store.patch(sessionID, patch, RALPLAN_MODE);
+        else log("ralplan state already active; skipped re-seed");
+      }
+
+      // Step 5 — gate. Dormant while EXECUTION_GATE_KEYWORDS is empty; the call
+      // site stays so enabling it is a one-line change.
+      const gate = applyRalplanGate(detected, text);
+      if (gate.gateApplied) appended.push(gateMessage(gate.gatedKeywords));
+
+      if (appended.length === 0) return;
+      const messageID = input.messageID ?? output.message.id;
+      for (const appendedText of appended) {
+        const part: ChatMessagePart = {
+          id: `prt_${crypto.randomUUID()}`,
+          sessionID,
+          messageID,
+          type: "text",
+          text: appendedText,
+          synthetic: true,
+        };
+        output.parts.push(part);
+      }
+    } catch (error) {
+      log("chat.message handler failed", error);
+    }
+  };
+
+  const toolExecuteBefore: RalplanHooks["tool.execute.before"] = async (
+    input,
+    output,
+  ) => {
+    try {
+      if (input.tool !== "skill") return;
+      const name: unknown = output.args?.name;
+      if (typeof name !== "string" || name !== RALPLAN_SKILL_NAME) return;
+      await confirmRalplan(input.sessionID);
+    } catch (error) {
+      log("tool.execute.before handler failed", error);
+    }
+  };
+
+  // Belt-and-braces by design: a `/ralplan` turn fires this before the
+  // seeding `chat.message`, so it cannot be the authority. The `skill` tool
+  // call that follows is.
+  const commandExecuteBefore: RalplanHooks["command.execute.before"] = async (
+    input,
+  ) => {
+    try {
+      if (input.command !== RALPLAN_SKILL_NAME) return;
+      await confirmRalplan(input.sessionID);
+    } catch (error) {
+      log("command.execute.before handler failed", error);
+    }
+  };
+
+  return {
+    event,
+    "chat.message": chatMessage,
+    "tool.execute.before": toolExecuteBefore,
+    "command.execute.before": commandExecuteBefore,
+  };
+}

@@ -12,7 +12,7 @@
 
 - Phase 1 follows OMC, rather than blending OMC and OMX contracts. Adapt Claude Code-specific integration to OpenCode's native APIs, tools, permissions, and lifecycle without modifying the host.
 - Record each host-required deviation from OMC, its reason, and its behavioral impact. Do not silently fill gaps with OMX or OMO policy.
-- Before implementation alignment, define the Phase 1 feature scope, pin the OMC baseline commit, and specify completion checks. The current product contains deep-interview and owned primary/explore roles; this does not imply a full OMC port or settle the Phase 1 scope.
+- Before implementation alignment, define the Phase 1 feature scope, pin the OMC baseline commit, and specify completion checks. The current product contains deep-interview, ralplan, owned primary/explore roles, and the `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic` consensus roles; this does not imply a full OMC port or settle the Phase 1 scope.
 - Begin Phase 2 only after the agreed Phase 1 completion checks pass. Analyze OMX improvements individually against the completed OMC baseline; do not assume wholesale adoption.
 
 ## Reference boundaries

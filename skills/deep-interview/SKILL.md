@@ -5,7 +5,7 @@ argument-hint: "<idea or vague description>"
 ---
 
 <Purpose>
-Deep Interview implements Ouroboros-inspired Socratic questioning with mathematical ambiguity scoring. It replaces vague ideas with crystal-clear specifications by asking targeted questions that expose hidden assumptions, measuring clarity across weighted dimensions, and refusing to proceed until ambiguity drops below the resolved threshold for this run. The output is an independent specification. It informs later work but never grants implementation approval or invokes a downstream workflow.
+Deep Interview implements Ouroboros-inspired Socratic questioning with mathematical ambiguity scoring. It replaces vague ideas with crystal-clear specifications by asking targeted questions that expose hidden assumptions, measuring clarity across weighted dimensions, and refusing to proceed until ambiguity drops below the resolved threshold for this run. The output is an independent specification. It informs later work but never grants implementation approval; the only offered follow-up is ralplan consensus planning, which also stops at `pending approval`.
 </Purpose>
 
 <Use_When>
@@ -478,6 +478,7 @@ If the effective `maxRounds` has not been reached and the user has not explicitl
 **Options:**
 - **Finish with this specification** — End requirements clarification. This is not approval to implement.
 - **Refine further** — Continue interviewing to improve the specification.
+- **Refine with ralplan consensus** — Load the `ralplan` skill with this specification's path as its argument and run Planner/Architect/Critic consensus planning on it. This produces a `pending approval` plan; it is still not implementation approval.
 
 On **Refine further**:
 1. Keep the same trusted current session, transcript, scores, topology, ontology snapshots, challenge history, and cumulative round count. Preserve the full snapshot on subsequent state writes; do not reset the interview or clear state.
@@ -485,11 +486,13 @@ On **Refine further**:
 3. Count and score the additional requirements answer normally, then return to Phase 2's normal loop conditions. The menu selection itself is not a requirements round or a scoring event.
 4. When ready to crystallize again, update the same `{specsDir}/deep-interview-{slug}.md` through the native file-writing tool with the additional answers and decisions. Offer the finish/refine choice again while rounds remain.
 
+On **Refine with ralplan consensus**: save the current-session snapshot with `active: false` and `current_phase: "completed"`, exactly as the Finish path does, then call the native `skill` tool with name `ralplan` and pass the saved spec path `{specsDir}/deep-interview-{slug}.md` as its argument. The specification remains requirements clarification, and the ralplan plan that follows also stops at `pending approval`.
+
 Keep the interview active while waiting for the choice; do not mark it completed merely because the threshold was met or the spec was written. On **Finish with this specification**, save the full current-session snapshot with `active: false` and `current_phase: "completed"`, and return the saved path and limitations. Do not clear the transcript or delete the document.
 
 The effective `maxRounds` remains a cumulative hard cap, including refinement rounds. At the cap, follow the existing limit-reached behavior without offering further rounds. Respect an explicit early-exit choice or cancellation without another continuation prompt. If the native file-writing tool or `question` fails or is denied, report the actual failure and preserve state and any successfully written document; never interpret that failure as a finish selection or claim successful completion.
 
-The specification is requirements clarification, not implementation approval. Do not offer, invoke, or bridge to plan, autopilot, team, ralph, autoresearch, ultragoal, or any other downstream workflow.
+The specification is requirements clarification, not implementation approval. Do not offer, invoke, or bridge to autopilot, team, ralph, autoresearch, ultragoal, or any other execution workflow; the ralplan consensus-planning bridge above is the one explicitly permitted exception.
 
 </Steps>
 
@@ -689,6 +692,6 @@ Each mode is used exactly once, then normal Socratic questioning resumes. Modes 
 
 ## Source and host substitutions
 
-Adapted from OMC v5.4.0 `skills/deep-interview/SKILL.md` (MIT). Its substantive Purpose, usage criteria, Phase 0–4 structure, Round 0 topology, question-generation prompt, scoring prompt/formulas, Round 1 ontology special case, `>50%` rename rule, reports, 4/6/8 challenge prompts, examples, and 20-round default are retained. Host substitutions are OpenCode native `question`, `task`, `state_read`, `state_write`, Read, and `write`/`apply_patch`; resolved Open-gajae JSONC settings; trusted-current-session state results; `{specsDir}/deep-interview-{slug}.md`; and advisory `companyContext`. OMC settings/state paths, Claude-only models/tools, session selectors, receipts, and downstream plan/autopilot/team/ralph/autoresearch/ultragoal bridges are removed. OMX rhythm, mandatory pressure, and four-closure enforcement are not retained. See THIRD-PARTY-NOTICES.md and licenses/.
+Adapted from OMC v5.4.0 `skills/deep-interview/SKILL.md` (MIT). Its substantive Purpose, usage criteria, Phase 0–4 structure, Round 0 topology, question-generation prompt, scoring prompt/formulas, Round 1 ontology special case, `>50%` rename rule, reports, 4/6/8 challenge prompts, examples, and 20-round default are retained. Host substitutions are OpenCode native `question`, `task`, `state_read`, `state_write`, Read, and `write`/`apply_patch`; resolved Open-gajae JSONC settings; trusted-current-session state results; `{specsDir}/deep-interview-{slug}.md`; and advisory `companyContext`. OMC settings/state paths, Claude-only models/tools, session selectors, and receipts are removed. The downstream ralplan consensus-planning bridge is retained; the autopilot/team/ralph/autoresearch/ultragoal execution bridges are removed. OMX rhythm, mandatory pressure, and four-closure enforcement are not retained. See THIRD-PARTY-NOTICES.md and licenses/.
 
 Task: {{ARGUMENTS}}

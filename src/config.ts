@@ -8,6 +8,9 @@ export const agentNames = [
   "open-gajae",
   "open-gajae-explore",
   "open-gajae-document-specialist",
+  "open-gajae-planner",
+  "open-gajae-architect",
+  "open-gajae-critic",
 ] as const;
 type AgentName = (typeof agentNames)[number];
 type ModelSettings = { model?: string; variant?: string };
@@ -170,6 +173,17 @@ export const documentSpecialistPermissions = {
   state_clear: "deny",
 } as const;
 
+// Planner, Architect, and Critic: the ralplan leader owns asking, delegating,
+// and persisting. Bash stays allowed so Architect and Critic can verify claims
+// against git history rather than trusting a plan's assertions.
+export const rolePermissions = {
+  edit: "deny",
+  task: "deny",
+  question: "deny",
+  state_write: "deny",
+  state_clear: "deny",
+} as const;
+
 function readonlyPermissions(
   host: NonNullable<NonNullable<Config["agent"]>[string]>["permission"],
   denied: Record<string, "deny">,
@@ -212,12 +226,16 @@ export async function configureAgents(
   const exploreOverrides = config.agent?.["open-gajae-explore"];
   const documentSpecialistOverrides =
     config.agent?.["open-gajae-document-specialist"];
+  const plannerOverrides = config.agent?.["open-gajae-planner"];
+  const architectOverrides = config.agent?.["open-gajae-architect"];
+  const criticOverrides = config.agent?.["open-gajae-critic"];
   const skillRoot = await realpath(join(packageRoot, "skills"));
-  const [primary, explore, documentSpecialist] = await Promise.all(
-    agentNames.map((name) =>
-      readFile(join(packageRoot, "prompts", `${name}.md`), "utf8"),
-    ),
-  );
+  const [primary, explore, documentSpecialist, planner, architect, critic] =
+    await Promise.all(
+      agentNames.map((name) =>
+        readFile(join(packageRoot, "prompts", `${name}.md`), "utf8"),
+      ),
+    );
   target.skills = {
     ...target.skills,
     paths: [...new Set([...(target.skills?.paths ?? []), skillRoot])],
@@ -285,6 +303,65 @@ ${runtimeSettings}
         documentSpecialistOverrides?.permission,
         documentSpecialistPermissions,
       ),
+    },
+    "open-gajae-planner": {
+      ...settings.agents["open-gajae-planner"],
+      model:
+        plannerOverrides?.model ?? settings.agents["open-gajae-planner"]?.model,
+      variant:
+        plannerOverrides?.variant ??
+        settings.agents["open-gajae-planner"]?.variant,
+      mode: "subagent",
+      description: "Draft and revise consensus work plans; never implements.",
+      prompt: planner,
+      permission: readonlyPermissions(
+        plannerOverrides?.permission,
+        rolePermissions,
+      ),
+    },
+    "open-gajae-architect": {
+      ...settings.agents["open-gajae-architect"],
+      model:
+        architectOverrides?.model ??
+        settings.agents["open-gajae-architect"]?.model,
+      variant:
+        architectOverrides?.variant ??
+        settings.agents["open-gajae-architect"]?.variant,
+      mode: "subagent",
+      description:
+        "Read-only architectural review with steelman antithesis and tradeoff tension.",
+      prompt: architect,
+      permission: readonlyPermissions(
+        architectOverrides?.permission,
+        rolePermissions,
+      ),
+    },
+    "open-gajae-critic": {
+      ...settings.agents["open-gajae-critic"],
+      model:
+        criticOverrides?.model ?? settings.agents["open-gajae-critic"]?.model,
+      variant:
+        criticOverrides?.variant ??
+        settings.agents["open-gajae-critic"]?.variant,
+      mode: "subagent",
+      description:
+        "Read-only final quality gate for plans with severity-rated findings.",
+      prompt: critic,
+      permission: readonlyPermissions(
+        criticOverrides?.permission,
+        rolePermissions,
+      ),
+    },
+  };
+  // No `agent`, so the command runs on the session's current agent; Config.command
+  // entries have no `variant` field.
+  config.command = {
+    ...config.command,
+    ralplan: {
+      description:
+        "Consensus planning: Planner → Architect → Critic until agreement",
+      template:
+        "Load the `ralplan` skill and run its consensus planning workflow for: $ARGUMENTS",
     },
   };
 }
