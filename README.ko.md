@@ -103,9 +103,9 @@ continuation hook은 ralplan state가 active인 동안 `session.idle`마다 세�
 - **`open-gajae`**: primary입니다. 수정, 결정, 통합, state write/clear를 소유합니다.
 - **`open-gajae-explore`**: repository 사실을 읽기 전용으로 조사합니다. edit, bash, delegation, question, state write/clear를 할 수 없습니다.
 - **`open-gajae-document-specialist`**: 문서와 인용 근거를 조사합니다. edit, delegation, question, state write/clear를 할 수 없습니다. 문서화된 `chub` 절차는 읽기 전용이며 arbitrary bash 권한을 주지 않습니다.
-- **`open-gajae-planner`**, **`open-gajae-architect`**, **`open-gajae-critic`**: ralplan 합의 역할입니다. 세 역할 모두 `mode: subagent`이며 읽기 전용입니다. edit, task, question, state write/clear가 모두 거부됩니다. 기본 모델은 없으며 설정의 `agents` 맵으로만 지정합니다.
+- **`open-gajae-planner`**, **`open-gajae-architect`**, **`open-gajae-critic`**: ralplan 합의 역할입니다. 세 역할 모두 `mode: subagent`이고 기본 모델은 없으며 설정의 `agents` 맵으로만 지정합니다. architect와 critic은 읽기 전용으로 edit, task, question, state write/clear가 거부됩니다. planner는 OMC와 같이 plan을 직접 저장하고 조사를 위임합니다. `edit` 권한은 `.open-gajae/_session-*/plans/*`와 `.open-gajae/_session-*/drafts/*`만 허용하고, `tool.execute.before` guard가 그 쓰기를 현재 루트 세션의 디렉터리로 다시 한정합니다. `task` 권한은 `open-gajae-explore`와 `open-gajae-document-specialist`만 허용하며, question과 state write/clear는 계속 거부됩니다. 위임을 위한 별도 설정은 필요 없습니다. 플러그인이 host의 `subagent_depth`를 최소 2로 올리고, 더 큰 사용자 값은 그대로 둡니다.
 
-역할별 host permission은 보존합니다. 다섯 읽기 전용 역할의 고정 deny rule은 host wildcard를 포함한 host rule 뒤에 추가되므로 순서로 mandatory deny를 완화할 수 없고, 나머지 permission 평가는 native입니다. 설정은 `~/.open-gajae/open-gajae.jsonc`와 `<worktree>/.open-gajae/open-gajae.jsonc`에서 읽습니다. field는 project → user → defaults 순으로 병합됩니다. 알 수 없는 key, 잘못된 JSONC, 잘못된 값은 진단과 함께 실패합니다. 모든 자체 역할의 유효한 host override는 project, user `model`/`variant`보다 우선하고, 생략한 field는 host가 소유합니다. provider fallback, tier mapping, 인위적 collision 거부는 없습니다.
+역할별 host permission은 보존합니다. 다섯 자체 subagent 역할의 고정 rule은 host wildcard를 포함한 host rule 뒤에 추가되므로 순서로 mandatory deny나 planner의 경로·대상 범위를 완화할 수 없고, 나머지 permission 평가는 native입니다. 설정은 `~/.open-gajae/open-gajae.jsonc`와 `<worktree>/.open-gajae/open-gajae.jsonc`에서 읽습니다. field는 project → user → defaults 순으로 병합됩니다. 알 수 없는 key, 잘못된 JSONC, 잘못된 값은 진단과 함께 실패합니다. 모든 자체 역할의 유효한 host override는 project, user `model`/`variant`보다 우선하고, 생략한 field는 host가 소유합니다. provider fallback, tier mapping, 인위적 collision 거부는 없습니다.
 
 ```jsonc
 {

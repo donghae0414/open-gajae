@@ -14,7 +14,12 @@
 // oh-my-openagent (MIT) for the OpenCode-side in-flight and injection patterns.
 
 import type { Hooks } from "@opencode-ai/plugin";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import {
+  artifactPathsOf,
+  sessionArtifactOwner,
+  worktreeRelativePath,
+} from "./artifact-guard.js";
 import {
   applyRalplanGate,
   breakerMessage,
@@ -40,6 +45,7 @@ import { RALPLAN_MODE, type StateStore } from "./state.js";
  */
 export type RalplanClient = {
   session: {
+    get(input: { path: { id: string } }): Promise<unknown>;
     messages(input: { path: { id: string } }): Promise<unknown>;
     promptAsync(input: {
       path: { id: string };
@@ -272,6 +278,100 @@ export function createHooks(
   }
 
   /**
+   * Root session per session ID. A subagent runs in a child session, and its
+   * artifacts belong to the session folder of the lineage's root, so the chain
+   * is walked once per session and then cached.
+   */
+  const rootSessions = new Map<string, string>();
+
+  /**
+   * The `parentID` of one session, or `undefined` when it has none. Throws for
+   * any response this cannot read, so the caller fails closed.
+   */
+  async function parentSession(sessionID: string): Promise<string | undefined> {
+    const raw = await client.session.get({ path: { id: sessionID } });
+    if (!isRecord(raw)) throw new Error("session lookup returned no object");
+    // The SDK's `"fields"` style returns `{ data, error }`; a fake may return
+    // the session object itself. An `error` field is a failed lookup.
+    if (raw.error !== undefined && raw.error !== null)
+      throw new Error(`session lookup failed: ${JSON.stringify(raw.error)}`);
+    const data = isRecord(raw.data) ? raw.data : "data" in raw ? undefined : raw;
+    if (!data) throw new Error("session lookup returned no session");
+    const parentID = data.parentID;
+    if (parentID === undefined || parentID === null) return undefined;
+    if (typeof parentID !== "string" || parentID.length === 0)
+      throw new Error("session lookup returned an unusable parentID");
+    return parentID;
+  }
+
+  /**
+   * The root of `sessionID`'s lineage. Any failure — a rejected lookup, an
+   * unreadable payload, a cycle — refuses the write rather than guessing:
+   * the same fail-closed rule oh-my-openagent's spawn guards use.
+   */
+  async function rootSession(sessionID: string): Promise<string> {
+    const cached = rootSessions.get(sessionID);
+    if (cached !== undefined) return cached;
+    const walked: string[] = [];
+    const seen = new Set<string>();
+    let current = sessionID;
+    let root: string | undefined;
+    try {
+      for (;;) {
+        const known = rootSessions.get(current);
+        if (known !== undefined) {
+          root = known;
+          break;
+        }
+        if (seen.has(current)) throw new Error("session parent chain loops");
+        seen.add(current);
+        walked.push(current);
+        const parent = await parentSession(current);
+        if (parent === undefined) {
+          root = current;
+          break;
+        }
+        current = parent;
+      }
+    } catch (error) {
+      log(`could not resolve the session lineage for ${sessionID}`, error);
+      throw new Error(
+        `open-gajae: could not resolve the session lineage for ${sessionID}; refusing to write a session artifact`,
+      );
+    }
+    for (const id of walked) rootSessions.set(id, root);
+    return root;
+  }
+
+  /**
+   * D2c: a session may only write plans and drafts under its own session
+   * folder. The static `edit` rules in `src/config.ts` pin the shape of the
+   * path; only this can pin the session, because the `config` hook runs before
+   * any session exists. Throwing from `tool.execute.before` makes the host fail
+   * the tool call (oh-my-openagent `plugin/tool-execute-before.ts:70,89`).
+   */
+  async function guardSessionArtifacts(
+    tool: string,
+    sessionID: string,
+    args: unknown,
+  ): Promise<void> {
+    const paths = artifactPathsOf(tool, args);
+    if (paths.length === 0) return;
+    for (const filePath of paths) {
+      const owner = sessionArtifactOwner(store.worktree, filePath);
+      // Not a session plan or draft: the static permission rules decide.
+      if (owner === undefined) continue;
+      const rootID = await rootSession(sessionID);
+      const rootDir = await store.resolveSessionDir(rootID);
+      const allowed = basename(rootDir);
+      if (owner === allowed) continue;
+      throw new Error(
+        `open-gajae: ${worktreeRelativePath(store.worktree, filePath)} belongs to another session's plans/drafts; this session may only write under ${allowed}`,
+      );
+    }
+  }
+
+  /**
    * Abort detection, layer 1. When the user presses Esc, OpenCode's
    * `session/processor.ts` halts the turn, publishes `session.error` with a
    * `MessageAbortedError`, and only then goes idle. Claude Code never runs OMC's
@@ -492,6 +592,9 @@ export function createHooks(
     input,
     output,
   ) => {
+    // Deliberately outside the catch below: this guard's refusal is the tool
+    // call's failure, not something to log and swallow.
+    await guardSessionArtifacts(input.tool, input.sessionID, output.args);
     try {
       if (input.tool !== "skill") return;
       const name: unknown = output.args?.name;

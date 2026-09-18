@@ -173,9 +173,9 @@ export const documentSpecialistPermissions = {
   state_clear: "deny",
 } as const;
 
-// Planner, Architect, and Critic: the ralplan leader owns asking, delegating,
-// and persisting. Bash stays allowed so Architect and Critic can verify claims
-// against git history rather than trusting a plan's assertions.
+// Architect and Critic: the ralplan leader owns asking, delegating, and
+// persisting. Bash stays allowed so they can verify claims against git history
+// rather than trusting a plan's assertions.
 export const rolePermissions = {
   edit: "deny",
   task: "deny",
@@ -184,13 +184,47 @@ export const rolePermissions = {
   state_clear: "deny",
 } as const;
 
+// Planner restores OMC's planner, which writes its own plans and delegates its
+// own research, with the scope fixed by host rules instead of by prompt text.
+// Order is load-bearing: OpenCode evaluates rules with findLast, and an `edit`
+// ruleset whose LAST rule is `*: deny` removes write/edit/apply_patch from the
+// agent entirely (opencode permission/index.ts:204-213). The `task` rules are
+// named explicitly because a subagent with no `task` rule of its own has
+// `task: deny` added to its session (agent/subagent-permissions.ts:15-28).
+export const plannerPermissions = {
+  edit: {
+    "*": "deny",
+    ".open-gajae/_session-*/plans/*": "allow",
+    ".open-gajae/_session-*/drafts/*": "allow",
+  },
+  task: {
+    "*": "deny",
+    "open-gajae-explore": "allow",
+    "open-gajae-document-specialist": "allow",
+  },
+  question: "deny",
+  state_write: "deny",
+  state_clear: "deny",
+} as const;
+
+/**
+ * A mandatory rule is either a single action or an ordered pattern map. The map
+ * is reinserted whole and last, so a host override such as `edit: "allow"` or
+ * `task: "allow"` is evaluated before it and cannot loosen it.
+ */
+type MandatoryPermissions = Readonly<
+  Record<string, string | Readonly<Record<string, string>>>
+>;
+
 function readonlyPermissions(
   host: NonNullable<NonNullable<Config["agent"]>[string]>["permission"],
-  denied: Record<string, "deny">,
+  denied: MandatoryPermissions,
 ) {
   const rules = typeof host === "string" ? { "*": host } : (host ?? {});
-  // Reinsert mandatory denials last: overwriting an existing property alone
+  // Reinsert mandatory rules last: overwriting an existing property alone
   // would leave it before a host wildcard in OpenCode's ordered rule list.
+  // The key order inside a map value is preserved as written, because that is
+  // the order OpenCode's `fromConfig` iterates.
   return {
     ...Object.fromEntries(
       Object.entries(rules).filter(([name]) => !(name in denied)),
@@ -221,7 +255,12 @@ export async function configureAgents(
   settings: Settings,
   packageRoot: string,
 ): Promise<void> {
-  const target = config as Config & { skills?: { paths?: string[] } };
+  // `subagent_depth` is a real top-level host key the pinned plugin's `Config`
+  // type does not declare, exactly like `default_agent`.
+  const target = config as Config & {
+    skills?: { paths?: string[] };
+    subagent_depth?: number;
+  };
   const primaryOverrides = config.agent?.["open-gajae"];
   const exploreOverrides = config.agent?.["open-gajae-explore"];
   const documentSpecialistOverrides =
@@ -240,6 +279,15 @@ export async function configureAgents(
     ...target.skills,
     paths: [...new Set([...(target.skills?.paths ?? []), skillRoot])],
   };
+  // Planner delegates to explore and document-specialist through the native
+  // `task` tool, and the host caps nesting at depth 1 by default
+  // (`opencode/packages/opencode/src/tool/task.ts:111`), which fails that call.
+  // This is a global host key, so the plugin only floors it and respects a
+  // larger user value.
+  target.subagent_depth = Math.max(
+    typeof target.subagent_depth === "number" ? target.subagent_depth : 1,
+    2,
+  );
   const primaryPermission =
     hasQuestionPermission(config.permission) ||
     hasQuestionPermission(primaryOverrides?.permission)
@@ -316,7 +364,7 @@ ${runtimeSettings}
       prompt: planner,
       permission: readonlyPermissions(
         plannerOverrides?.permission,
-        rolePermissions,
+        plannerPermissions,
       ),
     },
     "open-gajae-architect": {

@@ -8,3 +8,6 @@
 /node_modules/
 /dist/
 /.open-gajae/
+
+# Scratch fixtures that oh-my-claudecode's test harness leaves in the working directory
+/.test-job-state-db-*/

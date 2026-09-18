@@ -144,6 +144,7 @@ try {
     "open-gajae",
   ]);
   requireOutput(config, "open-gajae");
+  const roleConfigs: Record<string, (typeof results)[number]> = {};
   for (const role of [
     "open-gajae-planner",
     "open-gajae-architect",
@@ -156,7 +157,59 @@ try {
     ]);
     requireOutput(roleConfig, role);
     requireOutput(roleConfig, '"mode": "subagent"');
+    roleConfigs[role] = roleConfig;
   }
+  // `debug agent` prints the resolved agent as JSON, with `permission` already
+  // flattened into the host's ordered rule list. Order is the mechanism here:
+  // OpenCode evaluates rules with `findLast`, and an `edit` ruleset whose LAST
+  // rule is `*: deny` removes write/edit/apply_patch from the agent entirely
+  // (`opencode/packages/opencode/src/permission/index.ts:204-213`).
+  type HostRule = { permission: string; pattern: string; action: string };
+  const plannerAgent = JSON.parse(
+    roleConfigs["open-gajae-planner"]!.stdout,
+  ) as { permission?: HostRule[] };
+  const plannerRules = plannerAgent.permission;
+  if (!Array.isArray(plannerRules))
+    throw new Error(
+      `planner-permission-rules: debug agent printed no rule list: ${roleConfigs["open-gajae-planner"]!.stdout.slice(0, 400)}`,
+    );
+  const rulesFor = (permission: string) =>
+    plannerRules.filter((rule) => rule.permission === permission);
+  function requireRuleOrder(permission: string, expected: HostRule[]) {
+    const rules = rulesFor(permission);
+    // The plugin's rules are the last ones the host resolved for this agent.
+    const tail = rules.slice(-expected.length);
+    if (JSON.stringify(tail) !== JSON.stringify(expected))
+      throw new Error(
+        `planner-permission-rules: ${permission} rules end with ${JSON.stringify(tail)}, expected ${JSON.stringify(expected)}`,
+      );
+  }
+  requireRuleOrder("edit", [
+    { permission: "edit", pattern: "*", action: "deny" },
+    {
+      permission: "edit",
+      pattern: ".open-gajae/_session-*/plans/*",
+      action: "allow",
+    },
+    {
+      permission: "edit",
+      pattern: ".open-gajae/_session-*/drafts/*",
+      action: "allow",
+    },
+  ]);
+  requireRuleOrder("task", [
+    { permission: "task", pattern: "*", action: "deny" },
+    { permission: "task", pattern: "open-gajae-explore", action: "allow" },
+    {
+      permission: "task",
+      pattern: "open-gajae-document-specialist",
+      action: "allow",
+    },
+  ]);
+  // Keep only the asserted rules in the report; the resolved agent is large.
+  roleConfigs["open-gajae-planner"]!.stdout = JSON.stringify({
+    permission: [...rulesFor("edit"), ...rulesFor("task")],
+  });
   const state = await run("native-state-write", [
     "debug",
     "agent",
@@ -499,7 +552,10 @@ try {
     throw new Error(
       `native-ralplan-command: exited ${debugConfig.code}\n${debugConfig.stderr}`,
     );
-  let resolvedConfig: { command?: Record<string, { template?: unknown }> };
+  let resolvedConfig: {
+    command?: Record<string, { template?: unknown }>;
+    subagent_depth?: unknown;
+  };
   try {
     resolvedConfig = JSON.parse(debugConfig.stdout);
   } catch (error) {
@@ -528,8 +584,18 @@ try {
     throw new Error(
       `native-deep-interview-command: command["deep-interview"].template is ${JSON.stringify(deepInterviewTemplate)}`,
     );
-  // The resolved config is ~60KB; keep only the two asserted commands in the report.
-  debugConfig.stdout = JSON.stringify({ command: resolvedConfig.command });
+  // Planner's `task` calls need one more nesting level than the host's default
+  // of 1 (`opencode/packages/opencode/src/tool/task.ts:111`); the plugin floors
+  // the global key at 2, and this fixture sets no value of its own.
+  if (resolvedConfig.subagent_depth !== 2)
+    throw new Error(
+      `native-subagent-depth: resolved subagent_depth is ${JSON.stringify(resolvedConfig.subagent_depth)}, expected 2`,
+    );
+  // The resolved config is ~60KB; keep only the asserted fields in the report.
+  debugConfig.stdout = JSON.stringify({
+    command: resolvedConfig.command,
+    subagent_depth: resolvedConfig.subagent_depth,
+  });
   const roles = [
     "open-gajae",
     "open-gajae-explore",

@@ -544,13 +544,12 @@ test("consensus roles register as read-only subagents and expose the ralplan com
         string,
         unknown
       >;
-      for (const rule of [
-        "edit",
-        "task",
-        "question",
-        "state_write",
-        "state_clear",
-      ])
+      for (const rule of ["question", "state_write", "state_clear"])
+        expect(permission[rule]).toBe("deny");
+      // Planner writes its own plans and delegates its own research; its `edit`
+      // and `task` rules are pattern maps, asserted separately below.
+      if (name === "open-gajae-planner") continue;
+      for (const rule of ["edit", "task"])
         expect(permission[rule]).toBe("deny");
     }
     const template = config.command?.ralplan?.template;
@@ -577,6 +576,93 @@ test("consensus roles register as read-only subagents and expose the ralplan com
       JSON.stringify({ agents: { "open-gajae-reviewer": { model: "a/b" } } }),
     );
     await expect(loadSettings(root, home)).rejects.toThrow();
+  }));
+
+// Rule order is the whole mechanism: OpenCode evaluates with `findLast`, and an
+// `edit` ruleset whose LAST rule is `*: deny` removes write/edit/apply_patch
+// from the agent entirely (`opencode/packages/opencode/src/permission/index.ts:204-213`).
+const plannerEditRules: Array<[string, string]> = [
+  ["*", "deny"],
+  [".open-gajae/_session-*/plans/*", "allow"],
+  [".open-gajae/_session-*/drafts/*", "allow"],
+];
+const plannerTaskRules: Array<[string, string]> = [
+  ["*", "deny"],
+  ["open-gajae-explore", "allow"],
+  ["open-gajae-document-specialist", "allow"],
+];
+
+test("planner writes only session plans and drafts and delegates only to the two research roles", async () =>
+  fixture(async (root, home) => {
+    const config: Config = {};
+    await configureAgents(config, await loadSettings(root, home), resolve("."));
+    const permission = config.agent?.["open-gajae-planner"]
+      ?.permission as Record<string, unknown>;
+    expect(Object.entries(permission.edit as Record<string, string>)).toEqual(
+      plannerEditRules,
+    );
+    expect(Object.entries(permission.task as Record<string, string>)).toEqual(
+      plannerTaskRules,
+    );
+    for (const rule of ["question", "state_write", "state_clear"])
+      expect(permission[rule]).toBe("deny");
+    // Architect and critic keep the read-only role rules unchanged.
+    for (const name of ["open-gajae-architect", "open-gajae-critic"]) {
+      const role = config.agent?.[name]?.permission as Record<string, unknown>;
+      expect(role.edit).toBe("deny");
+      expect(role.task).toBe("deny");
+    }
+  }));
+
+test("a host override cannot loosen the planner's write or delegation scope", async () =>
+  fixture(async (root, home) => {
+    const config = {
+      agent: {
+        "open-gajae-planner": {
+          permission: { edit: "allow", task: "allow", "*": "allow" },
+        },
+      },
+    } as Config;
+    await configureAgents(config, await loadSettings(root, home), resolve("."));
+    const permission = config.agent?.["open-gajae-planner"]
+      ?.permission as Record<string, unknown>;
+    // The host's own unrelated rule survives, and the plugin's maps follow it.
+    expect(Object.keys(permission)).toEqual([
+      "*",
+      "edit",
+      "task",
+      "question",
+      "state_write",
+      "state_clear",
+    ]);
+    expect(permission["*"]).toBe("allow");
+    expect(Object.entries(permission.edit as Record<string, string>)).toEqual(
+      plannerEditRules,
+    );
+    expect(Object.entries(permission.task as Record<string, string>)).toEqual(
+      plannerTaskRules,
+    );
+  }));
+
+test("the host subagent nesting limit is floored at two and never lowered", async () =>
+  fixture(async (root, home) => {
+    const settings = await loadSettings(root, home);
+    // Planner reaches explore and document-specialist through native `task`,
+    // which the host caps at depth 1 by default (`tool/task.ts:111`).
+    for (const [host, expected] of [
+      [undefined, 2],
+      [1, 2],
+      [2, 2],
+      [3, 3],
+    ] as const) {
+      const config = (
+        host === undefined ? {} : { subagent_depth: host }
+      ) as Config;
+      await configureAgents(config, settings, resolve("."));
+      expect(
+        (config as Config & { subagent_depth?: number }).subagent_depth,
+      ).toBe(expected);
+    }
   }));
 
 // Original source literals are deliberate contract tests, not expected values derived from the port.

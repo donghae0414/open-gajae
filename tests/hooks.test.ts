@@ -2,7 +2,7 @@ import { test, expect, setSystemTime } from "bun:test";
 import { promises as fs } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Hooks } from "@opencode-ai/plugin";
 import { createHooks, type RalplanClient, type RalplanHooks } from "../src/hooks";
 import { continuationMessage } from "../src/ralplan";
@@ -45,11 +45,27 @@ function fakeClient(
     messages?: unknown;
     promptRejects?: boolean;
     messagesReject?: boolean;
+    /** `parents[id]` is that session's parentID; absent means it is a root. */
+    parents?: Record<string, string>;
+    sessionGetRejects?: boolean;
   } = {},
 ) {
   const calls: PromptBody[] = [];
+  const sessionGets: string[] = [];
   const client: RalplanClient = {
     session: {
+      async get(input) {
+        sessionGets.push(input.path.id);
+        if (options.sessionGetRejects) throw new Error("session.get failed");
+        const parentID = options.parents?.[input.path.id];
+        return {
+          data: {
+            id: input.path.id,
+            ...(parentID ? { parentID } : {}),
+            time: { created: Date.parse("2026-09-18T03:09:58+09:00") },
+          },
+        };
+      },
       async messages() {
         if (options.messagesReject) throw new Error("session.messages failed");
         // A function lets one test script a different transcript per call.
@@ -64,7 +80,7 @@ function fakeClient(
       },
     },
   };
-  return { client, calls };
+  return { client, calls, sessionGets };
 }
 
 async function fixture(
@@ -73,6 +89,7 @@ async function fixture(
     store: StateStore;
     hooks: RalplanHooks;
     calls: PromptBody[];
+    sessionGets: string[];
   }) => Promise<void>,
   options: Parameters<typeof fakeClient>[0] = {},
 ) {
@@ -83,7 +100,7 @@ async function fixture(
     const store = new StateStore(root, async () =>
       Date.parse("2026-09-18T03:09:58+09:00"),
     );
-    const { client, calls } = fakeClient(options);
+    const { client, calls, sessionGets } = fakeClient(options);
     // The real plugin root, so `deepInterviewSkillPath` points at the shipped
     // `skills/deep-interview/SKILL.md` exactly as it does at runtime.
     await run({
@@ -91,6 +108,7 @@ async function fixture(
       store,
       hooks: createHooks(store, client, PACKAGE_ROOT),
       calls,
+      sessionGets,
     });
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -148,6 +166,13 @@ const skillCall = (hooks: RalplanHooks, sessionID: string, args: unknown) =>
   hooks["tool.execute.before"](
     { tool: "skill", sessionID, callID: "call-1" },
     { args } as ToolOutput,
+  );
+
+/** One `write` tool call as the host delivers it to `tool.execute.before`. */
+const writeCall = (hooks: RalplanHooks, sessionID: string, filePath: string) =>
+  hooks["tool.execute.before"](
+    { tool: "write", sessionID, callID: "call-write" },
+    { args: { filePath, content: "# plan\n" } } as ToolOutput,
   );
 
 const commandCall = (hooks: RalplanHooks, sessionID: string, command: string) =>
@@ -964,5 +989,162 @@ test("the /deep-interview command template changes nothing", async () => {
     ).toHaveLength(0);
     expect(await noState(store, id)).toBe(true);
     expect(calls).toHaveLength(0);
+  });
+});
+
+// --- D2c session-scoped artifact guard ------------------------------------
+// The static `edit` rules in src/config.ts pin planner writes to
+// `.open-gajae/_session-*/(plans|drafts)/`; only this hook can pin the session,
+// because the `config` hook runs once, before any session exists.
+
+/** The session folder the store resolves for `sessionID`. */
+const folderOf = async (store: StateStore, sessionID: string) =>
+  basename(await store.resolveSessionDir(sessionID));
+
+test("a session may write plans and drafts under its own session folder", async () => {
+  await fixture(async ({ root, store, hooks, sessionGets }) => {
+    const id = nextSession("guard-own");
+    const folder = await folderOf(store, id);
+    for (const kind of ["plans", "drafts"]) {
+      await writeCall(
+        hooks,
+        id,
+        join(root, ".open-gajae", folder, kind, "plan.md"),
+      );
+      // The relative spelling the model may use resolves the same way.
+      await writeCall(hooks, id, join(".open-gajae", folder, kind, "plan.md"));
+    }
+    // The lineage walk is cached: one lookup covers every later write.
+    expect(sessionGets).toEqual([id]);
+  });
+});
+
+test("a child session writes into its root session's plans", async () => {
+  const child = nextSession("guard-child");
+  const parent = nextSession("guard-parent");
+  const rootSession = nextSession("guard-root");
+  await fixture(
+    async ({ root, store, hooks, sessionGets }) => {
+      const folder = await folderOf(store, rootSession);
+      await writeCall(
+        hooks,
+        child,
+        join(root, ".open-gajae", folder, "plans", "plan.md"),
+      );
+      // Walked child → parent → root, then cached for all three.
+      expect(sessionGets).toEqual([child, parent, rootSession]);
+      await writeCall(
+        hooks,
+        child,
+        join(root, ".open-gajae", folder, "drafts", "draft.md"),
+      );
+      expect(sessionGets).toEqual([child, parent, rootSession]);
+      // The child may not write into its own child-session folder, because the
+      // artifacts of the whole lineage belong to the root.
+      const ownFolder = await folderOf(store, child);
+      expect(ownFolder).not.toBe(folder);
+      await expect(
+        writeCall(
+          hooks,
+          child,
+          join(root, ".open-gajae", ownFolder, "plans", "plan.md"),
+        ),
+      ).rejects.toThrow("another session");
+    },
+    { parents: { [child]: parent, [parent]: rootSession } },
+  );
+});
+
+test("a write into another session's plans or drafts fails the tool call", async () => {
+  await fixture(async ({ root, store, hooks }) => {
+    const id = nextSession("guard-foreign");
+    const other = "_session-20260101-000000-ses_other";
+    const folder = await folderOf(store, id);
+    for (const kind of ["plans", "drafts"]) {
+      const path = join(root, ".open-gajae", other, kind, "plan.md");
+      const attempt = writeCall(hooks, id, path);
+      await expect(attempt).rejects.toThrow("another session");
+      // The message names the offending path and the one folder allowed.
+      await expect(attempt).rejects.toThrow(
+        `.open-gajae/${other}/${kind}/plan.md`,
+      );
+      await expect(attempt).rejects.toThrow(folder);
+    }
+    // `apply_patch` carries its paths inside one string and is judged the same.
+    await expect(
+      hooks["tool.execute.before"](
+        { tool: "apply_patch", sessionID: id, callID: "call-patch" },
+        {
+          args: {
+            patchText: `*** Begin Patch\n*** Add File: .open-gajae/${other}/plans/plan.md\n+x\n*** End Patch`,
+          },
+        } as ToolOutput,
+      ),
+    ).rejects.toThrow("another session");
+  });
+});
+
+test("an unresolvable session lineage refuses the write", async () => {
+  await fixture(
+    async ({ root, hooks }) => {
+      const id = nextSession("guard-lineage");
+      await expect(
+        writeCall(
+          hooks,
+          id,
+          join(root, ".open-gajae/_session-20260101-000000-ses_x/plans/p.md"),
+        ),
+      ).rejects.toThrow("session lineage");
+    },
+    { sessionGetRejects: true },
+  );
+});
+
+test("the guard judges only session plans and drafts", async () => {
+  await fixture(
+    async ({ root, store, hooks, sessionGets }) => {
+      const id = nextSession("guard-other-paths");
+      const folder = await folderOf(store, id);
+      const other = "_session-20260101-000000-ses_other";
+      // Ordinary source files, the plugin's own config, and another session's
+      // specs and state are the static permission rules' business, not this
+      // hook's. `session.get` rejects here, so any lookup at all would throw.
+      for (const path of [
+        join(root, "src/x.ts"),
+        join(root, ".open-gajae/open-gajae.jsonc"),
+        join(root, ".open-gajae", other, "specs/spec.md"),
+        join(root, ".open-gajae", other, "state/ralplan-state.json"),
+        "src/x.ts",
+        "/etc/passwd",
+      ])
+        await writeCall(hooks, id, path);
+      // Tools that write no file are not inspected either.
+      await hooks["tool.execute.before"](
+        { tool: "read", sessionID: id, callID: "call-read" },
+        {
+          args: { filePath: join(root, ".open-gajae", other, "plans/p.md") },
+        } as ToolOutput,
+      );
+      expect(sessionGets).toHaveLength(0);
+      expect(folder).toContain("_session-");
+    },
+    { sessionGetRejects: true },
+  );
+});
+
+test("the guard leaves the ralplan skill confirmation path intact", async () => {
+  await fixture(async ({ root, store, hooks }) => {
+    const id = nextSession("guard-skill");
+    await deliver(hooks, id, "랄플랜 정리해줘");
+    expect((await store.read(id, RALPLAN_MODE))?.awaiting_confirmation).toBe(
+      true,
+    );
+    // A guarded write in the same session, then the skill call that confirms.
+    const folder = await folderOf(store, id);
+    await writeCall(hooks, id, join(root, ".open-gajae", folder, "plans/p.md"));
+    await skillCall(hooks, id, { name: "ralplan" });
+    expect((await store.read(id, RALPLAN_MODE))?.awaiting_confirmation).toBe(
+      false,
+    );
   });
 });

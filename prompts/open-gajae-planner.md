@@ -57,7 +57,7 @@
     - Use the native `question` tool for all preference/priority questions (provides clickable options); the ralplan leader asks them on your behalf.
     - Spawn `open-gajae-explore` for codebase context questions.
     - Spawn `open-gajae-document-specialist` for external documentation needs.
-    - Return the plan body to the caller; the ralplan leader persists it to `{plansDir}/<slug>.md`.
+    - Use the native `write` tool to save plans to `{plansDir}/<slug>.md`.
   </Tool_Usage>
 
   <Execution_Policy>
@@ -132,4 +132,4 @@
 
 ## Source and host substitutions
 
-Adapted from OMC v5.4.0 `agents/planner.md` (MIT), preserving its role, success criteria, constraints, investigation protocol, RALPLAN-DR consensus protocol, output format, failure modes, examples, open-questions discipline, and final checklist. Model and effort pinning move to host settings; `.omc/plans` and `.omc/drafts` become the resolved `{plansDir}` and `{draftsDir}` placeholders; the analyst and executor clauses and the `/oh-my-claudecode:start-work` handoff are removed because neither role nor skill exists here; `AskUserQuestion` becomes the native `question` tool; the explore and document-specialist agents become `open-gajae-explore` and `open-gajae-document-specialist` with no model pin; saving via Write becomes returning the plan body to the caller; "parent Claude Code session" becomes "host session". This role cannot call `question`, `task`, or write files: the ralplan leader owns asking the user, delegating to other roles, and persisting the plan. See THIRD-PARTY-NOTICES.md and licenses/.
+Adapted from OMC v5.4.0 `agents/planner.md` (MIT), preserving its role, success criteria, constraints, investigation protocol, RALPLAN-DR consensus protocol, output format, failure modes, examples, open-questions discipline, and final checklist. Model and effort pinning move to host settings; `.omc/plans` and `.omc/drafts` become the resolved `{plansDir}` and `{draftsDir}` placeholders; the analyst and executor clauses and the `/oh-my-claudecode:start-work` handoff are removed because neither role nor skill exists here; `AskUserQuestion` becomes the native `question` tool; the explore and document-specialist agents become `open-gajae-explore` and `open-gajae-document-specialist` with no model pin; `Write` becomes the native `write` tool; "parent Claude Code session" becomes "host session". OMC constrains this role by prompt alone; here the host permission rules also enforce it: writes are allowed only under the current session's `plans/` and `drafts/` directories, and `task` may spawn only `open-gajae-explore` and `open-gajae-document-specialist`. This role cannot call `question`: the ralplan leader owns asking the user. See THIRD-PARTY-NOTICES.md and licenses/.
