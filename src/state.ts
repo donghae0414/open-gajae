@@ -47,6 +47,8 @@ const MAX_PAYLOAD_BYTES = 1_048_576;
 const MAX_NESTING_DEPTH = 10;
 const MAX_TOP_LEVEL_KEYS = 100;
 const MAX_SESSION_COMPONENT_BYTES = 255;
+/** `_session-` + `YYYYMMDD-HHMMSS` + the separator before the ID. */
+const SESSION_DIR_FIXED_BYTES = 25;
 const targetQueues = new Map<string, Promise<void>>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -146,21 +148,51 @@ function snapshotState(
   return JSON.parse(serialized) as Record<string, unknown>;
 }
 
-/** Lowercase hexadecimal UTF-8 encoding makes every trusted host ID one path component. */
-export function encodeSessionID(sessionID: string): string {
+export const SESSION_DIR_PREFIX = "_session-";
+
+/**
+ * Native OpenCode session IDs are already single safe path components
+ * (`[A-Za-z0-9_-]`), so they are validated rather than encoded.
+ */
+export function validateSessionID(sessionID: string): string {
   if (typeof sessionID !== "string" || sessionID.length === 0)
     throw new Error("a non-empty native session ID is required");
-  const bytes = Buffer.from(sessionID, "utf8");
-  if (bytes.toString("utf8") !== sessionID)
-    throw new Error("native session ID contains invalid Unicode");
-  const encoded = bytes.toString("hex");
   if (
-    encoded.length === 0 ||
-    Buffer.byteLength(`_session-${encoded}`, "utf8") >
-      MAX_SESSION_COMPONENT_BYTES
+    !/^[A-Za-z0-9_-]+$/.test(sessionID) ||
+    sessionID === "." ||
+    sessionID === ".."
   )
+    throw new Error("native session ID is not a safe path component");
+  // Checked before any scan or host lookup: an unusable ID costs nothing.
+  if (sessionID.length > MAX_SESSION_COMPONENT_BYTES - SESSION_DIR_FIXED_BYTES)
     throw new Error("native session ID exceeds the filesystem component limit");
-  return encoded;
+  return sessionID;
+}
+
+function pad(value: number, width: number): string {
+  return String(value).padStart(width, "0");
+}
+
+/**
+ * Local time, so a folder name lines up with the creation time the host prints
+ * in `opencode session list`.
+ */
+export function formatCreatedLabel(createdMs: number): string {
+  if (typeof createdMs !== "number" || !Number.isFinite(createdMs))
+    throw new Error("session creation time must be a finite number");
+  const at = new Date(createdMs);
+  return (
+    `${pad(at.getFullYear(), 4)}${pad(at.getMonth() + 1, 2)}${pad(at.getDate(), 2)}` +
+    `-${pad(at.getHours(), 2)}${pad(at.getMinutes(), 2)}${pad(at.getSeconds(), 2)}`
+  );
+}
+
+/** `_session-<YYYYMMDD-HHMMSS>-<native session ID>`, one path component. */
+export function sessionDirName(createdMs: number, sessionID: string): string {
+  const name = `${SESSION_DIR_PREFIX}${formatCreatedLabel(createdMs)}-${validateSessionID(sessionID)}`;
+  if (Buffer.byteLength(name, "utf8") > MAX_SESSION_COMPONENT_BYTES)
+    throw new Error("native session ID exceeds the filesystem component limit");
+  return name;
 }
 
 function stateOwner(state: Record<string, unknown>): string | undefined {
@@ -201,8 +233,14 @@ function enqueue<T>(target: string, operation: () => Promise<T>): Promise<T> {
 export class StateStore {
   readonly worktree: string;
   private readonly root: string;
+  private readonly resolveCreated: (sessionID: string) => Promise<number>;
+  /** Per-instance: one host call per session covers later resolutions. */
+  private readonly directories = new Map<string, string>();
 
-  constructor(worktree: string) {
+  constructor(
+    worktree: string,
+    resolveCreated: (sessionID: string) => Promise<number>,
+  ) {
     const resolved = path.resolve(worktree);
     try {
       this.worktree = realpathSync(resolved);
@@ -210,16 +248,51 @@ export class StateStore {
       throw new Error("worktree does not exist");
     }
     this.root = path.join(this.worktree, ".open-gajae");
+    this.resolveCreated = resolveCreated;
   }
 
-  sessionPaths(
+  /**
+   * An existing folder is found by its exact `-<session ID>` suffix, so a label
+   * written under another timezone still resolves. Two matches are ambiguous
+   * and fail closed. Nothing here creates a directory; only the write path's
+   * `inspectParent(create = true)` does.
+   */
+  async resolveSessionDir(sessionID: string): Promise<string> {
+    validateSessionID(sessionID);
+    const cached = this.directories.get(sessionID);
+    if (cached !== undefined) return cached;
+
+    const entries = await fs
+      .readdir(this.root)
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return [] as string[];
+        throw error;
+      });
+    const suffix = `-${sessionID}`;
+    const matches = entries
+      .filter(
+        (entry) =>
+          entry.startsWith(SESSION_DIR_PREFIX) && entry.endsWith(suffix),
+      )
+      .sort();
+    if (matches.length > 1)
+      throw new Error(
+        `ambiguous session directories for ${sessionID}: ${matches.join(", ")}`,
+      );
+
+    const name =
+      matches[0] ??
+      sessionDirName(await this.resolveCreated(sessionID), sessionID);
+    const directory = path.join(this.root, name);
+    this.directories.set(sessionID, directory);
+    return directory;
+  }
+
+  async resolveSessionPaths(
     sessionID: string,
     mode: StateMode = DEEP_INTERVIEW_MODE,
-  ): SessionPaths {
-    const sessionDir = path.join(
-      this.root,
-      `_session-${encodeSessionID(sessionID)}`,
-    );
+  ): Promise<SessionPaths> {
+    const sessionDir = await this.resolveSessionDir(sessionID);
     return {
       sessionDir,
       statePath: path.join(sessionDir, "state", `${mode}-state.json`),
@@ -229,8 +302,11 @@ export class StateStore {
     };
   }
 
-  statePath(sessionID: string, mode: StateMode = DEEP_INTERVIEW_MODE) {
-    return this.sessionPaths(sessionID, mode).statePath;
+  async statePath(
+    sessionID: string,
+    mode: StateMode = DEEP_INTERVIEW_MODE,
+  ): Promise<string> {
+    return (await this.resolveSessionPaths(sessionID, mode)).statePath;
   }
 
   private async inspectParent(file: string, create: boolean): Promise<boolean> {
@@ -274,10 +350,9 @@ export class StateStore {
   }
 
   private async readFile(
+    file: string,
     sessionID: string,
-    mode: StateMode = DEEP_INTERVIEW_MODE,
   ): Promise<InterviewState | undefined> {
-    const file = this.statePath(sessionID, mode);
     if (!(await this.inspectParent(file, false))) return undefined;
     const stat = await fs.lstat(file).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined;
@@ -330,12 +405,22 @@ export class StateStore {
     }
   }
 
+  /**
+   * Synchronous, so calls enter the queue in call order even when the first
+   * resolution of a session still has to await the directory scan. The root is
+   * part of the key, so two stores on one worktree share the queue.
+   */
+  private queueKey(sessionID: string, mode: StateMode): string {
+    return `${this.root}\u0000${sessionID}\u0000${mode}`;
+  }
+
   async read(
     sessionID: string,
     mode: StateMode = DEEP_INTERVIEW_MODE,
   ): Promise<InterviewState | undefined> {
-    const target = this.statePath(sessionID, mode);
-    return enqueue(target, () => this.readFile(sessionID, mode));
+    return enqueue(this.queueKey(sessionID, mode), async () =>
+      this.readFile(await this.statePath(sessionID, mode), sessionID),
+    );
   }
 
   async write(
@@ -344,15 +429,15 @@ export class StateStore {
     explicit: ExplicitStatePatch = {},
     mode: StateMode = DEEP_INTERVIEW_MODE,
   ): Promise<InterviewState> {
-    const target = this.statePath(sessionID, mode);
     const stateSnapshot = snapshotState(state);
     const explicitSnapshot = { ...explicit };
     const payload = payloadError(stateSnapshot);
     if (payload) throw new Error(payload);
     validateExplicitPatch(explicitSnapshot);
 
-    return enqueue(target, async () => {
-      await this.readFile(sessionID, mode);
+    return enqueue(this.queueKey(sessionID, mode), async () => {
+      const target = await this.statePath(sessionID, mode);
+      await this.readFile(target, sessionID);
       const next: InterviewState = {
         ...stateSnapshot,
         ...explicitSnapshot,
@@ -379,12 +464,12 @@ export class StateStore {
     explicit: ExplicitStatePatch,
     mode: StateMode = DEEP_INTERVIEW_MODE,
   ): Promise<InterviewState> {
-    const target = this.statePath(sessionID, mode);
     const explicitSnapshot = { ...explicit };
     validateExplicitPatch(explicitSnapshot);
 
-    return enqueue(target, async () => {
-      const current = (await this.readFile(sessionID, mode)) ?? {};
+    return enqueue(this.queueKey(sessionID, mode), async () => {
+      const target = await this.statePath(sessionID, mode);
+      const current = (await this.readFile(target, sessionID)) ?? {};
       const next: InterviewState = {
         ...current,
         ...explicitSnapshot,
@@ -406,9 +491,9 @@ export class StateStore {
     sessionID: string,
     mode: StateMode = DEEP_INTERVIEW_MODE,
   ): Promise<"deleted" | "missing"> {
-    const target = this.statePath(sessionID, mode);
-    return enqueue(target, async () => {
-      const current = await this.readFile(sessionID, mode);
+    return enqueue(this.queueKey(sessionID, mode), async () => {
+      const target = await this.statePath(sessionID, mode);
+      const current = await this.readFile(target, sessionID);
       if (!current) return "missing";
       await fs.unlink(target);
       return "deleted";

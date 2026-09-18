@@ -11,7 +11,29 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { encodeSessionID, StateStore } from "../src/state";
+import { sessionDirName, StateStore } from "../src/state";
+
+// A fixed instant; the expected label is derived with the same local getters the
+// implementation uses, so these tests do not depend on the machine's timezone.
+const CREATED = Date.parse("2026-09-18T03:09:58+09:00");
+
+function label(createdMs: number) {
+  const at = new Date(createdMs);
+  const pad = (value: number, width: number) =>
+    String(value).padStart(width, "0");
+  return (
+    `${pad(at.getFullYear(), 4)}${pad(at.getMonth() + 1, 2)}${pad(at.getDate(), 2)}` +
+    `-${pad(at.getHours(), 2)}${pad(at.getMinutes(), 2)}${pad(at.getSeconds(), 2)}`
+  );
+}
+
+/** Every store gets a stub resolver; `calls` records each host lookup. */
+function storeAt(root: string, calls: string[] = []) {
+  return new StateStore(root, async (sessionID) => {
+    calls.push(sessionID);
+    return CREATED;
+  });
+}
 
 async function fixture(run: (root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "open-gajae-state-"));
@@ -22,40 +44,95 @@ async function fixture(run: (root: string) => Promise<void>) {
   }
 }
 
-test("session paths are trusted-ID encoded and read does not create directories", async () => {
+test("session folders carry the creation time and read does not create directories", async () => {
   await fixture(async (root) => {
-    const store = new StateStore(root);
-    const paths = store.sessionPaths("A.b/%");
-    expect(encodeSessionID("A.b/%")).toBe("412e622f25");
-    expect(paths.sessionDir).toBe(
-      join(root, ".open-gajae", "_session-412e622f25"),
+    const calls: string[] = [];
+    const store = storeAt(root, calls);
+    const expectedName = `_session-${label(CREATED)}-ses_abc`;
+    expect(sessionDirName(CREATED, "ses_abc")).toBe(expectedName);
+    expect(expectedName).toMatch(/^_session-\d{8}-\d{6}-ses_abc$/);
+    for (const invalid of ["", "a/b", ".", "..", "가", "x".repeat(300)])
+      expect(() => sessionDirName(CREATED, invalid)).toThrow();
+    expect(() => sessionDirName(Number.NaN, "ses_abc")).toThrow("finite");
+    await expect(store.statePath("")).rejects.toThrow("session ID");
+    await expect(store.statePath("a/b")).rejects.toThrow("safe path component");
+    await expect(store.statePath("x".repeat(300))).rejects.toThrow(
+      "component limit",
     );
+
+    const paths = await store.resolveSessionPaths("ses_abc");
+    expect(calls).toEqual(["ses_abc"]);
+    expect(paths.sessionDir).toBe(join(root, ".open-gajae", expectedName));
     expect(paths.statePath).toBe(
       join(paths.sessionDir, "state", "deep-interview-state.json"),
     );
     expect(paths.specsDir).toBe(join(paths.sessionDir, "specs"));
     expect(paths.plansDir).toBe(join(paths.sessionDir, "plans"));
     expect(paths.draftsDir).toBe(join(paths.sessionDir, "drafts"));
-    expect(await store.read("A.b/%")).toBeUndefined();
+    expect(await store.read("ses_abc")).toBeUndefined();
     await expect(fs.lstat(paths.sessionDir)).rejects.toMatchObject({
       code: "ENOENT",
     });
-    expect(() => store.statePath("")).toThrow("session ID");
-    expect(() => store.statePath(String.fromCharCode(0xd800))).toThrow(
-      "invalid Unicode",
-    );
-    expect(encodeSessionID("가")).toBe("eab080");
-    expect(encodeSessionID("A")).not.toBe(encodeSessionID("a"));
-    expect(() => store.statePath("x".repeat(124))).toThrow("component limit");
-    await store.write("A.b/%", { created: true });
+    // The cache answers every later resolution, so no second host lookup.
+    expect(calls).toEqual(["ses_abc"]);
+
+    await store.write("ses_abc", { created: true });
     expect((await fs.stat(paths.statePath)).mode & 0o777).toBe(0o600);
     expect((await fs.stat(dirname(paths.statePath))).mode & 0o777).toBe(0o700);
+    expect(calls).toEqual(["ses_abc"]);
+
+    // A fresh instance finds the same folder by its ID suffix, with no lookup.
+    const scanCalls: string[] = [];
+    const scanned = storeAt(root, scanCalls);
+    expect((await scanned.resolveSessionPaths("ses_abc")).sessionDir).toBe(
+      paths.sessionDir,
+    );
+    expect((await scanned.read("ses_abc"))?.created).toBe(true);
+    expect(scanCalls).toEqual([]);
+  });
+});
+
+test("two folders for one session fail closed and an old hex folder is ignored", async () => {
+  await fixture(async (root) => {
+    const base = join(root, ".open-gajae");
+    const calls: string[] = [];
+    const store = storeAt(root, calls);
+    const first = "_session-20260101-000000-ses_dup";
+    const second = "_session-20260202-111111-ses_dup";
+    await mkdir(join(base, first), { recursive: true });
+    await mkdir(join(base, second), { recursive: true });
+    const ambiguous = `ambiguous session directories for ses_dup: ${first}, ${second}`;
+    for (const operation of [
+      () => store.resolveSessionPaths("ses_dup"),
+      () => store.read("ses_dup"),
+      () => store.write("ses_dup", { value: 1 }),
+      () => store.patch("ses_dup", { active: true }),
+      () => store.clear("ses_dup"),
+    ])
+      await expect(operation()).rejects.toThrow(ambiguous);
+    expect(await readdir(join(base, first))).toEqual([]);
+    expect(await readdir(join(base, second))).toEqual([]);
+    expect(calls).toEqual([]);
+
+    // D3c: the pre-rename hex folder is not a candidate; a new folder is made.
+    const hex = `_session-${Buffer.from("ses_old", "utf8").toString("hex")}`;
+    await mkdir(join(base, hex), { recursive: true });
+    await store.write("ses_old", { value: "new" });
+    const renamed = join(base, `_session-${label(CREATED)}-ses_old`);
+    expect(
+      await readFile(
+        join(renamed, "state", "deep-interview-state.json"),
+        "utf8",
+      ),
+    ).toContain("new");
+    expect(await readdir(join(base, hex))).toEqual([]);
+    expect(calls).toEqual(["ses_old"]);
   });
 });
 
 test("writes always replace the snapshot, prioritize explicit fields, and regenerate metadata", async () => {
   await fixture(async (root) => {
-    const store = new StateStore(root);
+    const store = storeAt(root);
     const modeOnly = await store.write("mode-only");
     expect(modeOnly).toEqual({
       _meta: expect.objectContaining({
@@ -95,7 +172,7 @@ test("writes always replace the snapshot, prioritize explicit fields, and regene
 
 test("payload limits preserve the last valid state", async () => {
   await fixture(async (root) => {
-    const store = new StateStore(root);
+    const store = storeAt(root);
     const valid = Object.fromEntries(
       Array.from({ length: 100 }, (_, index) => [`k${index}`, index]),
     );
@@ -121,7 +198,7 @@ test("payload limits preserve the last valid state", async () => {
 
 test("UTF-8 payload byte boundaries accept 1 MiB and reject the next byte without replacing state", async () => {
   await fixture(async (root) => {
-    const store = new StateStore(root);
+    const store = storeAt(root);
     const limit = 1_048_576;
     const overhead = Buffer.byteLength(JSON.stringify({ text: "" }), "utf8");
     for (const size of [limit - 1, limit]) {
@@ -133,28 +210,33 @@ test("UTF-8 payload byte boundaries accept 1 MiB and reject the next byte withou
       await store.write("bytes", payload);
       expect((await store.read("bytes"))?.text).toBe(text);
     }
-    const before = await fs.readFile(store.statePath("bytes"), "utf8");
+    const statePath = await store.statePath("bytes");
+    const before = await fs.readFile(statePath, "utf8");
     const previous = (await store.read("bytes"))?.text as string;
     const tooLarge = { text: previous + "x" };
     expect(Buffer.byteLength(JSON.stringify(tooLarge), "utf8")).toBe(limit + 1);
     await expect(store.write("bytes", tooLarge)).rejects.toThrow(
       "1048576 bytes",
     );
-    expect(await fs.readFile(store.statePath("bytes"), "utf8")).toBe(before);
+    expect(await fs.readFile(statePath, "utf8")).toBe(before);
     // Character count alone must not authorize a multi-byte payload.
     const multibyte = { text: "가".repeat(Math.floor(limit / 3) + 1) };
     expect(multibyte.text.length).toBeLessThan(limit);
     await expect(store.write("bytes", multibyte)).rejects.toThrow(
       "1048576 bytes",
     );
-    expect(await fs.readFile(store.statePath("bytes"), "utf8")).toBe(before);
+    expect(await fs.readFile(statePath, "utf8")).toBe(before);
   });
 });
 
 test("multiple StateStore instances share a target queue and ordered read-clear observes it", async () => {
   await fixture(async (root) => {
-    const first = new StateStore(root);
-    const second = new StateStore(root);
+    const first = storeAt(root);
+    const second = storeAt(root);
+    // Two instances opening the same new session compute the same folder name.
+    expect(await first.resolveSessionDir("same")).toBe(
+      await second.resolveSessionDir("same"),
+    );
     const writeOne = first.write("same", { sequence: "one", obsolete: true });
     const writeTwo = second.write("same", { sequence: "two" });
     await Promise.all([writeOne, writeTwo]);
@@ -191,8 +273,8 @@ test("multiple StateStore instances share a target queue and ordered read-clear 
 
 test("a failed atomic publish rejects only its call, cleans its temp, and does not poison later work", async () => {
   await fixture(async (root) => {
-    const first = new StateStore(root);
-    const second = new StateStore(root);
+    const first = storeAt(root);
+    const second = storeAt(root);
     const rename = spyOn(fs, "rename").mockRejectedValueOnce(
       new Error("rename failed"),
     );
@@ -204,7 +286,7 @@ test("a failed atomic publish rejects only its call, cleans its temp, and does n
     } finally {
       rename.mockRestore();
     }
-    const statePath = first.statePath("s");
+    const statePath = await first.statePath("s");
     expect(await readFile(statePath, "utf8")).toContain("recovered");
     const entries = await readdir(dirname(statePath));
     expect(entries.filter((entry) => entry.endsWith(".tmp"))).toEqual([]);
@@ -213,11 +295,11 @@ test("a failed atomic publish rejects only its call, cleans its temp, and does n
 
 test("clear removes only current valid state and preserves all documents and siblings", async () => {
   await fixture(async (root) => {
-    const store = new StateStore(root);
+    const store = storeAt(root);
     await store.write("A", { owner: "A" });
     await store.write("B", { owner: "B" });
-    const a = store.sessionPaths("A");
-    const b = store.sessionPaths("B");
+    const a = await store.resolveSessionPaths("A");
+    const b = await store.resolveSessionPaths("B");
     const legacy = join(root, ".open-gajae", "state", "legacy.json");
     await mkdir(a.specsDir, { recursive: true });
     await mkdir(a.plansDir, { recursive: true });
@@ -243,8 +325,8 @@ test("clear removes only current valid state and preserves all documents and sib
 
 test("corrupt and mismatched owner state remains visible and is never reset or cleared", async () => {
   await fixture(async (root) => {
-    const store = new StateStore(root);
-    const corrupt = store.statePath("corrupt");
+    const store = storeAt(root);
+    const corrupt = await store.statePath("corrupt");
     await mkdir(dirname(corrupt), { recursive: true });
     await writeFile(corrupt, "{broken");
     await expect(store.read("corrupt")).rejects.toThrow("corrupted");
@@ -254,7 +336,7 @@ test("corrupt and mismatched owner state remains visible and is never reset or c
     await expect(store.clear("corrupt")).rejects.toThrow("corrupted");
     expect(await readFile(corrupt, "utf8")).toBe("{broken");
 
-    const mismatched = store.statePath("A");
+    const mismatched = await store.statePath("A");
     await mkdir(dirname(mismatched), { recursive: true });
     const foreign = JSON.stringify({
       _meta: { sessionId: "B" },
@@ -268,7 +350,7 @@ test("corrupt and mismatched owner state remains visible and is never reset or c
     await expect(store.clear("A")).rejects.toThrow("scope");
     expect(await readFile(mismatched, "utf8")).toBe(foreign);
 
-    const unowned = store.statePath("unowned");
+    const unowned = await store.statePath("unowned");
     await mkdir(dirname(unowned), { recursive: true });
     await writeFile(unowned, JSON.stringify({ _runtime: { data: true } }));
     expect((await store.read("unowned"))?._runtime).toEqual({ data: true });
@@ -280,7 +362,7 @@ test("corrupt and mismatched owner state remains visible and is never reset or c
       await mkdir(join(root, ".open-gajae"), { recursive: true });
       await symlink(
         outside,
-        join(root, ".open-gajae", `_session-${encodeSessionID("link")}`),
+        join(root, ".open-gajae", sessionDirName(CREATED, "link")),
       );
       await expect(store.write("link", { escaped: true })).rejects.toThrow(
         "symlink",
@@ -293,15 +375,15 @@ test("corrupt and mismatched owner state remains visible and is never reset or c
 
 test("ralplan mode writes a sibling state file and never touches deep-interview state", async () => {
   await fixture(async (root) => {
-    const store = new StateStore(root);
-    const deep = store.sessionPaths("s");
-    const ralplan = store.sessionPaths("s", "ralplan");
+    const store = storeAt(root);
+    const deep = await store.resolveSessionPaths("s");
+    const ralplan = await store.resolveSessionPaths("s", "ralplan");
     expect(ralplan.statePath).toBe(
       join(ralplan.sessionDir, "state", "ralplan-state.json"),
     );
     expect(ralplan.sessionDir).toBe(deep.sessionDir);
     expect(ralplan.draftsDir).toBe(deep.draftsDir);
-    expect(store.statePath("s", "ralplan")).toBe(ralplan.statePath);
+    expect(await store.statePath("s", "ralplan")).toBe(ralplan.statePath);
 
     await store.write("s", { owner: "deep-interview" });
     const untouched = await readFile(deep.statePath, "utf8");
@@ -332,7 +414,7 @@ test("ralplan mode writes a sibling state file and never touches deep-interview 
 
 test("patch merges explicit fields into the stored snapshot and validates their types", async () => {
   await fixture(async (root) => {
-    const store = new StateStore(root);
+    const store = storeAt(root);
     await store.write(
       "s",
       { goal: "retained" },

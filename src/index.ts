@@ -7,7 +7,19 @@ import { createTools } from "./tools";
 
 const plugin: Plugin = async ({ worktree, client }) => {
   const settings = await loadSettings(worktree);
-  const store = new StateStore(worktree);
+  // The creation time comes from the host once per session; the folder name
+  // carries it so later resolutions need no host call.
+  const store = new StateStore(worktree, async (id) => {
+    const result = await client.session.get({ path: { id } });
+    if (result.error)
+      throw new Error(
+        `session ${id} lookup failed: ${result.error.data.message}`,
+      );
+    const created = result.data.time.created;
+    if (typeof created !== "number")
+      throw new Error(`session ${id} has no creation time`);
+    return created;
+  });
   const packageRoot = fileURLToPath(new URL("../", import.meta.url));
   const hooks = createHooks(store, client, packageRoot);
   return {

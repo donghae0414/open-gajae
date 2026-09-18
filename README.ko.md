@@ -54,11 +54,11 @@ opencode debug agent open-gajae-critic
 
 ambiguity 임계값에 도달해 spec을 저장한 뒤에는 인터뷰를 마칠지 더 구체화할지 묻습니다. 추가 인터뷰는 현재 세션과 이력을 유지하며, 임계값을 다시 확인하기 전에 요구사항 질문을 하나 더 하고 같은 spec 파일을 갱신합니다. 선택 메뉴 자체는 라운드에 포함하지 않습니다. 누적 `maxRounds`, 명시적 조기 종료와 취소는 그대로 적용하며, 도구 실패를 종료 동의로 취급하지 않습니다. 이는 프롬프트 수준의 대화 계약이며 호스트가 강제하는 상태 머신은 아닙니다.
 
-상태 도구는 `state_read`, `state_write`, `state_clear`입니다. 신뢰 가능한 현재 `ToolContext.sessionID`만 사용하며 호출자가 다른 세션을 고를 수 없습니다. 세션 ID는 UTF-8 소문자 hex로 인코딩되고 생성 경로는 다음과 같습니다.
+상태 도구는 `state_read`, `state_write`, `state_clear`입니다. 신뢰 가능한 현재 `ToolContext.sessionID`만 사용하며 호출자가 다른 세션을 고를 수 없습니다. 세션마다 `_session-<YYYYMMDD-HHMMSS>-<세션 ID>` 디렉터리를 하나 가집니다. 라벨은 세션 생성 시각(로컬 시간)이고 ID는 native 세션 ID 원문입니다(예: `_session-20260918-030958-ses_f4f8651eaffeQnjyo1jEd5zVDu`). 생성 시각은 디렉터리를 처음 해석할 때 host에서 한 번 읽고, 이후에는 세션 ID 접미로 디렉터리를 찾으며, 같은 접미의 디렉터리가 둘이면 오류입니다. 생성 경로는 다음과 같습니다.
 
 ```text
 <worktree>/.open-gajae/
-  _session-<encoded-session-id>/
+  _session-<created>-<session-id>/
     state/deep-interview-state.json
     specs/deep-interview-<slug>.md
     plans/<slug>.md
@@ -80,7 +80,7 @@ native `question` 세 개는 항상 켜져 있습니다. Planner 초안 직후�
 
 ```text
 <worktree>/.open-gajae/
-  _session-<encoded-session-id>/
+  _session-<created>-<session-id>/
     plans/<slug>.md
     drafts/<slug>.md
     state/ralplan-state.json

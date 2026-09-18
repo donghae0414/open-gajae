@@ -54,11 +54,11 @@ opencode debug agent open-gajae-critic
 
 After reaching the ambiguity threshold and saving the spec, the skill asks whether to finish or refine further. Refinement preserves the current session and history, asks an additional requirements question before rechecking the threshold, and updates the same spec file. The choice itself does not consume a round. The cumulative `maxRounds`, explicit early exit, and cancellation still apply; tool failures are never treated as consent to finish. This is a prompt-level interaction contract, not a host-enforced state machine.
 
-State tools are `state_read`, `state_write`, and `state_clear`. They use the trusted current `ToolContext.sessionID`; callers cannot select another session. The session ID is UTF-8 lowercase-hex encoded, and generated paths are:
+State tools are `state_read`, `state_write`, and `state_clear`. They use the trusted current `ToolContext.sessionID`; callers cannot select another session. Each session owns one directory named `_session-<YYYYMMDD-HHMMSS>-<session id>`, where the label is the session's creation time in local time and the ID is the native session ID verbatim (for example `_session-20260918-030958-ses_f4f8651eaffeQnjyo1jEd5zVDu`). The creation time is read once from the host when the directory is first resolved; afterwards the directory is found by its session-ID suffix, and two directories with the same suffix are an error. Generated paths are:
 
 ```text
 <worktree>/.open-gajae/
-  _session-<encoded-session-id>/
+  _session-<created>-<session-id>/
     state/deep-interview-state.json
     specs/deep-interview-<slug>.md
     plans/<slug>.md
@@ -80,7 +80,7 @@ Session artifacts extend the existing session contract:
 
 ```text
 <worktree>/.open-gajae/
-  _session-<encoded-session-id>/
+  _session-<created>-<session-id>/
     plans/<slug>.md
     drafts/<slug>.md
     state/ralplan-state.json

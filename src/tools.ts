@@ -86,11 +86,13 @@ function resolveMode(mode: StateMode | undefined): StateMode {
   return mode ?? DEEP_INTERVIEW_MODE;
 }
 
-function pathResult(store: StateStore, sessionID: string, mode: StateMode) {
-  const { statePath, specsDir, plansDir, draftsDir } = store.sessionPaths(
-    sessionID,
-    mode,
-  );
+async function pathResult(
+  store: StateStore,
+  sessionID: string,
+  mode: StateMode,
+) {
+  const { statePath, specsDir, plansDir, draftsDir } =
+    await store.resolveSessionPaths(sessionID, mode);
   return { statePath, specsDir, plansDir, draftsDir };
 }
 
@@ -114,7 +116,7 @@ export function createTools(store: StateStore) {
       async execute(args, context) {
         scope(store, context, args.workingDirectory, "state_read");
         const mode = resolveMode(args.mode);
-        const paths = pathResult(store, context.sessionID, mode);
+        const paths = await pathResult(store, context.sessionID, mode);
         await authorize(
           context,
           "state_read",
@@ -144,7 +146,7 @@ export function createTools(store: StateStore) {
       async execute(args, context) {
         scope(store, context, args.workingDirectory, "state_write");
         const mode = resolveMode(args.mode);
-        const paths = pathResult(store, context.sessionID, mode);
+        const paths = await pathResult(store, context.sessionID, mode);
         await authorize(
           context,
           "state_write",
@@ -178,7 +180,7 @@ export function createTools(store: StateStore) {
       async execute(args, context) {
         scope(store, context, args.workingDirectory, "state_clear");
         const mode = resolveMode(args.mode);
-        const paths = pathResult(store, context.sessionID, mode);
+        const paths = await pathResult(store, context.sessionID, mode);
         await authorize(
           context,
           "state_clear",

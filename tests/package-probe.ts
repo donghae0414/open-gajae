@@ -63,7 +63,9 @@ import plugin from 'open-gajae';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 const worktree=process.cwd();
-const hooks=await plugin({worktree});
+// The plugin resolves each session's creation time through the host client.
+const client={session:{get:async({path})=>({data:{id:path.id,time:{created:Date.parse('2026-09-18T03:09:58+09:00')}},error:undefined})}};
+const hooks=await plugin({worktree,client});
 const config={agent:{build:{prompt:'unchanged'}},permission:{read:'allow'}};
 await hooks.config(config);
 if(config.agent.build.prompt!=='unchanged')throw new Error('Unrelated primary changed');

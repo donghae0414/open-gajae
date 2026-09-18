@@ -79,7 +79,10 @@ async function fixture(
   const dir = await mkdtemp(join(tmpdir(), "open-gajae-hooks-"));
   try {
     const root = await fs.realpath(dir);
-    const store = new StateStore(root);
+    // Fixed creation time; the folder label is irrelevant to hook behavior.
+    const store = new StateStore(root, async () =>
+      Date.parse("2026-09-18T03:09:58+09:00"),
+    );
     const { client, calls } = fakeClient(options);
     // The real plugin root, so `deepInterviewSkillPath` points at the shipped
     // `skills/deep-interview/SKILL.md` exactly as it does at runtime.
@@ -156,8 +159,8 @@ const commandCall = (hooks: RalplanHooks, sessionID: string, command: string) =>
 const seed = (store: StateStore, sessionID: string, patch: ExplicitStatePatch) =>
   store.patch(sessionID, patch, RALPLAN_MODE);
 
-const raw = (store: StateStore, sessionID: string) =>
-  readFile(store.statePath(sessionID, RALPLAN_MODE), "utf8");
+const raw = async (store: StateStore, sessionID: string) =>
+  readFile(await store.statePath(sessionID, RALPLAN_MODE), "utf8");
 
 async function missing(
   store: StateStore,
@@ -165,7 +168,7 @@ async function missing(
   mode: StateMode = RALPLAN_MODE,
 ) {
   return fs
-    .lstat(store.statePath(sessionID, mode))
+    .lstat(await store.statePath(sessionID, mode))
     .then(() => false)
     .catch(() => true);
 }
@@ -394,7 +397,7 @@ test("an idle for a session with no state directory is a no-op", async () => {
 test("a corrupt state file leaves every hook inert and the file byte-identical", async () => {
   await fixture(async ({ store, hooks, calls }) => {
     const id = nextSession("corrupt");
-    const file = store.statePath(id, RALPLAN_MODE);
+    const file = await store.statePath(id, RALPLAN_MODE);
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, "{", "utf8");
 

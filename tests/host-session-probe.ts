@@ -11,9 +11,10 @@ import {
 import { once } from "node:events";
 import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { continuationMessage, INJECTION_MARKERS } from "../src/ralplan";
+import { SESSION_DIR_PREFIX, sessionDirName } from "../src/state";
 
 // This is an integration fixture: it drives the installed OpenCode server and a local
 // OpenAI-compatible provider. It does not emulate OpenCode tools or plugin contexts.
@@ -51,8 +52,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function encodeSessionID(sessionID: string) {
-  return Buffer.from(sessionID, "utf8").toString("hex");
+/**
+ * The folder name the plugin will pick for this session. The host runs on this
+ * machine, so `sessionDirName` formats `time.created` in the same local time.
+ */
+function sessionFolderName(session: Record<string, unknown>): string {
+  const time = session.time;
+  const created = isRecord(time) ? time.created : undefined;
+  if (typeof session.id !== "string" || typeof created !== "number")
+    fail(`Session lacks id or time.created: ${JSON.stringify(session)}`);
+  return sessionDirName(created, session.id);
 }
 
 async function delay(milliseconds: number) {
@@ -249,8 +258,8 @@ function findStatePaths(
 }
 
 function findStatePathsForSession(value: unknown, sessionID: string) {
-  const encodedID = encodeSessionID(sessionID);
-  const expected = `_session-${encodedID}`;
+  // Every session folder ends with the native session ID.
+  const expected = `-${sessionID}${sep}`;
   const visit = (
     candidate: unknown,
   ): { statePath: string; specsDir: string } | undefined => {
@@ -258,6 +267,7 @@ function findStatePathsForSession(value: unknown, sessionID: string) {
       if (
         typeof candidate.statePath === "string" &&
         typeof candidate.specsDir === "string" &&
+        candidate.statePath.includes(SESSION_DIR_PREFIX) &&
         candidate.statePath.includes(expected) &&
         candidate.specsDir.includes(expected)
       )
@@ -740,21 +750,16 @@ export default async () => ({
   if (!isRecord(session) || typeof session.id !== "string")
     fail(`Session create did not return an id: ${JSON.stringify(session)}`);
   const sessionID = session.id;
-  const encodedSessionID = encodeSessionID(sessionID);
+  const sessionFolder = sessionFolderName(session);
   const expectedStatePath = join(
     root,
     ".open-gajae",
-    `_session-${encodedSessionID}`,
+    sessionFolder,
     "state",
     "deep-interview-state.json",
   );
-  const expectedSpecsDir = join(
-    root,
-    ".open-gajae",
-    `_session-${encodedSessionID}`,
-    "specs",
-  );
-  events.push({ kind: "session-created", sessionID, encodedSessionID });
+  const expectedSpecsDir = join(root, ".open-gajae", sessionFolder, "specs");
+  events.push({ kind: "session-created", sessionID, sessionFolder });
 
   await api(`/session/${encodeURIComponent(sessionID)}/prompt_async`, {
     method: "POST",
@@ -875,7 +880,7 @@ export default async () => ({
   firstAbsoluteDocument = expectedDocument;
   firstRelativeDocument = join(
     ".open-gajae",
-    `_session-${encodedSessionID}`,
+    sessionFolder,
     "specs",
     "deep-interview-fixture.md",
   );
@@ -887,18 +892,18 @@ export default async () => ({
     );
   const secondSessionID = secondSession.id;
   secondSessionIDForProvider = secondSessionID;
-  const secondEncodedID = encodeSessionID(secondSessionID);
+  const secondSessionFolder = sessionFolderName(secondSession);
   const expectedSecondStatePath = join(
     root,
     ".open-gajae",
-    `_session-${secondEncodedID}`,
+    secondSessionFolder,
     "state",
     "deep-interview-state.json",
   );
   const expectedSecondSpecsDir = join(
     root,
     ".open-gajae",
-    `_session-${secondEncodedID}`,
+    secondSessionFolder,
     "specs",
   );
   await api(`/session/${encodeURIComponent(secondSessionID)}/prompt_async`, {
@@ -1320,7 +1325,7 @@ export default async () => ({
         },
         session: {
           id: sessionID,
-          encodedID: encodedSessionID,
+          folder: sessionFolder,
           statePath: expectedStatePath,
           specsDir: expectedSpecsDir,
         },
@@ -1349,7 +1354,7 @@ export default async () => ({
           aDocumentBytes: aDocumentBytes.length,
           secondSession: {
             id: secondSessionID,
-            encodedID: secondEncodedID,
+            folder: secondSessionFolder,
             stateCleared: clearedSecondState,
             documentPath: secondDocument,
             deniedStateWriteObserved: /denied|permission/i.test(

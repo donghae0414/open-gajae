@@ -86,7 +86,7 @@ Deep Interview threshold: <resolvedThresholdPercent> (source: <resolvedThreshold
    - Wait until the summary exists before ambiguity scoring, weakest-dimension selection, brownfield exploration prompts, or specification generation.
 3.7. **Artifact path discipline**:
    - `state_read` and `state_write` return trusted current-session `specsDir`; final specs MUST be written by a native file-writing tool to `{specsDir}/deep-interview-{slug}.md` exactly, using a validated safe slug.
-   - Do not derive session paths or use a session selector. The path is `.open-gajae/_session-<encoded native session ID>/specs/` as supplied by the state-tool result.
+   - Do not derive session paths or use a session selector. The path is `.open-gajae/_session-<created>-<native session ID>/specs/` as supplied by the state-tool result.
    - Keep scoring scratchpads, prompt-safe summaries, and resume metadata in the model state. Do not create arbitrary working files, custom writers, suffixes, or receipts.
 
 4. **Initialize state** via `state_write(mode="deep-interview")` with a complete model-owned snapshot:

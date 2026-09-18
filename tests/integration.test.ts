@@ -15,6 +15,13 @@ import { loadSettings, configureAgents, agentNames } from "../src/config";
 import { StateStore } from "../src/state";
 import { createTools } from "../src/tools";
 
+/** Stores in these tests never need a real host lookup; the label is fixed. */
+function stateStore(root: string) {
+  return new StateStore(root, async () =>
+    Date.parse("2026-09-18T03:09:58+09:00"),
+  );
+}
+
 async function fixture(run: (root: string, home: string) => Promise<void>) {
   const dir = await mkdtemp(join(tmpdir(), "open-gajae-integration-"));
   const root = join(dir, "project"),
@@ -223,7 +230,7 @@ test("specialist host read restrictions survive and mandatory denials follow hos
   }));
 test("state tools enforce actor and native permissions before writing", async () =>
   fixture(async (root) => {
-    const store = new StateStore(root),
+    const store = stateStore(root),
       tools = createTools(store);
     const asked: string[] = [];
     const ctx = context(root, "s", "open-gajae", async (input) => {
@@ -294,7 +301,7 @@ test("state tools enforce actor and native permissions before writing", async ()
   }));
 test("current native session is the only selector and denied absent reads make no directories", async () =>
   fixture(async (root) => {
-    const store = new StateStore(root),
+    const store = stateStore(root),
       tools = createTools(store);
     for (const operation of [
       tools.state_read,
@@ -342,11 +349,11 @@ test("current native session is the only selector and denied absent reads make n
   }));
 test("explicit document input does not transfer source state; clear preserves both sessions' documents", async () =>
   fixture(async (root) => {
-    const store = new StateStore(root),
+    const store = stateStore(root),
       tools = createTools(store);
     await store.write("A", { active: true, progress: 4 });
-    const a = store.sessionPaths("A"),
-      b = store.sessionPaths("B");
+    const a = await store.resolveSessionPaths("A"),
+      b = await store.resolveSessionPaths("B");
     await mkdir(a.specsDir, { recursive: true });
     await mkdir(b.specsDir, { recursive: true });
     const input = join(a.specsDir, "deep-interview-demo.md"),
@@ -379,7 +386,7 @@ test("explicit document input does not transfer source state; clear preserves bo
   }));
 test("read-only catalog is finite and no lifecycle/custom spec mutation surface remains", async () =>
   fixture(async (root) => {
-    expect(Object.keys(createTools(new StateStore(root))).sort()).toEqual([
+    expect(Object.keys(createTools(stateStore(root))).sort()).toEqual([
       "ast_grep_search",
       "lsp_document_symbols",
       "lsp_find_references",
