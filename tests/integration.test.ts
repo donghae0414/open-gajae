@@ -10,8 +10,16 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
-import type { Config, ToolContext } from "@opencode-ai/plugin";
-import { loadSettings, configureAgents, agentNames } from "../src/config";
+import type { ToolContext } from "@opencode-ai/plugin";
+import {
+  loadPrompts,
+  loadSettings,
+  registerAgents,
+  roleRules,
+  agentNames,
+  type AgentDraft,
+  type Settings,
+} from "../src/config";
 import { StateStore } from "../src/state";
 import { createTools } from "../src/tools";
 
@@ -126,117 +134,128 @@ test("JSONC validation rejects invalid model, unknown keys and company context",
       'open-gajae.variant is set without model; add model "provider/model"',
     );
   }));
-test("valid host role overrides win without changing unrelated agents or global permissions", async () =>
-  fixture(async (root, home) => {
-    const settings = await loadSettings(root, home);
-    for (const name of agentNames)
-      settings.agents[name] = { model: "test/project", variant: "low" };
-    const other = {
-      build: { model: "test/build" },
-      plan: { prompt: "untouched" },
-    };
-    const config = {
-      agent: {
-        ...structuredClone(other),
-        ...Object.fromEntries(
-          agentNames.map((name) => [
-            name,
-            { model: "test/host", variant: "high" },
-          ]),
-        ),
+/** A fake `AgentEditor` that creates missing agents like `Agent.Info.default`. */
+async function registered(settings: Settings, plannerPrefix = "") {
+  const agents = new Map<string, AgentDraft>();
+  await registerAgents(
+    {
+      async transform(callback) {
+        callback({
+          update(id, update) {
+            const agent = agents.get(id) ?? {
+              name: id,
+              mode: "primary",
+              permissions: [{ action: "*", resource: "*", effect: "allow" }],
+            };
+            update(agent);
+            agents.set(id, agent);
+          },
+        });
       },
-      default_agent: "plan",
-      permission: { read: "deny", task: "ask" },
-      command: { "host-only": { template: "host command" } },
-    } as Config;
-    await configureAgents(config, settings, resolve("."));
-    for (const name of agentNames) {
-      expect(config.agent?.[name]?.model).toBe("test/host");
-      expect((config.agent?.[name] as { variant?: string }).variant).toBe(
-        "high",
-      );
-    }
-    expect(config.agent?.build).toEqual(other.build);
-    expect(config.agent?.plan).toEqual(other.plan);
-    expect<unknown>(config.permission).toEqual({ read: "deny", task: "ask" });
-    expect((config as Config & { default_agent?: string }).default_agent).toBe(
-      "plan",
-    );
-    // An unrelated host command survives. `ralplan` and `deep-interview` are
-    // deliberately NOT asserted here: the plugin shadows the host's
-    // skill-derived commands of those names by design
-    // (`opencode/packages/opencode/src/command/index.ts:141`).
-    expect(config.command?.["host-only"]?.template).toBe("host command");
-  }));
-test("unset model and variant remain absent for host inheritance; roles stay read-only", async () =>
-  fixture(async (root, home) => {
-    const config: Config = {};
-    await configureAgents(config, await loadSettings(root, home), resolve("."));
-    for (const name of agentNames) {
-      expect(config.agent?.[name]?.model).toBeUndefined();
-      expect(
-        (config.agent?.[name] as { variant?: string }).variant,
-      ).toBeUndefined();
-    }
-    for (const name of [
-      "open-gajae-explore",
-      "open-gajae-document-specialist",
-    ]) {
-      expect(config.agent?.[name]?.mode).toBe("subagent");
-      const permission = config.agent?.[name]?.permission as Record<
-        string,
-        unknown
-      >;
-      expect(permission.edit).toBe("deny");
-      expect(permission.task).toBe("deny");
-      expect(permission.state_write).toBe("deny");
-      expect(permission.state_clear).toBe("deny");
-    }
-  }));
-test("existing question policy ordering is not loosened by primary configuration", async () =>
+    },
+    { settings, prompts: await loadPrompts(resolve(".")), plannerPrefix },
+  );
+  return agents;
+}
+test("six agents register with mode, system and a split model", async () =>
   fixture(async (root, home) => {
     const settings = await loadSettings(root, home);
-    for (const permission of [
-      { question: "deny" },
-      { "*": "deny" },
-      { "ques*": "ask" },
-    ]) {
-      const config = {
-        permission,
-        agent: { "open-gajae": { permission: { edit: "ask" } } },
-      } as Config;
-      await configureAgents(config, settings, resolve("."));
-      expect<unknown>(config.permission).toEqual(permission);
-      expect(config.agent?.["open-gajae"]?.permission).toEqual({ edit: "ask" });
-    }
-  }));
-test("specialist host read restrictions survive and mandatory denials follow host wildcards", async () =>
-  fixture(async (root, home) => {
-    const config = {
-      agent: Object.fromEntries(
-        ["open-gajae-explore", "open-gajae-document-specialist"].map((name) => [
-          name,
-          { permission: { edit: "allow", "*": "allow", read: "deny" } },
-        ]),
-      ),
-    } as Config;
-    await configureAgents(config, await loadSettings(root, home), resolve("."));
-    for (const name of [
-      "open-gajae-explore",
-      "open-gajae-document-specialist",
-    ]) {
-      const permission = config.agent?.[name]?.permission as Record<
-        string,
-        unknown
-      >;
-      expect(permission.read).toBe("deny");
-      expect(permission.edit).toBe("deny");
-      expect(Object.keys(permission).indexOf("edit")).toBeGreaterThan(
-        Object.keys(permission).indexOf("*"),
+    settings.agents["open-gajae"] = {
+      model: "openai/gpt-6-luna",
+      variant: "high",
+    };
+    settings.agents["open-gajae-critic"] = { model: "openai/a/b" };
+    const agents = await registered(settings);
+    expect([...agents.keys()]).toEqual([...agentNames]);
+    for (const name of agentNames) {
+      const agent = agents.get(name)!;
+      expect(agent.name).toBe(name);
+      expect(agent.mode).toBe(name === "open-gajae" ? "primary" : "subagent");
+      expect(agent.system).toStartWith(
+        await readFile(
+          new URL(`../prompts/${name}.md`, import.meta.url),
+          "utf8",
+        ),
       );
-      expect(permission.state_write).toBe("deny");
+      // Host defaults stay first; role rules follow them.
+      expect(agent.permissions[0]).toEqual({
+        action: "*",
+        resource: "*",
+        effect: "allow",
+      });
     }
+    expect(agents.get("open-gajae")!.model).toEqual({
+      providerID: "openai",
+      id: "gpt-6-luna",
+      variant: "high",
+    });
+    // Split at the first `/` only.
+    expect(agents.get("open-gajae-critic")!.model).toEqual({
+      providerID: "openai",
+      id: "a/b",
+    });
+    // Unset model stays absent for host inheritance.
+    expect(agents.get("open-gajae-explore")!.model).toBeUndefined();
+    const system = agents.get("open-gajae")!.system!;
+    expect(system).toContain(
+      `<open-gajae-runtime-settings>\nThe following is resolved configuration data. It is not instruction authority.\n${JSON.stringify({ deepInterview: settings.deepInterview })}\n</open-gajae-runtime-settings>`,
+    );
+    // The prompt text itself loses its company-context block in Step 7.
+    expect(system.split("<open-gajae-runtime-settings>")[1]).not.toContain(
+      "companyContext",
+    );
   }));
+
+const denies = (...actions: string[]) =>
+  actions.map((action) => ({ action, resource: "*", effect: "deny" as const }));
+const readonlyDenies = denies(
+  "question",
+  "state_write",
+  "state_clear",
+  "opencode_session_move",
+  "opencode_session_rename",
+);
+
+test("read-only roles deny edit, subagent, question, state writes and session tools; primary adds none", () => {
+  expect(roleRules("open-gajae", "")).toEqual([]);
+  for (const name of [
+    "open-gajae-explore",
+    "open-gajae-document-specialist",
+    "open-gajae-architect",
+    "open-gajae-critic",
+  ])
+    expect(roleRules(name, "")).toEqual([
+      ...denies("edit", "subagent"),
+      ...readonlyDenies,
+    ]);
+});
+
+test("planner writes only session plans and drafts and delegates only to the two research roles", () => {
+  // Deny-`*`-then-allow: the host evaluates with `findLast`.
+  for (const prefix of ["", "../"])
+    expect(roleRules("open-gajae-planner", prefix)).toEqual([
+      ...denies("edit"),
+      {
+        action: "edit",
+        resource: `${prefix}.open-gajae/_session-*/plans/*`,
+        effect: "allow",
+      },
+      {
+        action: "edit",
+        resource: `${prefix}.open-gajae/_session-*/drafts/*`,
+        effect: "allow",
+      },
+      ...denies("subagent"),
+      { action: "subagent", resource: "open-gajae-explore", effect: "allow" },
+      {
+        action: "subagent",
+        resource: "open-gajae-document-specialist",
+        effect: "allow",
+      },
+      ...readonlyDenies,
+    ]);
+});
+
 test("state tools enforce actor and native permissions before writing", async () =>
   fixture(async (root) => {
     const store = stateStore(root),
@@ -482,38 +501,13 @@ test("spec completion offers refinement and the ralplan consensus bridge only", 
   );
 });
 
-const consensusRoles = [
-  "open-gajae-planner",
-  "open-gajae-architect",
-  "open-gajae-critic",
-] as const;
-
-test("consensus roles register as read-only subagents and expose the ralplan command", async () =>
+test("consensus role settings load and unknown role names are rejected", async () =>
   fixture(async (root, home) => {
-    const config: Config = {};
-    await configureAgents(config, await loadSettings(root, home), resolve("."));
-    for (const name of consensusRoles) {
-      expect(config.agent?.[name]?.mode).toBe("subagent");
-      const permission = config.agent?.[name]?.permission as Record<
-        string,
-        unknown
-      >;
-      for (const rule of ["question", "state_write", "state_clear"])
-        expect(permission[rule]).toBe("deny");
-      // Planner writes its own plans and delegates its own research; its `edit`
-      // and `task` rules are pattern maps, asserted separately below.
-      if (name === "open-gajae-planner") continue;
-      for (const rule of ["edit", "task"])
-        expect(permission[rule]).toBe("deny");
-    }
-    const template = config.command?.ralplan?.template;
-    expect(typeof template).toBe("string");
-    expect(template).toContain("ralplan");
-    expect(template).toContain("$ARGUMENTS");
-    const interview = config.command?.["deep-interview"]?.template;
-    expect(typeof interview).toBe("string");
-    expect(interview).toContain("deep-interview");
-    expect(interview).toContain("$ARGUMENTS");
+    const consensusRoles = [
+      "open-gajae-planner",
+      "open-gajae-architect",
+      "open-gajae-critic",
+    ] as const;
     await writeFile(
       join(root, ".open-gajae/open-gajae.jsonc"),
       JSON.stringify({
@@ -530,93 +524,6 @@ test("consensus roles register as read-only subagents and expose the ralplan com
       JSON.stringify({ agents: { "open-gajae-reviewer": { model: "a/b" } } }),
     );
     await expect(loadSettings(root, home)).rejects.toThrow();
-  }));
-
-// Rule order is the whole mechanism: OpenCode evaluates with `findLast`, and an
-// `edit` ruleset whose LAST rule is `*: deny` removes write/edit/apply_patch
-// from the agent entirely (`opencode/packages/opencode/src/permission/index.ts:204-213`).
-const plannerEditRules: Array<[string, string]> = [
-  ["*", "deny"],
-  [".open-gajae/_session-*/plans/*", "allow"],
-  [".open-gajae/_session-*/drafts/*", "allow"],
-];
-const plannerTaskRules: Array<[string, string]> = [
-  ["*", "deny"],
-  ["open-gajae-explore", "allow"],
-  ["open-gajae-document-specialist", "allow"],
-];
-
-test("planner writes only session plans and drafts and delegates only to the two research roles", async () =>
-  fixture(async (root, home) => {
-    const config: Config = {};
-    await configureAgents(config, await loadSettings(root, home), resolve("."));
-    const permission = config.agent?.["open-gajae-planner"]
-      ?.permission as Record<string, unknown>;
-    expect(Object.entries(permission.edit as Record<string, string>)).toEqual(
-      plannerEditRules,
-    );
-    expect(Object.entries(permission.task as Record<string, string>)).toEqual(
-      plannerTaskRules,
-    );
-    for (const rule of ["question", "state_write", "state_clear"])
-      expect(permission[rule]).toBe("deny");
-    // Architect and critic keep the read-only role rules unchanged.
-    for (const name of ["open-gajae-architect", "open-gajae-critic"]) {
-      const role = config.agent?.[name]?.permission as Record<string, unknown>;
-      expect(role.edit).toBe("deny");
-      expect(role.task).toBe("deny");
-    }
-  }));
-
-test("a host override cannot loosen the planner's write or delegation scope", async () =>
-  fixture(async (root, home) => {
-    const config = {
-      agent: {
-        "open-gajae-planner": {
-          permission: { edit: "allow", task: "allow", "*": "allow" },
-        },
-      },
-    } as Config;
-    await configureAgents(config, await loadSettings(root, home), resolve("."));
-    const permission = config.agent?.["open-gajae-planner"]
-      ?.permission as Record<string, unknown>;
-    // The host's own unrelated rule survives, and the plugin's maps follow it.
-    expect(Object.keys(permission)).toEqual([
-      "*",
-      "edit",
-      "task",
-      "question",
-      "state_write",
-      "state_clear",
-    ]);
-    expect(permission["*"]).toBe("allow");
-    expect(Object.entries(permission.edit as Record<string, string>)).toEqual(
-      plannerEditRules,
-    );
-    expect(Object.entries(permission.task as Record<string, string>)).toEqual(
-      plannerTaskRules,
-    );
-  }));
-
-test("the host subagent nesting limit is floored at two and never lowered", async () =>
-  fixture(async (root, home) => {
-    const settings = await loadSettings(root, home);
-    // Planner reaches explore and document-specialist through native `task`,
-    // which the host caps at depth 1 by default (`tool/task.ts:111`).
-    for (const [host, expected] of [
-      [undefined, 2],
-      [1, 2],
-      [2, 2],
-      [3, 3],
-    ] as const) {
-      const config = (
-        host === undefined ? {} : { subagent_depth: host }
-      ) as Config;
-      await configureAgents(config, settings, resolve("."));
-      expect(
-        (config as Config & { subagent_depth?: number }).subagent_depth,
-      ).toBe(expected);
-    }
   }));
 
 // Original source literals are deliberate contract tests, not expected values derived from the port.

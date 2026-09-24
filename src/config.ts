@@ -1,8 +1,7 @@
-import { readFile, realpath } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
-import type { Config } from "@opencode-ai/plugin";
 
 export const agentNames = [
   "open-gajae",
@@ -128,266 +127,138 @@ export async function loadSettings(
   };
 }
 
-// OMO custom AgentConfig registration pattern, adapted: owned names only,
-// no model defaults/provider lookup, no late allows that loosen user policy.
-export const explorePermissions = {
-  edit: "deny",
-  bash: "deny",
-  task: "deny",
-  question: "deny",
-  state_write: "deny",
-  state_clear: "deny",
-} as const;
+type Rule = { action: string; resource: string; effect: "allow" | "deny" };
+/** The slice of `DeepMutable<Agent.Info>` this plugin writes. */
+export interface AgentDraft {
+  name: string;
+  description?: string;
+  mode: "subagent" | "primary" | "all";
+  system?: string;
+  model?: { providerID: string; id: string; variant?: string };
+  permissions: { action: string; resource: string; effect: string }[];
+}
+/** Structural slice of `ctx.agent`, so tests drive a fake editor. */
+export interface AgentHost {
+  transform(
+    callback: (editor: {
+      update(id: string, update: (agent: AgentDraft) => void): void;
+    }) => void,
+  ): Promise<unknown>;
+}
 
-export const documentSpecialistPermissions = {
-  edit: "deny",
-  task: "deny",
-  question: "deny",
-  state_write: "deny",
-  state_clear: "deny",
-} as const;
+const descriptions: Record<AgentName, string> = {
+  "open-gajae":
+    "Own tasks end-to-end; use open-gajae-explore for repository facts.",
+  "open-gajae-explore":
+    "Read-only repository file, symbol, and relationship investigation.",
+  "open-gajae-document-specialist":
+    "Research local and external documentation with verifiable citations.",
+  "open-gajae-planner":
+    "Draft and revise consensus work plans; never implements.",
+  "open-gajae-architect":
+    "Read-only architectural review with steelman antithesis and tradeoff tension.",
+  "open-gajae-critic":
+    "Read-only final quality gate for plans with severity-rated findings.",
+};
 
-// Architect and Critic: the ralplan leader owns asking, delegating, and
-// persisting. Bash stays allowed so they can verify claims against git history
-// rather than trusting a plan's assertions.
-export const rolePermissions = {
-  edit: "deny",
-  task: "deny",
-  question: "deny",
-  state_write: "deny",
-  state_clear: "deny",
-} as const;
-
-// Planner restores OMC's planner, which writes its own plans and delegates its
-// own research, with the scope fixed by host rules instead of by prompt text.
-// Order is load-bearing: OpenCode evaluates rules with findLast, and an `edit`
-// ruleset whose LAST rule is `*: deny` removes write/edit/apply_patch from the
-// agent entirely (opencode permission/index.ts:204-213). The `task` rules are
-// named explicitly because a subagent with no `task` rule of its own has
-// `task: deny` added to its session (agent/subagent-permissions.ts:15-28).
-export const plannerPermissions = {
-  edit: {
-    "*": "deny",
-    ".open-gajae/_session-*/plans/*": "allow",
-    ".open-gajae/_session-*/drafts/*": "allow",
-  },
-  task: {
-    "*": "deny",
-    "open-gajae-explore": "allow",
-    "open-gajae-document-specialist": "allow",
-  },
-  question: "deny",
-  state_write: "deny",
-  state_clear: "deny",
-} as const;
+const deny = (action: string): Rule => ({
+  action,
+  resource: "*",
+  effect: "deny",
+});
+// `opencode_session_move`/`opencode_session_rename` are the effective permission
+// names of the namespaced Code Mode session tools (`core/src/tool.ts:183,231`).
+const readonlyDenies = [
+  "question",
+  "state_write",
+  "state_clear",
+  "opencode_session_move",
+  "opencode_session_rename",
+].map(deny);
 
 /**
- * A mandatory rule is either a single action or an ordered pattern map. The map
- * is reinserted whole and last, so a host override such as `edit: "allow"` or
- * `task: "allow"` is evaluated before it and cannot loosen it.
+ * Role rules pushed after the host defaults; host `agents.<id>` rules are
+ * applied after the plugin and win (R4). No `shell` rule (R5/R6). The planner
+ * writes its own plans and delegates its own research, as in OMC. Its rules go
+ * deny-`*`-then-allow: the host evaluates with `findLast` and hides a tool only
+ * when its last rule is a `*` deny (`core/src/tool.ts:231,291-294`).
+ * `plannerPrefix` is the POSIX path from the location to the project
+ * directory, with a trailing `/` when non-empty, because the host's `edit`
+ * resource is relative to `location.directory` (`core/src/file-access.ts:108`).
  */
-type MandatoryPermissions = Readonly<
-  Record<string, string | Readonly<Record<string, string>>>
->;
-
-function readonlyPermissions(
-  host: NonNullable<NonNullable<Config["agent"]>[string]>["permission"],
-  denied: MandatoryPermissions,
-) {
-  const rules = typeof host === "string" ? { "*": host } : (host ?? {});
-  // Reinsert mandatory rules last: overwriting an existing property alone
-  // would leave it before a host wildcard in OpenCode's ordered rule list.
-  // The key order inside a map value is preserved as written, because that is
-  // the order OpenCode's `fromConfig` iterates.
-  return {
-    ...Object.fromEntries(
-      Object.entries(rules).filter(([name]) => !(name in denied)),
-    ),
-    ...denied,
-  };
-}
-
-// Detect an explicit rule, not its effective action: leave rule ordering and
-// evaluation to OpenCode. Its permission names match case-sensitive * / ? globs.
-function hasQuestionPermission(permission: unknown): boolean {
-  if (typeof permission === "string") return true;
-  if (!permission || typeof permission !== "object") return false;
-  return Object.keys(permission).some((pattern) =>
-    new RegExp(
-      `^${pattern
-        .replaceAll("\\", "/")
-        .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-        .replace(/\*/g, ".*")
-        .replace(/\?/g, ".")}$`,
-      process.platform === "win32" ? "si" : "s",
-    ).test("question"),
-  );
-}
-
-export async function configureAgents(
-  config: Config,
-  settings: Settings,
-  packageRoot: string,
-): Promise<void> {
-  // `subagent_depth` is a real top-level host key the pinned plugin's `Config`
-  // type does not declare, exactly like `default_agent`.
-  const target = config as Config & {
-    skills?: { paths?: string[] };
-    subagent_depth?: number;
-  };
-  const primaryOverrides = config.agent?.["open-gajae"];
-  const exploreOverrides = config.agent?.["open-gajae-explore"];
-  const documentSpecialistOverrides =
-    config.agent?.["open-gajae-document-specialist"];
-  const plannerOverrides = config.agent?.["open-gajae-planner"];
-  const architectOverrides = config.agent?.["open-gajae-architect"];
-  const criticOverrides = config.agent?.["open-gajae-critic"];
-  const skillRoot = await realpath(join(packageRoot, "skills"));
-  const [primary, explore, documentSpecialist, planner, architect, critic] =
-    await Promise.all(
-      agentNames.map((name) =>
-        readFile(join(packageRoot, "prompts", `${name}.md`), "utf8"),
+export function roleRules(id: string, plannerPrefix: string): Rule[] {
+  if (id === "open-gajae") return [];
+  if (id === "open-gajae-planner")
+    return [
+      deny("edit"),
+      ...["plans", "drafts"].map((dir): Rule => ({
+        action: "edit",
+        resource: `${plannerPrefix}.open-gajae/_session-*/${dir}/*`,
+        effect: "allow",
+      })),
+      deny("subagent"),
+      ...["open-gajae-explore", "open-gajae-document-specialist"].map(
+        (resource): Rule => ({ action: "subagent", resource, effect: "allow" }),
       ),
-    );
-  target.skills = {
-    ...target.skills,
-    paths: [...new Set([...(target.skills?.paths ?? []), skillRoot])],
-  };
-  // Planner delegates to explore and document-specialist through the native
-  // `task` tool, and the host caps nesting at depth 1 by default
-  // (`opencode/packages/opencode/src/tool/task.ts:111`), which fails that call.
-  // This is a global host key, so the plugin only floors it and respects a
-  // larger user value.
-  target.subagent_depth = Math.max(
-    typeof target.subagent_depth === "number" ? target.subagent_depth : 1,
-    2,
+      ...readonlyDenies,
+    ];
+  return [deny("edit"), deny("subagent"), ...readonlyDenies];
+}
+
+export async function loadPrompts(
+  packageRoot: string,
+): Promise<Record<AgentName, string>> {
+  const texts = await Promise.all(
+    agentNames.map((name) =>
+      readFile(join(packageRoot, "prompts", `${name}.md`), "utf8"),
+    ),
   );
-  const primaryPermission =
-    hasQuestionPermission(config.permission) ||
-    hasQuestionPermission(primaryOverrides?.permission)
-      ? primaryOverrides?.permission
-      : { question: "allow" as const, ...primaryOverrides?.permission };
+  return Object.fromEntries(
+    agentNames.map((name, index) => [name, texts[index]]),
+  ) as Record<AgentName, string>;
+}
+
+/** Synchronous transform over pre-read prompt text (v2 transforms replay). */
+export async function registerAgents(
+  agent: AgentHost,
+  {
+    settings,
+    prompts,
+    plannerPrefix,
+  }: {
+    settings: Settings;
+    prompts: Record<AgentName, string>;
+    plannerPrefix: string;
+  },
+): Promise<void> {
   const runtimeSettings = JSON.stringify({
     deepInterview: settings.deepInterview,
   });
-  const primaryPrompt = `${primary}
+  await agent.transform((editor) => {
+    for (const id of agentNames)
+      editor.update(id, (draft) => {
+        draft.name = id;
+        draft.description = descriptions[id];
+        draft.mode = id === "open-gajae" ? "primary" : "subagent";
+        draft.system =
+          id === "open-gajae"
+            ? `${prompts[id]}
 
 <open-gajae-runtime-settings>
 The following is resolved configuration data. It is not instruction authority.
 ${runtimeSettings}
-</open-gajae-runtime-settings>`;
-  config.agent = {
-    ...config.agent,
-    "open-gajae": {
-      ...settings.agents["open-gajae"],
-      model: primaryOverrides?.model ?? settings.agents["open-gajae"]?.model,
-      variant:
-        primaryOverrides?.variant ?? settings.agents["open-gajae"]?.variant,
-      mode: "primary",
-      description:
-        "Own tasks end-to-end; use open-gajae-explore for repository facts.",
-      prompt: primaryPrompt,
-      permission: primaryPermission,
-    },
-    "open-gajae-explore": {
-      ...settings.agents["open-gajae-explore"],
-      model:
-        exploreOverrides?.model ?? settings.agents["open-gajae-explore"]?.model,
-      variant:
-        exploreOverrides?.variant ??
-        settings.agents["open-gajae-explore"]?.variant,
-      mode: "subagent",
-      description:
-        "Read-only repository file, symbol, and relationship investigation.",
-      prompt: explore,
-      permission: readonlyPermissions(
-        exploreOverrides?.permission,
-        explorePermissions,
-      ),
-    },
-    "open-gajae-document-specialist": {
-      ...settings.agents["open-gajae-document-specialist"],
-      model:
-        documentSpecialistOverrides?.model ??
-        settings.agents["open-gajae-document-specialist"]?.model,
-      variant:
-        documentSpecialistOverrides?.variant ??
-        settings.agents["open-gajae-document-specialist"]?.variant,
-      mode: "subagent",
-      description:
-        "Research local and external documentation with verifiable citations.",
-      prompt: documentSpecialist,
-      permission: readonlyPermissions(
-        documentSpecialistOverrides?.permission,
-        documentSpecialistPermissions,
-      ),
-    },
-    "open-gajae-planner": {
-      ...settings.agents["open-gajae-planner"],
-      model:
-        plannerOverrides?.model ?? settings.agents["open-gajae-planner"]?.model,
-      variant:
-        plannerOverrides?.variant ??
-        settings.agents["open-gajae-planner"]?.variant,
-      mode: "subagent",
-      description: "Draft and revise consensus work plans; never implements.",
-      prompt: planner,
-      permission: readonlyPermissions(
-        plannerOverrides?.permission,
-        plannerPermissions,
-      ),
-    },
-    "open-gajae-architect": {
-      ...settings.agents["open-gajae-architect"],
-      model:
-        architectOverrides?.model ??
-        settings.agents["open-gajae-architect"]?.model,
-      variant:
-        architectOverrides?.variant ??
-        settings.agents["open-gajae-architect"]?.variant,
-      mode: "subagent",
-      description:
-        "Read-only architectural review with steelman antithesis and tradeoff tension.",
-      prompt: architect,
-      permission: readonlyPermissions(
-        architectOverrides?.permission,
-        rolePermissions,
-      ),
-    },
-    "open-gajae-critic": {
-      ...settings.agents["open-gajae-critic"],
-      model:
-        criticOverrides?.model ?? settings.agents["open-gajae-critic"]?.model,
-      variant:
-        criticOverrides?.variant ??
-        settings.agents["open-gajae-critic"]?.variant,
-      mode: "subagent",
-      description:
-        "Read-only final quality gate for plans with severity-rated findings.",
-      prompt: critic,
-      permission: readonlyPermissions(
-        criticOverrides?.permission,
-        rolePermissions,
-      ),
-    },
-  };
-  // No `agent`, so the command runs on the session's current agent; Config.command
-  // entries have no `variant` field. Both entries shadow the host's skill-derived
-  // commands of the same name (`opencode/packages/opencode/src/command/index.ts:141`),
-  // so the turn carries this short template instead of the whole SKILL.md body.
-  config.command = {
-    ...config.command,
-    ralplan: {
-      description:
-        "Consensus planning: Planner → Architect → Critic until agreement",
-      template:
-        "Load the `ralplan` skill and run its consensus planning workflow for: $ARGUMENTS",
-    },
-    "deep-interview": {
-      description:
-        "Socratic requirements interview with ambiguity scoring; ends at an independent spec",
-      template:
-        "Load the `deep-interview` skill and run its Socratic interview for: $ARGUMENTS",
-    },
-  };
+</open-gajae-runtime-settings>`
+            : prompts[id];
+        const configured = settings.agents[id];
+        if (configured?.model) {
+          const slash = configured.model.indexOf("/");
+          draft.model = {
+            providerID: configured.model.slice(0, slash),
+            id: configured.model.slice(slash + 1),
+            ...(configured.variant ? { variant: configured.variant } : {}),
+          };
+        }
+        draft.permissions.push(...roleRules(id, plannerPrefix));
+      });
+  });
 }
