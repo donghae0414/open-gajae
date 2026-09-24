@@ -19,11 +19,12 @@
 // `bridge.ts` session restore, keyword seeding and confirmSkillModeStates — and
 // oh-my-openagent (MIT) for the OpenCode-side in-flight and injection patterns.
 
-import { basename, join } from "node:path";
+import { basename, join, relative, sep } from "node:path";
+import { Error as ToolError } from "@opencode/plugin/promise/tool";
 import {
   artifactPathsOf,
+  projectRelative,
   sessionArtifactOwner,
-  worktreeRelativePath,
 } from "./artifact-guard.js";
 import {
   applyRalplanGate,
@@ -71,12 +72,29 @@ export type PromptEvent = {
 export type ExecuteBeforeEvent = {
   readonly tool: string;
   readonly sessionID: string;
+  readonly id: string;
   input: unknown;
+};
+
+/**
+ * The fields of the host's `execute.after` tool hook event read or written
+ * here. On `status: "error"` the hook replaces `error` with a new `Tool.Error`
+ * (Phase 0 P8: assigning a new error is the one mechanism that changes the
+ * model-visible text of both a decode failure and a permission block).
+ */
+export type ExecuteAfterEvent = {
+  readonly tool: string;
+  readonly sessionID: string;
+  readonly agent: string;
+  readonly id: string;
+  readonly status: string;
+  error?: unknown;
 };
 
 export type RalplanHooks = {
   prompt(event: PromptEvent): Promise<void>;
   executeBefore(event: ExecuteBeforeEvent): Promise<void>;
+  executeAfter(event: ExecuteAfterEvent): Promise<void>;
   /** One event from `ctx.event.subscribe`: an envelope `{ type, data }`. */
   onEvent(event: unknown): Promise<void>;
 };
@@ -118,6 +136,7 @@ export function createHooks(
   session: HostSession,
   packageRoot: string,
   locationDir: string,
+  projectDir: string,
 ): RalplanHooks {
   // The absolute `Read fallback:` path OMC resolved through `resolveSkillPath`;
   // here it is always this package's own copy, so no existence probe is needed.
@@ -297,8 +316,9 @@ export function createHooks(
 
   /**
    * The root of `sessionID`'s lineage. Any failure — a rejected lookup, an
-   * unreadable payload, a cycle — refuses the write rather than guessing:
-   * the same fail-closed rule oh-my-openagent's spawn guards use.
+   * unreadable payload, a cycle — throws, and the guard refuses the write
+   * rather than guessing: the same fail-closed rule oh-my-openagent's spawn
+   * guards use.
    */
   async function rootSession(sessionID: string): Promise<string> {
     const cached = rootSessions.get(sessionID);
@@ -325,42 +345,63 @@ export function createHooks(
         current = parent;
       }
     } catch (error) {
-      log(`could not resolve the session lineage for ${sessionID}`, error);
       throw new Error(
-        `open-gajae: could not resolve the session lineage for ${sessionID}; refusing to write a session artifact`,
+        `could not resolve the session lineage for ${sessionID}`,
+        { cause: error },
       );
     }
     for (const id of walked) rootSessions.set(id, root);
     return root;
   }
 
+  /** The project root as the model addresses it from this location. */
+  const prefix = (() => {
+    const rel = relative(locationDir, projectDir).split(sep).join("/");
+    return rel ? `${rel}/` : "";
+  })();
+
+  function guidance(tool: string, folder: string): string {
+    return `${tool} may only write under this session's plans/ or drafts/ (${prefix}.open-gajae/${folder}/plans|drafts/)`;
+  }
+
+  /** The session folder of `sessionID`'s lineage root. */
+  async function ownFolder(sessionID: string): Promise<string> {
+    return basename(await store.resolveSessionDir(await rootSession(sessionID)));
+  }
+
   /**
    * D2c: a session may only write plans and drafts under its own session
    * folder. The static `edit` rules in `src/config.ts` pin the shape of the
-   * path; only this can pin the session. Still the v1 mechanism (a throw, v1
-   * `filePath`/`apply_patch` inputs): Step 6 of the v2 port replaces it with
-   * input invalidation and the v2 `path`/`patch` inputs.
+   * path; only this can pin the session. Returns the model-facing guidance
+   * when the call must be blocked, `undefined` when it may run. Any failure to
+   * decide blocks (fail closed).
    */
   async function guardSessionArtifacts(
     tool: string,
     sessionID: string,
-    args: unknown,
-  ): Promise<void> {
-    const paths = artifactPathsOf(tool, args);
-    if (paths.length === 0) return;
-    for (const filePath of paths) {
-      const owner = sessionArtifactOwner(store.worktree, filePath);
+    input: unknown,
+  ): Promise<string | undefined> {
+    const paths = artifactPathsOf(tool, input);
+    for (const path of paths) {
+      const owner = sessionArtifactOwner(locationDir, projectDir, path);
       // Not a session plan or draft: the static permission rules decide.
       if (owner === undefined) continue;
-      const rootID = await rootSession(sessionID);
-      const rootDir = await store.resolveSessionDir(rootID);
-      const allowed = basename(rootDir);
+      let allowed: string;
+      try {
+        allowed = await ownFolder(sessionID);
+      } catch (error) {
+        log(`could not resolve the session lineage for ${sessionID}`, error);
+        return `open-gajae: could not resolve the session lineage for ${sessionID}; refusing to write a session artifact. ${guidance(tool, "_session-*")}`;
+      }
       if (owner === allowed) continue;
-      throw new Error(
-        `open-gajae: ${worktreeRelativePath(store.worktree, filePath)} belongs to another session's plans/drafts; this session may only write under ${allowed}`,
-      );
+      const shown = projectRelative(locationDir, projectDir, path) ?? path;
+      return `open-gajae: ${shown} belongs to another session's plans/drafts. ${guidance(tool, allowed)}`;
     }
+    return undefined;
   }
+
+  /** Guidance per blocked tool call id, consumed by `execute.after`. */
+  const blocked = new Map<string, string>();
 
   /**
    * Write each notice as a `synthetic` message without starting a run. On a
@@ -503,9 +544,31 @@ export function createHooks(
   };
 
   const executeBefore: RalplanHooks["executeBefore"] = async (event) => {
-    // Deliberately outside the catch below until Step 6 of the v2 port: this
-    // guard's refusal is the tool call's failure, not something to swallow.
-    await guardSessionArtifacts(event.tool, event.sessionID, event.input);
+    // The guard blocks by invalidating the input, never by throwing: a
+    // Promise-hook throw becomes a host defect. `{}` fails the host's input
+    // decode with a `Tool.Error`, `execute.after` then runs with
+    // `status: "error"` and rewrites it (Phase 0 P3). The host's tool-input
+    // repair runs before this hook, so a stringified-JSON input arrives here
+    // already parsed.
+    try {
+      const refusal = await guardSessionArtifacts(
+        event.tool,
+        event.sessionID,
+        event.input,
+      );
+      if (refusal !== undefined) {
+        blocked.set(event.id, refusal);
+        event.input = {};
+        return;
+      }
+    } catch (error) {
+      log("artifact guard failed; blocking the call", error);
+      if (artifactPathsOf(event.tool, event.input).length > 0) {
+        blocked.set(event.id, guidance(event.tool, "_session-*"));
+        event.input = {};
+        return;
+      }
+    }
     try {
       if (event.tool !== "skill" || !isRecord(event.input)) return;
       // v2 `skill` input is `{ id }` (core/src/tool/plugin/skill.ts:12-14).
@@ -513,6 +576,42 @@ export function createHooks(
       await confirmRalplan(event.sessionID);
     } catch (error) {
       log("execute.before handler failed", error);
+    }
+  };
+
+  /**
+   * Rewrite a failed `edit`/`write`/`patch` into model-facing guidance when it
+   * failed because of this plugin's guard (a recorded block), or because the
+   * planner's static `edit` rules refused it. The permission block is detected
+   * by its inner `_tag`, not `instanceof`: the plugin's error classes are not
+   * the host's (Phase 0 P8).
+   */
+  const executeAfter: RalplanHooks["executeAfter"] = async (event) => {
+    try {
+      const recorded = blocked.get(event.id);
+      if (recorded !== undefined) blocked.delete(event.id);
+      if (event.status !== "error") return;
+      if (!["edit", "write", "patch"].includes(event.tool)) return;
+      let message = recorded;
+      if (
+        message === undefined &&
+        event.agent === "open-gajae-planner" &&
+        isRecord(event.error) &&
+        isRecord(event.error.error) &&
+        event.error.error._tag === "Permission.BlockedError"
+      ) {
+        let folder = "_session-*";
+        try {
+          folder = await ownFolder(event.sessionID);
+        } catch (error) {
+          log("session folder unresolved for the rewrite", error);
+        }
+        message = `open-gajae: ${event.tool} was refused by the planner's write scope. ${guidance(event.tool, folder)}`;
+      }
+      if (message === undefined) return;
+      event.error = new ToolError({ message });
+    } catch (error) {
+      log("execute.after handler failed", error);
     }
   };
 
@@ -554,5 +653,5 @@ export function createHooks(
     }
   };
 
-  return { prompt, executeBefore, onEvent };
+  return { prompt, executeBefore, executeAfter, onEvent };
 }

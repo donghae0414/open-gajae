@@ -43,10 +43,17 @@ export default Plugin.define({
       plannerPrefix,
     });
     await registerSkills(ctx.skill, skills);
-    // 5. Prompt and tool hooks (execute.after: Step 6).
-    const hooks = createHooks(store, ctx.session, packageRoot, locationDir);
+    // 5. Prompt and tool hooks.
+    const hooks = createHooks(
+      store,
+      ctx.session,
+      packageRoot,
+      locationDir,
+      projectDir,
+    );
     await ctx.session.hook("prompt", hooks.prompt);
     await ctx.tool.hook("execute.before", hooks.executeBefore);
+    await ctx.tool.hook("execute.after", hooks.executeAfter);
     // 6. Event loop. Events are handled one at a time, in order, so a child's
     // `started` is recorded before its parent's `succeeded` is judged.
     const controller = new AbortController();

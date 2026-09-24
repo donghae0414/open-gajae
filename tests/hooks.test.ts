@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { Error as ToolError } from "@opencode/plugin/promise/tool";
 import {
   createHooks,
   type HostSession,
@@ -21,8 +22,6 @@ import {
 type Synthetic = { sessionID: string; text: string; resume: boolean };
 
 const PACKAGE_ROOT = new URL("../", import.meta.url).pathname;
-/** This plugin instance's `ctx.location.directory`. */
-const LOCATION = "/work/project";
 
 let sessionCounter = 0;
 const nextSession = (label: string) => `sess-${label}-${(sessionCounter += 1)}`;
@@ -32,7 +31,7 @@ type FakeOptions = {
   parents?: Record<string, string>;
   sessionGetRejects?: boolean;
   syntheticRejects?: boolean;
-  /** `locations[id]` is that session's location; absent means `LOCATION`. */
+  /** `locations[id]` is that session's location; absent means the fixture root. */
   locations?: Record<string, string>;
 };
 
@@ -41,7 +40,7 @@ type FakeOptions = {
  * of a session before delivering to it; `order` records each state write and
  * each `synthetic` call in sequence.
  */
-function fakeSession(store: StateStore, options: FakeOptions) {
+function fakeSession(store: StateStore, options: FakeOptions, location: string) {
   const synthetics: Synthetic[] = [];
   const sessionGets: string[] = [];
   const agents: Record<string, string> = {};
@@ -59,7 +58,7 @@ function fakeSession(store: StateStore, options: FakeOptions) {
       return {
         ...(agents[input.sessionID] ? { agent: agents[input.sessionID] } : {}),
         ...(parentID ? { parentID } : {}),
-        location: { directory: options.locations?.[input.sessionID] ?? LOCATION },
+        location: { directory: options.locations?.[input.sessionID] ?? location },
       };
     },
     async synthetic(input) {
@@ -89,13 +88,14 @@ async function fixture(
     const store = new StateStore(root, async () =>
       Date.parse("2026-09-18T03:09:58+09:00"),
     );
-    const { session, ...fake } = fakeSession(store, options);
+    const { session, ...fake } = fakeSession(store, options, root);
     // The real plugin root, so `deepInterviewSkillPath` points at the shipped
     // `skills/deep-interview/SKILL.md` exactly as it does at runtime.
     await run({
       root,
       store,
-      hooks: createHooks(store, session, PACKAGE_ROOT, LOCATION),
+      // The fixture root is both `location.directory` and the project.
+      hooks: createHooks(store, session, PACKAGE_ROOT, root, root),
       ...fake,
     });
   } finally {
@@ -160,16 +160,11 @@ const succeeded = (hooks: RalplanHooks, sessionID: string) =>
 const continuations = (context: Fixture) =>
   context.synthetics.filter((call) => call.resume).map((call) => call.text);
 
-const skillCall = (hooks: RalplanHooks, sessionID: string, input: unknown) =>
-  hooks.executeBefore({ tool: "skill", sessionID, input });
+let callCounter = 0;
+const nextCall = () => `call-${(callCounter += 1)}`;
 
-/** One `write` tool call as the host delivers it to `execute.before`. */
-const writeCall = (hooks: RalplanHooks, sessionID: string, filePath: string) =>
-  hooks.executeBefore({
-    tool: "write",
-    sessionID,
-    input: { filePath, content: "# plan\n" },
-  });
+const skillCall = (hooks: RalplanHooks, sessionID: string, input: unknown) =>
+  hooks.executeBefore({ tool: "skill", sessionID, id: nextCall(), input });
 
 const seed = (store: StateStore, sessionID: string, patch: ExplicitStatePatch) =>
   store.patch(sessionID, patch, RALPLAN_MODE);
@@ -431,7 +426,12 @@ test("the skill tool call confirms a seeded ralplan state and nothing else does"
     await skillCall(hooks, id, { id: "deep-interview" });
     await skillCall(hooks, id, { name: "ralplan" });
     await skillCall(hooks, id, undefined);
-    await hooks.executeBefore({ tool: "read", sessionID: id, input: { id: "ralplan" } });
+    await hooks.executeBefore({
+      tool: "read",
+      sessionID: id,
+      id: nextCall(),
+      input: { id: "ralplan" },
+    });
     expect(await raw(store, id)).toBe(reseeded);
     expect(untouched).not.toBe(reseeded);
 
@@ -832,7 +832,7 @@ test("continuation waits while a child execution runs (Q5)", async () => {
       await emit(hooks, "session.created", created, {
         parentID: parent,
         agent: "explore",
-        location: { directory: LOCATION },
+        location: { directory: context.root },
       });
       await emit(hooks, "session.execution.started", created);
       // A child first seen at `started`, resolved through `session.get`.
@@ -959,108 +959,166 @@ test("started_at is written once and survives later hook writes", async () => {
   });
 });
 
+
 // --- D2c session-scoped artifact guard ------------------------------------
 // The static `edit` rules in src/config.ts pin planner writes to
-// `.open-gajae/_session-*/(plans|drafts)/`; only this hook can pin the session,
-// because the `config` hook runs once, before any session exists.
+// `.open-gajae/_session-*/(plans|drafts)/`; only this hook can pin the session.
+// A block replaces the input with `{}` (the host's decode then fails) and
+// `execute.after` rewrites that failure into guidance (Phase 0 P3/P8).
 
 /** The session folder the store resolves for `sessionID`. */
 const folderOf = async (store: StateStore, sessionID: string) =>
   basename(await store.resolveSessionDir(sessionID));
+
+/** One artifact tool call through `execute.before`; returns the event. */
+async function toolCall(
+  hooks: RalplanHooks,
+  sessionID: string,
+  tool: string,
+  input: Record<string, unknown>,
+) {
+  const event = { tool, sessionID, id: nextCall(), input: input as unknown };
+  await hooks.executeBefore(event);
+  return event;
+}
+
+const writeCall = (hooks: RalplanHooks, sessionID: string, path: string) =>
+  toolCall(hooks, sessionID, "write", { path, content: "# plan\n" });
+
+/** The host's `execute.after` for a failed call; returns the event. */
+async function failed(
+  hooks: RalplanHooks,
+  call: { tool: string; sessionID: string; id: string },
+  agent = "open-gajae",
+  error: unknown = new Error("Invalid arguments for tool"),
+) {
+  const event = { ...call, agent, status: "error", error };
+  await hooks.executeAfter(event);
+  return event;
+}
+
+const OTHER = "_session-20260101-000000-ses_other";
 
 test("a session may write plans and drafts under its own session folder", async () => {
   await fixture(async ({ root, store, hooks, sessionGets }) => {
     const id = nextSession("guard-own");
     const folder = await folderOf(store, id);
     for (const kind of ["plans", "drafts"]) {
-      await writeCall(
-        hooks,
-        id,
+      for (const path of [
         join(root, ".open-gajae", folder, kind, "plan.md"),
-      );
-      // The relative spelling the model may use resolves the same way.
-      await writeCall(hooks, id, join(".open-gajae", folder, kind, "plan.md"));
+        join(".open-gajae", folder, kind, "plan.md"),
+      ]) {
+        const call = await writeCall(hooks, id, path);
+        expect(call.input).toEqual({ path, content: "# plan\n" });
+        const edit = await toolCall(hooks, id, "edit", { path });
+        expect(edit.input).toEqual({ path });
+      }
     }
+    const patchText = `*** Begin Patch\n*** Add File: .open-gajae/${folder}/plans/p.md\n+x\n*** End Patch`;
+    expect((await toolCall(hooks, id, "patch", { patchText })).input).toEqual({
+      patchText,
+    });
     // The lineage walk is cached: one lookup covers every later write.
     expect(sessionGets).toEqual([id]);
   });
 });
 
-test("a child session writes into its root session's plans", async () => {
+test("a child session writes into its root session's plans, not its own folder", async () => {
   const child = nextSession("guard-child");
   const parent = nextSession("guard-parent");
   const rootSession = nextSession("guard-root");
   await fixture(
     async ({ root, store, hooks, sessionGets }) => {
       const folder = await folderOf(store, rootSession);
-      await writeCall(
+      const ok = await writeCall(
         hooks,
         child,
         join(root, ".open-gajae", folder, "plans", "plan.md"),
       );
-      // Walked child → parent → root, then cached for all three.
+      expect(ok.input).not.toEqual({});
       expect(sessionGets).toEqual([child, parent, rootSession]);
-      await writeCall(
-        hooks,
-        child,
-        join(root, ".open-gajae", folder, "drafts", "draft.md"),
-      );
-      expect(sessionGets).toEqual([child, parent, rootSession]);
-      // The child may not write into its own child-session folder, because the
-      // artifacts of the whole lineage belong to the root.
       const ownFolder = await folderOf(store, child);
       expect(ownFolder).not.toBe(folder);
-      await expect(
-        writeCall(
-          hooks,
-          child,
-          join(root, ".open-gajae", ownFolder, "plans", "plan.md"),
-        ),
-      ).rejects.toThrow("another session");
+      const blocked = await writeCall(
+        hooks,
+        child,
+        join(root, ".open-gajae", ownFolder, "plans", "plan.md"),
+      );
+      expect(blocked.input).toEqual({});
+      expect(sessionGets).toEqual([child, parent, rootSession]);
     },
     { parents: { [child]: parent, [parent]: rootSession } },
   );
 });
 
-test("a write into another session's plans or drafts fails the tool call", async () => {
+test("another session's write is blocked by input invalidation and rewritten into guidance", async () => {
   await fixture(async ({ root, store, hooks }) => {
     const id = nextSession("guard-foreign");
-    const other = "_session-20260101-000000-ses_other";
     const folder = await folderOf(store, id);
     for (const kind of ["plans", "drafts"]) {
-      const path = join(root, ".open-gajae", other, kind, "plan.md");
-      const attempt = writeCall(hooks, id, path);
-      await expect(attempt).rejects.toThrow("another session");
-      // The message names the offending path and the one folder allowed.
-      await expect(attempt).rejects.toThrow(
-        `.open-gajae/${other}/${kind}/plan.md`,
+      const call = await writeCall(
+        hooks,
+        id,
+        join(root, ".open-gajae", OTHER, kind, "plan.md"),
       );
-      await expect(attempt).rejects.toThrow(folder);
+      expect(call.input).toEqual({});
+      const after = await failed(hooks, call);
+      expect(after.error).toBeInstanceOf(ToolError);
+      const message = (after.error as ToolError).message;
+      expect(message).toContain(`.open-gajae/${OTHER}/${kind}/plan.md`);
+      expect(message).toContain(
+        `write may only write under this session's plans/ or drafts/ (.open-gajae/${folder}/plans|drafts/)`,
+      );
+      // The recorded block is consumed once.
+      const again = await failed(hooks, call);
+      expect(again.error).not.toBeInstanceOf(ToolError);
     }
-    // `apply_patch` carries its paths inside one string and is judged the same.
-    await expect(
-      hooks.executeBefore({
-        tool: "apply_patch",
-        sessionID: id,
-        input: {
-          patchText: `*** Begin Patch\n*** Add File: .open-gajae/${other}/plans/plan.md\n+x\n*** End Patch`,
-        },
-      }),
-    ).rejects.toThrow("another session");
+    // `patch` carries its paths inside one string, indented markers included.
+    const patchCall = await toolCall(hooks, id, "patch", {
+      patchText: `*** Begin Patch\n  *** Update File: .open-gajae/${OTHER}/plans/plan.md\n@@\n-a\n+b\n*** End Patch`,
+    });
+    expect(patchCall.input).toEqual({});
+    expect(((await failed(hooks, patchCall)).error as ToolError).message).toContain(
+      "patch may only write under",
+    );
   });
 });
 
-test("an unresolvable session lineage refuses the write", async () => {
+test("a subdirectory launch cannot reach another session's plans through ../ (A3)", async () => {
+  await fixture(async ({ root, store }) => {
+    const sub = join(root, "sub");
+    await mkdir(sub);
+    const { session } = fakeSession(store, {}, sub);
+    const hooks = createHooks(store, session, PACKAGE_ROOT, sub, root);
+    const id = nextSession("guard-sub");
+    const folder = await folderOf(store, id);
+    const call = await writeCall(
+      hooks,
+      id,
+      `../.open-gajae/${OTHER}/plans/x.md`,
+    );
+    expect(call.input).toEqual({});
+    expect(((await failed(hooks, call)).error as ToolError).message).toContain(
+      `(../.open-gajae/${folder}/plans|drafts/)`,
+    );
+    const own = await writeCall(hooks, id, `../.open-gajae/${folder}/plans/x.md`);
+    expect(own.input).not.toEqual({});
+  });
+});
+
+test("an unresolvable session lineage blocks the write", async () => {
   await fixture(
     async ({ root, hooks }) => {
       const id = nextSession("guard-lineage");
-      await expect(
-        writeCall(
-          hooks,
-          id,
-          join(root, ".open-gajae/_session-20260101-000000-ses_x/plans/p.md"),
-        ),
-      ).rejects.toThrow("session lineage");
+      const call = await writeCall(
+        hooks,
+        id,
+        join(root, ".open-gajae", OTHER, "plans/p.md"),
+      );
+      expect(call.input).toEqual({});
+      expect(((await failed(hooks, call)).error as ToolError).message).toContain(
+        "session lineage",
+      );
     },
     { sessionGetRejects: true },
   );
@@ -1068,30 +1126,104 @@ test("an unresolvable session lineage refuses the write", async () => {
 
 test("the guard judges only session plans and drafts", async () => {
   await fixture(
-    async ({ root, store, hooks, sessionGets }) => {
+    async ({ root, hooks, sessionGets }) => {
       const id = nextSession("guard-other-paths");
-      const folder = await folderOf(store, id);
-      const other = "_session-20260101-000000-ses_other";
-      // Ordinary source files, the plugin's own config, and another session's
-      // specs and state are the static permission rules' business, not this
-      // hook's. `session.get` rejects here, so any lookup at all would throw.
+      // `session.get` rejects here, so any lookup at all would block.
       for (const path of [
         join(root, "src/x.ts"),
         join(root, ".open-gajae/open-gajae.jsonc"),
-        join(root, ".open-gajae", other, "specs/spec.md"),
-        join(root, ".open-gajae", other, "state/ralplan-state.json"),
+        join(root, ".open-gajae", OTHER, "specs/spec.md"),
+        join(root, ".open-gajae", OTHER, "state/ralplan-state.json"),
         "src/x.ts",
         "/etc/passwd",
       ])
-        await writeCall(hooks, id, path);
+        expect((await writeCall(hooks, id, path)).input).not.toEqual({});
       // Tools that write no file are not inspected either.
-      await hooks.executeBefore({
-        tool: "read",
-        sessionID: id,
-        input: { filePath: join(root, ".open-gajae", other, "plans/p.md") },
+      const read = await toolCall(hooks, id, "read", {
+        path: join(root, ".open-gajae", OTHER, "plans/p.md"),
       });
+      expect(read.input).not.toEqual({});
       expect(sessionGets).toHaveLength(0);
-      expect(folder).toContain("_session-");
+      // And their failures are left alone.
+      const error = new Error("some other failure");
+      expect((await failed(hooks, read, "open-gajae", error)).error).toBe(error);
+    },
+    { sessionGetRejects: true },
+  );
+});
+
+test("a planner permission block is rewritten; other failures are left alone (C11)", async () => {
+  await fixture(async ({ store, hooks }) => {
+    const id = nextSession("guard-planner");
+    const folder = await folderOf(store, id);
+    const blockedError = () => ({
+      _tag: "Tool.Error",
+      message: "Unable to write outside/x.md",
+      error: { _tag: "Permission.BlockedError", message: "Permission denied: edit" },
+    });
+    const call = { tool: "write", sessionID: id, id: nextCall() };
+    const rewritten = await failed(
+      hooks,
+      call,
+      "open-gajae-planner",
+      blockedError(),
+    );
+    expect(rewritten.error).toBeInstanceOf(ToolError);
+    expect((rewritten.error as ToolError).message).toContain(
+      `(.open-gajae/${folder}/plans|drafts/)`,
+    );
+    // Another agent's permission block, a planner error of another kind, and a
+    // non-artifact tool keep the host's error.
+    const other = blockedError();
+    expect((await failed(hooks, call, "open-gajae-critic", other)).error).toBe(
+      other,
+    );
+    const plain = { _tag: "Tool.Error", message: "File not found" };
+    expect((await failed(hooks, call, "open-gajae-planner", plain)).error).toBe(
+      plain,
+    );
+    const shell = blockedError();
+    expect(
+      (
+        await failed(
+          hooks,
+          { ...call, tool: "shell" },
+          "open-gajae-planner",
+          shell,
+        )
+      ).error,
+    ).toBe(shell);
+  });
+});
+
+test("store and lookup errors inside execute.before and execute.after resolve (C10)", async () => {
+  await fixture(
+    async ({ root, store, hooks }) => {
+      const id = nextSession("guard-errors");
+      // Lookup failure: the planner rewrite still happens, with a generic folder.
+      const after = await failed(
+        hooks,
+        { tool: "edit", sessionID: id, id: nextCall() },
+        "open-gajae-planner",
+        { error: { _tag: "Permission.BlockedError" } },
+      );
+      expect((after.error as ToolError).message).toContain(
+        "(.open-gajae/_session-*/plans|drafts/)",
+      );
+      // A store failure while guarding blocks the call and resolves.
+      store.resolveSessionDir = async () => {
+        throw new Error("store failed");
+      };
+      const call = await writeCall(
+        hooks,
+        id,
+        join(root, ".open-gajae", OTHER, "plans/p.md"),
+      );
+      expect(call.input).toEqual({});
+      // A malformed event resolves too.
+      await hooks.executeAfter(
+        null as unknown as Parameters<RalplanHooks["executeAfter"]>[0],
+      );
     },
     { sessionGetRejects: true },
   );
@@ -1105,7 +1237,6 @@ test("the guard leaves the ralplan skill confirmation path intact", async () => 
     expect((await store.read(id, RALPLAN_MODE))?.awaiting_confirmation).toBe(
       true,
     );
-    // A guarded write in the same session, then the skill call that confirms.
     const folder = await folderOf(store, id);
     await writeCall(hooks, id, join(root, ".open-gajae", folder, "plans/p.md"));
     await skillCall(hooks, id, { id: "ralplan" });

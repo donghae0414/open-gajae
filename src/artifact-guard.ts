@@ -1,23 +1,22 @@
 // Session-scoped artifact guard, the dynamic half of the planner's write scope.
 // The static permission rules in `src/config.ts` pin writes to
-// `.open-gajae/_session-*/(plans|drafts)/`, but a `config` hook runs once,
-// before any session exists, so no static rule can name the current session.
-// These pure helpers say which session folder a write would land in; the hook
-// in `src/hooks.ts` compares that with the caller's root session.
+// `.open-gajae/_session-*/(plans|drafts)/`, but no static rule can name the
+// current session. These pure helpers say which session folder a write would
+// land in; the `execute.before` hook in `src/hooks.ts` compares that with the
+// caller's root session.
 //
-// The rule is applied to every session, not just the planner's: the hook input
-// carries no agent, and "write only into your own session folder" is correct
-// for the leader too.
+// The rule is applied to every session, not just the planner's: "write only
+// into your own session folder" is correct for the leader too.
 
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
-/** The tools that can create, change, move, or delete a file. */
-const ARTIFACT_TOOLS = new Set(["write", "edit", "apply_patch"]);
+/** The v2 tools that can create, change, move, or delete a file. */
+const ARTIFACT_TOOLS = new Set(["write", "edit", "patch"]);
 
 /**
- * `apply_patch` carries every path inside one string argument. The markers are
- * the ones the host's own parser reads, and it trims the remainder of the line
- * exactly this way (`opencode/packages/opencode/src/patch/index.ts:76-93`).
+ * `patch` carries every path inside one string argument. The markers are the
+ * ones the host's own parser reads; it trims the whole line before matching and
+ * trims the remainder (`opencode/packages/util/src/patch.ts:50-72`).
  */
 const PATCH_MARKERS = [
   "*** Add File:",
@@ -26,7 +25,7 @@ const PATCH_MARKERS = [
   "*** Move to:",
 ] as const;
 
-/** Matches a worktree-relative POSIX path inside a session's plans or drafts. */
+/** Matches a project-relative POSIX path inside a session's plans or drafts. */
 const SESSION_ARTIFACT = /^\.open-gajae\/(_session-[^/]+)\/(?:plans|drafts)\//;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -36,19 +35,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Every filesystem path a tool call would touch, as the model wrote them:
  * absolute or relative, unresolved. Tools that write no file return `[]`.
+ * v2 `write`/`edit` take `path`; `patch` takes `patchText`.
  */
-export function artifactPathsOf(tool: string, args: unknown): string[] {
-  if (!ARTIFACT_TOOLS.has(tool) || !isRecord(args)) return [];
-  if (tool !== "apply_patch") {
-    const filePath = args.filePath;
-    return typeof filePath === "string" && filePath.length > 0
-      ? [filePath]
-      : [];
+export function artifactPathsOf(tool: string, input: unknown): string[] {
+  if (!ARTIFACT_TOOLS.has(tool) || !isRecord(input)) return [];
+  if (tool !== "patch") {
+    const path = input.path;
+    return typeof path === "string" && path.length > 0 ? [path] : [];
   }
-  const patchText = args.patchText;
+  const patchText = input.patchText;
   if (typeof patchText !== "string") return [];
   const paths: string[] = [];
-  for (const line of patchText.split(/\r?\n/)) {
+  for (const raw of patchText.split("\n")) {
+    const line = raw.trim();
     for (const marker of PATCH_MARKERS) {
       if (!line.startsWith(marker)) continue;
       const path = line.slice(marker.length).trim();
@@ -60,34 +59,37 @@ export function artifactPathsOf(tool: string, args: unknown): string[] {
 }
 
 /**
- * `filePath` as a worktree-relative POSIX path, or `undefined` when it escapes
- * the worktree or is the worktree itself. A relative path is resolved against
- * the worktree.
+ * The shared path base (plan "Path base"): resolve `p` against the host's
+ * `location.directory` — the base its own `edit` resources use
+ * (`core/src/file-access.ts:99-110`) — then relativize to the project
+ * directory. Returns a POSIX path, `""` for the project directory itself, or
+ * `undefined` when `p` lands outside the project.
  */
-export function worktreeRelativePath(
-  worktree: string,
-  filePath: string,
+export function projectRelative(
+  locationDir: string,
+  projectDir: string,
+  p: string,
 ): string | undefined {
-  if (typeof filePath !== "string" || filePath.length === 0) return undefined;
-  const root = resolve(worktree);
-  const absolute = isAbsolute(filePath) ? filePath : resolve(root, filePath);
-  const path = relative(root, absolute);
-  if (path.length === 0 || path.startsWith("..") || isAbsolute(path))
-    return undefined;
+  if (typeof p !== "string" || p.length === 0) return undefined;
+  const absolute = isAbsolute(p) ? resolve(p) : resolve(locationDir, p);
+  const path = relative(resolve(projectDir), absolute);
+  if (path === "..") return undefined;
+  if (path.startsWith(`..${sep}`) || isAbsolute(path)) return undefined;
   return path.split(sep).join("/");
 }
 
 /**
- * The `_session-…` folder that owns `filePath`, or `undefined` when the path is
- * not a session plan or draft. Paths outside the worktree are `undefined` too:
- * the static permission rules already refuse them, and this guard judges only
+ * The `_session-…` folder that owns `p`, or `undefined` when the path is not a
+ * session plan or draft. Paths outside the project are `undefined` too: the
+ * static permission rules already refuse them, and this guard judges only
  * which session a session artifact belongs to.
  */
 export function sessionArtifactOwner(
-  worktree: string,
-  filePath: string,
+  locationDir: string,
+  projectDir: string,
+  p: string,
 ): string | undefined {
-  const path = worktreeRelativePath(worktree, filePath);
+  const path = projectRelative(locationDir, projectDir, p);
   if (path === undefined) return undefined;
   return SESSION_ARTIFACT.exec(path)?.[1];
 }
