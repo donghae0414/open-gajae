@@ -14,14 +14,9 @@ export const agentNames = [
 ] as const;
 type AgentName = (typeof agentNames)[number];
 type ModelSettings = { model?: string; variant?: string };
-type CompanyContextSettings = {
-  tool?: string;
-  onError?: "warn" | "silent" | "fail";
-};
 export interface Settings {
   deepInterview: { ambiguityThreshold: number; maxRounds: number };
   agents: Partial<Record<AgentName, ModelSettings>>;
-  companyContext?: CompanyContextSettings;
 }
 function object(value: unknown, location: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -52,7 +47,7 @@ async function load(path: string): Promise<Partial<Settings>> {
       `${path}:${errors[0].offset}: ${printParseErrorCode(errors[0].error)}`,
     );
   const value = object(parsed, path);
-  keys(value, ["deepInterview", "agents", "companyContext"], path);
+  keys(value, ["deepInterview", "agents"], path);
   const result: Partial<Settings> = {};
   if ("deepInterview" in value) {
     const config = object(value.deepInterview, `${path}.deepInterview`);
@@ -99,29 +94,6 @@ async function load(path: string): Promise<Partial<Settings>> {
       result.agents[name] = config as ModelSettings;
     }
   }
-  if ("companyContext" in value) {
-    const config = object(value.companyContext, `${path}.companyContext`);
-    keys(config, ["tool", "onError"], `${path}.companyContext`);
-    if (
-      "tool" in config &&
-      (typeof config.tool !== "string" ||
-        !config.tool.trim() ||
-        config.tool.trim() !== config.tool)
-    )
-      throw new Error(
-        `${path}.companyContext.tool: expected nonempty trimmed string`,
-      );
-    if (
-      "onError" in config &&
-      config.onError !== "warn" &&
-      config.onError !== "silent" &&
-      config.onError !== "fail"
-    )
-      throw new Error(
-        `${path}.companyContext.onError: expected warn, silent, or fail`,
-      );
-    result.companyContext = config as CompanyContextSettings;
-  }
   return result;
 }
 export async function loadSettings(
@@ -136,12 +108,15 @@ export async function loadSettings(
   for (const name of agentNames) {
     if (user.agents?.[name] || project.agents?.[name])
       agents[name] = { ...user.agents?.[name], ...project.agents?.[name] };
+    // v2 `Model.Ref` needs a provider and model, so a variant cannot ride on the
+    // host's model. Checked on the merged entry: a user `model` plus a project
+    // `variant` stays valid. The v2 host itself only drops such a variant with
+    // a diagnostic (`core/src/config/normalize.ts:604-612`).
+    if (agents[name]?.variant && !agents[name]?.model)
+      throw new Error(
+        `${name}.variant is set without model; add model "provider/model"`,
+      );
   }
-  const companyContext = {
-    onError: "warn" as const,
-    ...user.companyContext,
-    ...project.companyContext,
-  };
   return {
     deepInterview: {
       ambiguityThreshold: 0.2,
@@ -150,7 +125,6 @@ export async function loadSettings(
       ...project.deepInterview,
     },
     agents,
-    companyContext,
   };
 }
 
@@ -295,10 +269,6 @@ export async function configureAgents(
       : { question: "allow" as const, ...primaryOverrides?.permission };
   const runtimeSettings = JSON.stringify({
     deepInterview: settings.deepInterview,
-    companyContext: {
-      onError: "warn",
-      ...settings.companyContext,
-    },
   });
   const primaryPrompt = `${primary}
 
