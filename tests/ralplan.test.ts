@@ -326,9 +326,9 @@ test("R18 — an expanded deep-interview skill body does not fire", async () => 
   expect(fired(expanded)).toBe(false);
 });
 
-test("R18 — the /ralplan command template and this plugin's own text are quiet", () => {
-  // `src/config.ts:364`. Its only `ralplan` is inside backticks, which
-  // `removeCodeBlocks` strips — hence the `command.execute.before` seeding path.
+test("R18 — a backticked skill name and this plugin's own text are quiet", () => {
+  // The only `ralplan` is inside backticks, which `removeCodeBlocks` strips, so
+  // an instruction that merely names the skill does not seed.
   expect(
     fired(
       "Load the `ralplan` skill and run its consensus planning workflow for: fix auth",
@@ -409,10 +409,8 @@ test("the deep-interview keyword is quiet in OMC's informational and CLI cases",
     'ooo auto "Add /healthz endpoint"',
     '/ouroboros:auto "Add /healthz endpoint"',
     "ouroboros run",
-    // Our own `/deep-interview` command template (`src/config.ts`). Its only
-    // `deep-interview` sits inside backticks, which `removeCodeBlocks` strips.
-    // This is the expansion that now reaches `chat.message` for the slash
-    // command, because the explicit entry shadows the host's skill-derived one.
+    // An instruction whose only `deep-interview` sits inside backticks, which
+    // `removeCodeBlocks` strips.
     "Load the `deep-interview` skill and run its Socratic interview for: refactor this",
   ];
   for (const text of quiet)
@@ -424,15 +422,14 @@ test("the deep-interview keyword is quiet in OMC's informational and CLI cases",
     expect(`${name} → ${interviewed(build())}`).toBe(`${name} → false`);
 });
 
-test("the raw deep-interview SKILL.md body fires, and only the shadowing command keeps it out", async () => {
+test("the raw deep-interview SKILL.md body fires, and the host never hands it to the prompt hook", async () => {
   // Measured, not assumed: OMC's own detector fires `deep-interview` on this
   // body too (cross-checked with `detectKeywordsWithType`), because the generic
   // guard has no explicit-invocation requirement and the body names the skill
-  // in actionable prose. The guard is NOT weakened to hide this. What keeps the
-  // body out of `chat.message` is the explicit `/deep-interview` command in
-  // `src/config.ts`, which shadows the host's skill-derived expansion
-  // (`opencode/packages/opencode/src/command/index.ts:141`), so the turn
-  // carries the short template asserted quiet above.
+  // in actionable prose. The guard is NOT weakened to hide this. The v2 host
+  // runs the `prompt` hook on the typed text only and attaches a mentioned
+  // skill's body afterwards (`core/src/session/prompt.ts:40-77`); the host
+  // session probe observes one magic notice for an `@deep-interview` mention.
   const body = await readFile(
     new URL("../skills/deep-interview/SKILL.md", import.meta.url),
     "utf8",
