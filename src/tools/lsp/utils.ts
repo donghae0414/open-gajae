@@ -1,5 +1,7 @@
 import type {
+  Diagnostic,
   DocumentSymbol,
+  Hover,
   Location,
   SymbolInformation,
   Range,
@@ -36,6 +38,13 @@ const SYMBOL_KINDS: Record<number, string> = {
   26: "TypeParameter",
 };
 
+const SEVERITY_NAMES: Record<number, string> = {
+  1: "Error",
+  2: "Warning",
+  3: "Information",
+  4: "Hint",
+};
+
 export function uriToPath(uri: string): string {
   if (!uri.startsWith("file://")) return uri;
   try {
@@ -65,6 +74,20 @@ export function formatLocation(location: Location): string {
   if (!uri) return "Unknown location";
   const range = link.range || link.targetRange || link.targetSelectionRange;
   return range ? `${uriToPath(uri)}:${formatRange(range)}` : uriToPath(uri);
+}
+
+/** Format hover content using the OMC text contract. */
+export function formatHover(hover: Hover | null): string {
+  if (!hover) return "No hover information available";
+  let text = "";
+  if (typeof hover.contents === "string") text = hover.contents;
+  else if (Array.isArray(hover.contents))
+    text = hover.contents
+      .map((c) => (typeof c === "string" ? c : c.value))
+      .join("\n\n");
+  else if ("value" in hover.contents) text = hover.contents.value;
+  if (hover.range) text += `\n\nRange: ${formatRange(hover.range)}`;
+  return text || "No hover information available";
 }
 
 /** Format LSP references using the OMC text contract. */
@@ -118,6 +141,24 @@ export function formatWorkspaceSymbols(
         ? ` (in ${symbol.containerName})`
         : "";
       return `${kind}: ${symbol.name}${container}\n  ${formatLocation(symbol.location)}`;
+    })
+    .join("\n\n");
+}
+
+/** Format diagnostics using the OMC text contract. */
+export function formatDiagnostics(
+  diagnostics: Diagnostic[],
+  filePath?: string,
+): string {
+  if (diagnostics.length === 0) return "No diagnostics";
+  return diagnostics
+    .map((diag) => {
+      const severity = SEVERITY_NAMES[diag.severity || 1] || "Unknown";
+      const range = formatRange(diag.range);
+      const source = diag.source ? `[${diag.source}]` : "";
+      const code = diag.code ? ` (${diag.code})` : "";
+      const location = filePath ? `${filePath}:${range}` : range;
+      return `${severity}${code}${source}: ${diag.message}\n  at ${location}`;
     })
     .join("\n\n");
 }

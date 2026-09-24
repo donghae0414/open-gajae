@@ -11,10 +11,13 @@ import {
 } from "./config";
 import { createHooks } from "./hooks";
 import { epochMillis, StateStore } from "./state";
+import { createTools } from "./tools";
+import { lspManager } from "./tools/lsp/client";
 
 // v2 is a registration model: transforms are synchronous and replayable, so all
-// file I/O finishes before anything is registered. `setup` registers only the
-// parts ported so far; the order below is the plan's (Step 1).
+// file I/O finishes before anything is registered; the order below is the
+// plan's (Step 1). The host runs `setup` lazily, on the first prompt in a
+// location, once per location.
 export default Plugin.define({
   id: "open-gajae",
   async setup(ctx) {
@@ -34,7 +37,7 @@ export default Plugin.define({
     // 3. Read prompts and SKILL.md files.
     const prompts = await loadPrompts(packageRoot);
     const skills = await loadSkills(packageRoot);
-    // 4. Agent, skill and tool transforms (tools: Step 6).
+    // 4. Agent, skill and tool transforms.
     // `DeepMutable` turns the schema's branded strings (`Agent.Name`,
     // `Provider.ID`) into objects, so plain strings only fit the structural seam.
     await registerAgents(ctx.agent as unknown as AgentHost, {
@@ -43,6 +46,10 @@ export default Plugin.define({
       plannerPrefix,
     });
     await registerSkills(ctx.skill, skills);
+    const tools = createTools(store, { locationDir, projectDir });
+    await ctx.tool.transform((editor) => {
+      for (const tool of tools) editor.add(tool);
+    });
     // 5. Prompt and tool hooks.
     const hooks = createHooks(
       store,
@@ -66,7 +73,10 @@ export default Plugin.define({
       if (!controller.signal.aborted)
         console.warn("[open-gajae] event loop ended:", error);
     });
-    // 7. Cleanup (`lspManager.disconnectAll()`: Step 6).
-    return () => controller.abort();
+    // 7. Cleanup.
+    return async () => {
+      controller.abort();
+      await lspManager.disconnectAll();
+    };
   },
 });

@@ -64,6 +64,22 @@ export interface Location {
   range: Range;
 }
 
+export interface Hover {
+  contents:
+    | string
+    | { kind: string; value: string }
+    | Array<string | { kind: string; value: string }>;
+  range?: Range;
+}
+
+export interface Diagnostic {
+  range: Range;
+  severity?: number;
+  code?: string | number;
+  source?: string;
+  message: string;
+}
+
 export interface DocumentSymbol {
   name: string;
   kind: number;
@@ -117,7 +133,8 @@ interface PendingRequest {
  *
  * This is a focused port of oh-my-claudecode@5281b19e0d64f8e6dc6767f2130299a88af2dc71
  * src/tools/lsp/client.ts. The public request surface is deliberately limited
- * to references, document symbols, and workspace symbols.
+ * to the read-only requests: definition, hover, references, document symbols,
+ * workspace symbols, and diagnostics (published or pulled).
  */
 export class LspClient {
   private static readonly MAX_BUFFER_SIZE = 50 * 1024 * 1024;
@@ -130,6 +147,9 @@ export class LspClient {
   private writeWaiterRejectors = new Set<(error: Error) => void>();
   private openDocuments = new Set<string>();
   private documentOpenPromises = new Map<string, Promise<void>>();
+  private diagnostics = new Map<string, Diagnostic[]>();
+  private diagnosticWaiters = new Map<string, Array<(error?: Error) => void>>();
+  private _supportsPullDiagnostics = false;
   private readonly workspaceRoot: string;
   private readonly serverConfig: LspServerConfig;
   private readonly devContainerContext: DevContainerContext | null;
@@ -264,6 +284,7 @@ export class LspClient {
     this.disconnected = true;
     this.cancelPendingWrites(error);
     this.rejectPendingRequests(error);
+    this.cancelDiagnosticWaiters(error);
     if (this.process) {
       try {
         this.process.kill("SIGKILL");
@@ -314,8 +335,35 @@ export class LspClient {
       }
       this.process = null;
       this.rejectPendingRequests(error);
+      this.cancelDiagnosticWaiters(error);
       this.clearConnectionState();
     }
+  }
+
+  async hover(
+    filePath: string,
+    line: number,
+    character: number,
+  ): Promise<Hover | null> {
+    const uri = await this.prepareDocument(filePath);
+    const result = await this.request<Hover | null>("textDocument/hover", {
+      textDocument: { uri },
+      position: { line, character },
+    });
+    return this.translateIncomingPayload(result);
+  }
+
+  async definition(
+    filePath: string,
+    line: number,
+    character: number,
+  ): Promise<Location | Location[] | null> {
+    const uri = await this.prepareDocument(filePath);
+    const result = await this.request<Location | Location[] | null>(
+      "textDocument/definition",
+      { textDocument: { uri }, position: { line, character } },
+    );
+    return this.translateIncomingPayload(result);
   }
 
   async references(
@@ -356,10 +404,75 @@ export class LspClient {
     return this.translateIncomingPayload(result);
   }
 
+  /** Diagnostics last published for a file (push model). */
+  getDiagnostics(filePath: string): Diagnostic[] {
+    return this.diagnostics.get(fileUri(filePath)) ?? [];
+  }
+
+  /** Whether the server supports LSP 3.17 pull diagnostics. */
+  get supportsPullDiagnostics(): boolean {
+    return this._supportsPullDiagnostics;
+  }
+
+  /** `textDocument/diagnostic` (pull model); only when supported. */
+  async pullDiagnostics(filePath: string): Promise<Diagnostic[]> {
+    const uri = this.toServerUri(fileUri(filePath));
+    const result = await this.request<{
+      kind?: string;
+      items?: Array<Record<string, unknown>>;
+    }>("textDocument/diagnostic", { textDocument: { uri } });
+    return (result?.items ?? []).map((d) => ({
+      range: d.range as Range,
+      message: d.message as string,
+      severity: d.severity as number | undefined,
+      source: d.source as string | undefined,
+      code: d.code as string | number | undefined,
+    }));
+  }
+
+  /**
+   * Resolve once `textDocument/publishDiagnostics` arrives for the file, or
+   * after `timeoutMs`, whichever comes first. Rejects on a transport failure.
+   */
+  waitForDiagnostics(filePath: string, timeoutMs = 2000): Promise<void> {
+    const uri = fileUri(filePath);
+    try {
+      this.throwIfTerminal();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (this.diagnostics.has(uri)) return Promise.resolve();
+    return new Promise<void>((resolveWait, rejectWait) => {
+      let settled = false;
+      const waiter = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (error) rejectWait(error);
+        else resolveWait();
+      };
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        const remaining = (this.diagnosticWaiters.get(uri) ?? []).filter(
+          (candidate) => candidate !== waiter,
+        );
+        if (remaining.length) this.diagnosticWaiters.set(uri, remaining);
+        else this.diagnosticWaiters.delete(uri);
+        resolveWait();
+      }, timeoutMs);
+      const waiters = this.diagnosticWaiters.get(uri) ?? [];
+      waiters.push(waiter);
+      this.diagnosticWaiters.set(uri, waiters);
+    });
+  }
+
   private async initialize(): Promise<void> {
     const child = this.process;
     const generation = this.connectionGeneration;
-    await this.request(
+    const initResult = await this.request<{
+      capabilities?: Record<string, unknown>;
+    } | null>(
       "initialize",
       {
         processId: process.pid,
@@ -369,8 +482,14 @@ export class LspClient {
           this.workspaceRoot,
         capabilities: {
           textDocument: {
+            hover: { contentFormat: ["markdown", "plaintext"] },
+            definition: { linkSupport: true },
             references: {},
             documentSymbol: { hierarchicalDocumentSymbolSupport: true },
+            publishDiagnostics: {
+              relatedInformation: true,
+              tagSupport: { valueSet: [1, 2] },
+            },
           },
           workspace: { symbol: {}, workspaceFolders: true },
         },
@@ -379,6 +498,8 @@ export class LspClient {
       getLspRequestTimeout(this.serverConfig, "initialize"),
     );
     this.assertCurrentConnection(child, generation);
+    this._supportsPullDiagnostics =
+      !!initResult?.capabilities?.diagnosticProvider;
     await this.notifyWithBackpressure("initialized", {});
     this.assertCurrentConnection(child, generation);
   }
@@ -388,7 +509,7 @@ export class LspClient {
     return this.toServerUri(fileUri(filePath));
   }
 
-  private async openDocument(filePath: string): Promise<void> {
+  async openDocument(filePath: string): Promise<void> {
     const hostUri = fileUri(filePath);
     if (this.openDocuments.has(hostUri)) return;
     const pending = this.documentOpenPromises.get(hostUri);
@@ -411,6 +532,8 @@ export class LspClient {
 
     const child = this.process;
     const generation = this.connectionGeneration;
+    // A reopened document needs fresh diagnostics, not a stale cached result.
+    this.diagnostics.delete(hostUri);
     await this.notifyWithBackpressure("textDocument/didOpen", {
       textDocument: {
         uri: this.toServerUri(hostUri),
@@ -654,6 +777,8 @@ export class LspClient {
           (typeof record.id === "number" && Number.isInteger(record.id)))
       ) {
         this.handleServerRequest(message as JsonRpcServerRequest);
+      } else if (!hasId) {
+        this.handleNotification(message as JsonRpcNotification);
       }
       return;
     }
@@ -667,6 +792,21 @@ export class LspClient {
         ? pending.reject(new Error(response.error.message))
         : pending.resolve(response.result);
     }
+  }
+
+  private handleNotification(notification: JsonRpcNotification): void {
+    if (notification.method !== "textDocument/publishDiagnostics") return;
+    const params = this.translateIncomingPayload(notification.params) as {
+      uri?: unknown;
+      diagnostics?: unknown;
+    } | null;
+    if (typeof params?.uri !== "string" || !Array.isArray(params.diagnostics))
+      return;
+    this.diagnostics.set(params.uri, params.diagnostics as Diagnostic[]);
+    const waiters = this.diagnosticWaiters.get(params.uri);
+    if (!waiters?.length) return;
+    this.diagnosticWaiters.delete(params.uri);
+    for (const wake of waiters) wake();
   }
 
   private handleServerRequest(request: JsonRpcServerRequest): void {
@@ -694,6 +834,7 @@ export class LspClient {
     this.terminalError = error;
     this.cancelPendingWrites(error);
     this.rejectPendingRequests(error);
+    this.cancelDiagnosticWaiters(error);
     if (this.process) {
       try {
         this.process.kill("SIGKILL");
@@ -718,10 +859,17 @@ export class LspClient {
     for (const reject of this.writeWaiterRejectors) reject(error);
   }
 
+  private cancelDiagnosticWaiters(error: Error): void {
+    for (const waiters of this.diagnosticWaiters.values())
+      for (const wake of waiters) wake(error);
+    this.diagnosticWaiters.clear();
+  }
+
   private clearConnectionState(): void {
     this.initialized = false;
     this.openDocuments.clear();
     this.documentOpenPromises.clear();
+    this.diagnostics.clear();
     this.buffer = Buffer.alloc(0);
   }
 

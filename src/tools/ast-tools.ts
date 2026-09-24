@@ -1,15 +1,17 @@
 // Read-only port of OMC v5.4.0 src/tools/ast-tools.ts (MIT).
 // Baseline: 5281b19e0d64f8e6dc6767f2130299a88af2dc71.
-// Host changes: ToolContext path/permissions, async guarded traversal, no replace tool.
+// Host changes: v2 tool shape, project-boundary path checks instead of host
+// ask, `.env*` files skipped, async guarded traversal, no replace tool.
 import { createRequire } from "node:module";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { extname, join } from "node:path";
-import { tool, type ToolContext } from "@opencode-ai/plugin";
+import { z } from "zod";
+import { defineTool } from "./define.js";
 import {
   assertCodeReader,
-  authorizeOperation,
-  authorizePath,
-  ReadPermissionError,
+  type CodeToolPaths,
+  isEnvFile,
+  resolveProjectPath,
 } from "./permissions.js";
 
 export const SUPPORTED_LANGUAGES = [
@@ -121,14 +123,23 @@ function toLangEnum(sg: typeof import("@ast-grep/napi"), language: string) {
 async function getFilesForLanguage(
   target: string,
   language: string,
-  context: ToolContext,
+  paths: CodeToolPaths,
+  signal: AbortSignal,
 ): Promise<string[]> {
   const files: string[] = [];
   const visited = new Set<string>();
   async function walk(requested: string, top = false): Promise<void> {
     if (files.length >= 1000) return;
-    // Authorize the requested and canonical targets before readdir/readFile.
-    const canonical = await authorizePath(context, requested, { read: true });
+    signal.throwIfAborted();
+    // The project boundary and `.env*` check run before stat/readdir/readFile.
+    // A bad top-level target is an error; a bad entry below it is skipped.
+    let canonical: string;
+    try {
+      canonical = await resolveProjectPath(paths, requested);
+    } catch (error) {
+      if (top) throw error;
+      return;
+    }
     const info = await stat(canonical);
     if (info.isFile()) {
       if (top || EXT_TO_LANG[extname(requested).toLowerCase()] === language)
@@ -137,17 +148,17 @@ async function getFilesForLanguage(
     }
     if (!info.isDirectory() || visited.has(canonical)) return;
     visited.add(canonical);
-    await authorizePath(context, canonical, { directory: true, read: true });
     let entries;
     try {
       entries = await readdir(canonical, { withFileTypes: true });
     } catch (error) {
       if (top) throw error;
-      return; // Source skips inaccessible subdirectories; native denials occurred above.
+      return; // Source skips inaccessible subdirectories.
     }
     for (const entry of entries) {
       if (files.length >= 1000) break;
       if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
+      if (isEnvFile(entry.name)) continue;
       if (
         entry.isDirectory() ||
         entry.isSymbolicLink() ||
@@ -178,61 +189,68 @@ function formatMatch(
     })
     .join("\n")}`;
 }
-export const astGrepSearchTool = tool({
-  description:
-    "Search code using AST patterns: $NAME matches a node, $$$ARGS matches multiple nodes. Patterns must be valid AST nodes. Read-only; no replacement operation.",
-  args: {
-    pattern: tool.schema.string(),
-    language: tool.schema.enum(SUPPORTED_LANGUAGES),
-    path: tool.schema.string().optional(),
-    context: tool.schema.number().int().min(0).max(10).optional(),
-    maxResults: tool.schema.number().int().min(1).max(100).optional(),
-  },
-  async execute(args, context) {
-    assertCodeReader(context);
-    await authorizeOperation(context, "ast_grep_search");
-    const input = args.path ?? context.directory;
-    const path = await authorizePath(context, input, { read: true });
-    try {
-      const sg = await getSgModule();
-      if (!sg)
-        return `@ast-grep/napi is not available.\n${RECOVERY}\nError: ${sgLoadError}`;
-      const files = await getFilesForLanguage(path, args.language, context);
-      if (!files.length) return `No ${args.language} files found in ${input}`;
-      const lang = toLangEnum(sg, args.language);
-      const results: string[] = [];
-      const limit = args.maxResults ?? 20;
-      for (const file of files) {
-        if (results.length >= limit) break;
-        const target = await authorizePath(context, file, { read: true });
-        context.abort.throwIfAborted();
-        try {
-          const content = await readFile(target, "utf8");
-          const matches = sg.parse(lang, content).root().findAll(args.pattern);
-          for (const match of matches) {
-            if (results.length >= limit) break;
-            const range = match.range();
-            results.push(
-              formatMatch(
-                target,
-                range.start.line + 1,
-                range.end.line + 1,
-                args.context ?? 2,
-                content,
-              ),
-            );
+export function astGrepSearchTool(paths: CodeToolPaths) {
+  return defineTool({
+    name: "ast_grep_search",
+    permission: "ast_grep_search",
+    description:
+      "Search code using AST patterns: $NAME matches a node, $$$ARGS matches multiple nodes. Patterns must be valid AST nodes. Read-only; no replacement operation.",
+    input: z.object({
+      pattern: z.string(),
+      language: z.enum(SUPPORTED_LANGUAGES),
+      path: z.string().optional(),
+      context: z.number().int().min(0).max(10).optional(),
+      maxResults: z.number().int().min(1).max(100).optional(),
+    }),
+    async execute(args, context) {
+      assertCodeReader(context);
+      const input = args.path ?? paths.locationDir;
+      // Boundary failures are the tool's answer, not "no matches".
+      const path = await resolveProjectPath(paths, input);
+      try {
+        const sg = await getSgModule();
+        if (!sg)
+          return `@ast-grep/napi is not available.\n${RECOVERY}\nError: ${sgLoadError}`;
+        const files = await getFilesForLanguage(
+          path,
+          args.language,
+          paths,
+          context.signal,
+        );
+        if (!files.length) return `No ${args.language} files found in ${input}`;
+        const lang = toLangEnum(sg, args.language);
+        const results: string[] = [];
+        const limit = args.maxResults ?? 20;
+        for (const file of files) {
+          if (results.length >= limit) break;
+          context.signal.throwIfAborted();
+          try {
+            const content = await readFile(file, "utf8");
+            const matches = sg.parse(lang, content).root().findAll(args.pattern);
+            for (const match of matches) {
+              if (results.length >= limit) break;
+              const range = match.range();
+              results.push(
+                formatMatch(
+                  file,
+                  range.start.line + 1,
+                  range.end.line + 1,
+                  args.context ?? 2,
+                  content,
+                ),
+              );
+            }
+          } catch {
+            // Preserve source per-file read/parse skips.
           }
-        } catch {
-          // Preserve source per-file read/parse skips, never native permission denial.
         }
+        if (!results.length)
+          return `No matches found for pattern: ${args.pattern}\n\nSearched ${files.length} ${args.language} file(s) in ${input}\n\nTip: Ensure the pattern is a valid AST node. For example:\n- Use "function $NAME" not just "$NAME"\n- Use "console.log($X)" not "console.log"`;
+        return `Found ${results.length} match(es) in ${files.length} file(s)\nPattern: ${args.pattern}\n\n${results.join("\n\n---\n\n")}`;
+      } catch (error) {
+        if (context.signal.aborted) throw error;
+        return `Error in AST search: ${error instanceof Error ? error.message : String(error)}\n\nCommon issues:\n- Pattern must be a complete AST node\n- Language must match file type\n- Check that @ast-grep/napi is installed`;
       }
-      if (!results.length)
-        return `No matches found for pattern: ${args.pattern}\n\nSearched ${files.length} ${args.language} file(s) in ${input}\n\nTip: Ensure the pattern is a valid AST node. For example:\n- Use "function $NAME" not just "$NAME"\n- Use "console.log($X)" not "console.log"`;
-      return `Found ${results.length} match(es) in ${files.length} file(s)\nPattern: ${args.pattern}\n\n${results.join("\n\n---\n\n")}`;
-    } catch (error) {
-      if (error instanceof ReadPermissionError || context.abort.aborted)
-        throw error;
-      return `Error in AST search: ${error instanceof Error ? error.message : String(error)}\n\nCommon issues:\n- Pattern must be a complete AST node\n- Language must match file type\n- Check that @ast-grep/napi is installed`;
-    }
-  },
-});
+    },
+  });
+}

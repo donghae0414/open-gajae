@@ -1,6 +1,6 @@
 import path from "node:path";
 import { realpathSync } from "node:fs";
-import { tool, type ToolContext } from "@opencode-ai/plugin";
+import { z } from "zod";
 import {
   DEEP_INTERVIEW_MODE,
   type ExplicitStatePatch,
@@ -9,12 +9,9 @@ import {
   StateStore,
 } from "./state.js";
 import { astGrepSearchTool } from "./tools/ast-tools.js";
-import {
-  lspDocumentSymbolsTool,
-  lspFindReferencesTool,
-  lspServersTool,
-  lspWorkspaceSymbolsTool,
-} from "./tools/lsp-tools.js";
+import { defineTool, type ToolCallContext } from "./tools/define.js";
+import { lspTools } from "./tools/lsp-tools.js";
+import type { CodeToolPaths } from "./tools/permissions.js";
 
 const readActors = new Set([
   "open-gajae",
@@ -24,7 +21,7 @@ const readActors = new Set([
 
 function scope(
   store: StateStore,
-  context: Pick<ToolContext, "agent" | "sessionID" | "worktree">,
+  context: Pick<ToolCallContext, "agent" | "sessionID">,
   workingDirectory: string | undefined,
   operation: "state_read" | "state_write" | "state_clear",
 ) {
@@ -37,8 +34,6 @@ function scope(
     throw new Error(`${operation} is restricted to the primary agent`);
   if (typeof context.sessionID !== "string" || context.sessionID.length === 0)
     throw new Error("a native session is required");
-  if (realpathSync(path.resolve(context.worktree)) !== store.worktree)
-    throw new Error("tool context does not match the plugin worktree");
   if (
     workingDirectory !== undefined &&
     realpathSync(path.resolve(workingDirectory)) !== store.worktree
@@ -46,38 +41,24 @@ function scope(
     throw new Error("workingDirectory does not match the plugin worktree");
 }
 
-async function authorize(
-  context: Pick<ToolContext, "ask">,
-  permission: "state_read" | "state_write" | "state_clear",
-  statePath: string,
-  sessionID: string,
-) {
-  await context.ask({
-    permission,
-    patterns: [statePath],
-    always: [],
-    metadata: { sessionID, operation: permission },
-  });
-}
-
 const explicitShape = {
-  active: tool.schema.boolean().optional(),
-  iteration: tool.schema.number().optional(),
-  max_iterations: tool.schema.number().optional(),
-  current_phase: tool.schema.string().max(200).optional(),
-  task_description: tool.schema.string().max(2000).optional(),
-  error: tool.schema.string().max(2000).optional(),
-  plan_path: tool.schema.string().max(500).optional(),
-  started_at: tool.schema.string().max(100).optional(),
-  completed_at: tool.schema.string().max(100).optional(),
-  awaiting_confirmation: tool.schema.boolean().optional(),
-  breaker_count: tool.schema.number().optional(),
-  breaker_updated_at: tool.schema.string().max(100).optional(),
-  deactivated_reason: tool.schema.string().max(200).optional(),
-  restored_at: tool.schema.string().max(100).optional(),
+  active: z.boolean().optional(),
+  iteration: z.number().optional(),
+  max_iterations: z.number().optional(),
+  current_phase: z.string().max(200).optional(),
+  task_description: z.string().max(2000).optional(),
+  error: z.string().max(2000).optional(),
+  plan_path: z.string().max(500).optional(),
+  started_at: z.string().max(100).optional(),
+  completed_at: z.string().max(100).optional(),
+  awaiting_confirmation: z.boolean().optional(),
+  breaker_count: z.number().optional(),
+  breaker_updated_at: z.string().max(100).optional(),
+  deactivated_reason: z.string().max(200).optional(),
+  restored_at: z.string().max(100).optional(),
 };
 
-const modeArg = tool.schema
+const modeArg = z
   .enum([DEEP_INTERVIEW_MODE, RALPLAN_MODE])
   .default(DEEP_INTERVIEW_MODE);
 
@@ -96,33 +77,29 @@ async function pathResult(
   return { statePath, specsDir, plansDir, draftsDir };
 }
 
-/** Native plugin tools only; all state operations use the current trusted session. */
-export function createTools(store: StateStore) {
-  return {
-    ast_grep_search: astGrepSearchTool,
-    lsp_find_references: lspFindReferencesTool,
-    lsp_document_symbols: lspDocumentSymbolsTool,
-    lsp_workspace_symbols: lspWorkspaceSymbolsTool,
-    lsp_servers: lspServersTool,
-    state_read: tool({
+/**
+ * Every tool this plugin adds, in v2 shape, for one `ctx.tool.transform`. State
+ * operations use the current trusted session; failures come back as content.
+ */
+export function createTools(store: StateStore, paths: CodeToolPaths) {
+  return [
+    astGrepSearchTool(paths),
+    ...lspTools(paths),
+    defineTool({
+      name: "state_read",
+      permission: "state_read",
       description:
         "Read the current session's deep-interview or ralplan state. It never aggregates or inherits another session's state.",
-      args: {
+      input: z.object({
         mode: modeArg,
-        workingDirectory: tool.schema.string().optional(),
+        workingDirectory: z.string().optional(),
         // Retained only to make stale callers fail validation rather than silently selecting a session.
-        session_id: tool.schema.never().optional(),
-      },
+        session_id: z.never().optional(),
+      }),
       async execute(args, context) {
         scope(store, context, args.workingDirectory, "state_read");
         const mode = resolveMode(args.mode);
         const paths = await pathResult(store, context.sessionID, mode);
-        await authorize(
-          context,
-          "state_read",
-          paths.statePath,
-          context.sessionID,
-        );
         const state = await store.read(context.sessionID, mode);
         return JSON.stringify(
           { ...paths, exists: state !== undefined, state },
@@ -131,28 +108,22 @@ export function createTools(store: StateStore) {
         );
       },
     }),
-    state_write: tool({
+    defineTool({
+      name: "state_write",
+      permission: "state_write",
       description:
         "Replace the current session's deep-interview or ralplan model snapshot. Explicit arguments take priority and every write regenerates metadata.",
-      args: {
+      input: z.object({
         mode: modeArg,
-        workingDirectory: tool.schema.string().optional(),
-        session_id: tool.schema.never().optional(),
-        state: tool.schema
-          .record(tool.schema.string(), tool.schema.unknown())
-          .optional(),
+        workingDirectory: z.string().optional(),
+        session_id: z.never().optional(),
+        state: z.record(z.string(), z.unknown()).optional(),
         ...explicitShape,
-      },
+      }),
       async execute(args, context) {
         scope(store, context, args.workingDirectory, "state_write");
         const mode = resolveMode(args.mode);
         const paths = await pathResult(store, context.sessionID, mode);
-        await authorize(
-          context,
-          "state_write",
-          paths.statePath,
-          context.sessionID,
-        );
         const {
           mode: _mode,
           workingDirectory: _directory,
@@ -169,27 +140,23 @@ export function createTools(store: StateStore) {
         return JSON.stringify({ ...paths, state: written }, null, 2);
       },
     }),
-    state_clear: tool({
+    defineTool({
+      name: "state_clear",
+      permission: "state_clear",
       description:
         "Delete only the current session's deep-interview or ralplan state file. Session documents are preserved.",
-      args: {
+      input: z.object({
         mode: modeArg,
-        workingDirectory: tool.schema.string().optional(),
-        session_id: tool.schema.never().optional(),
-      },
+        workingDirectory: z.string().optional(),
+        session_id: z.never().optional(),
+      }),
       async execute(args, context) {
         scope(store, context, args.workingDirectory, "state_clear");
         const mode = resolveMode(args.mode);
         const paths = await pathResult(store, context.sessionID, mode);
-        await authorize(
-          context,
-          "state_clear",
-          paths.statePath,
-          context.sessionID,
-        );
         const result = await store.clear(context.sessionID, mode);
         return JSON.stringify({ ...paths, result }, null, 2);
       },
     }),
-  };
+  ];
 }

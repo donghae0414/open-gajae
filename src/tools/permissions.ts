@@ -1,103 +1,69 @@
 import { realpath } from "node:fs/promises";
-import path from "node:path";
-import type { ToolContext } from "@opencode-ai/plugin";
+import { basename, resolve } from "node:path";
+import { projectRelative } from "../artifact-guard.js";
 
-/** Native operation authorization, not a sandbox for language-server internal I/O. */
-export function assertCodeReader(context: ToolContext): void {
-  if (!["open-gajae", "open-gajae-explore"].includes(context.agent))
+/**
+ * The fields of the v2 tool context the code tools read. The host's
+ * `ToolContext` satisfies it structurally, and so does a test fake.
+ */
+export type CodeToolContext = {
+  readonly agent: string;
+  readonly signal: AbortSignal;
+};
+
+/**
+ * The host directories the code tools resolve against, fixed at setup:
+ * `locationDir` is `ctx.location.directory` (the base for relative input) and
+ * `projectDir` is `ctx.location.project.directory` (the containment root).
+ */
+export type CodeToolPaths = {
+  readonly locationDir: string;
+  readonly projectDir: string;
+};
+
+const CODE_ACTORS = new Set([
+  "open-gajae",
+  "open-gajae-explore",
+  "open-gajae-architect",
+  "open-gajae-critic",
+]);
+
+/** The actor check shared by every code tool; also honors cancellation. */
+export function assertCodeReader(context: CodeToolContext): void {
+  if (!CODE_ACTORS.has(context.agent))
     throw new Error(`Agent ${context.agent} cannot use open-gajae code tools`);
-  context.abort.throwIfAborted();
+  context.signal.throwIfAborted();
 }
 
-export class ReadPermissionError extends Error {
-  constructor(cause: unknown) {
-    super("Native read or external-directory permission was denied", { cause });
-    this.name = "ReadPermissionError";
-  }
+/** `.env` and `.env.*` files are never read by the code tools. */
+export function isEnvFile(path: string): boolean {
+  const name = basename(path);
+  return name === ".env" || name.startsWith(".env.");
 }
 
-function contains(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
-  return (
-    relative === "" ||
-    (relative !== ".." &&
-      !relative.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(relative))
-  );
-}
-
-async function external(
-  context: ToolContext,
-  target: string,
-  directory: boolean,
-): Promise<void> {
-  const roots = [
-    path.resolve(context.worktree),
-    path.resolve(context.directory),
-    ...(await Promise.all([
-      realpath(context.worktree),
-      realpath(context.directory),
-    ])),
-  ];
-  if (roots.some((root) => contains(root, target))) return;
-  const parentDir = directory ? target : path.dirname(target);
-  const pattern = path.join(parentDir, "*").replaceAll("\\", "/");
-  await context.ask({
-    permission: "external_directory",
-    patterns: [pattern],
-    always: [pattern],
-    metadata: { filepath: target, parentDir },
-  });
-}
-
-/** Check both the requested path and its real target before reading any contents. */
-export async function authorizePath(
-  context: ToolContext,
+/**
+ * The project boundary that replaces v1's `ctx.ask` path checks: resolve the
+ * input against `locationDir`, follow symlinks, and require the real target to
+ * stay inside the real project directory. `.env*` files are refused by both
+ * the requested and the real name. Returns the real path.
+ */
+export async function resolveProjectPath(
+  paths: CodeToolPaths,
   input: string,
-  options: { directory?: boolean; read?: boolean } = {},
 ): Promise<string> {
-  assertCodeReader(context);
-  const requested = path.resolve(context.directory, input);
-  // realpath is metadata resolution only. External permission precedes content I/O.
-  try {
-    await external(context, requested, options.directory ?? false);
-  } catch (error) {
-    throw new ReadPermissionError(error);
-  }
+  const requested = resolve(paths.locationDir, input);
+  if (isEnvFile(requested))
+    throw new Error(`${input} is an environment file; code tools do not read it`);
+  const root = await realpath(paths.projectDir);
   const canonical = await realpath(requested);
-  try {
-    if (canonical !== requested)
-      await external(context, canonical, options.directory ?? false);
-    if (options.read) {
-      const targets = [...new Set([requested, canonical])];
-      await context.ask({
-        permission: "read",
-        patterns: targets,
-        always: [],
-        metadata: {
-          filepath: canonical,
-          requested,
-          directory: options.directory ?? false,
-        },
-      });
-    }
-  } catch (error) {
-    throw new ReadPermissionError(error);
-  }
-  context.abort.throwIfAborted();
+  if (projectRelative(root, root, canonical) === undefined)
+    throw new Error(`${input} resolves outside the project directory`);
+  if (isEnvFile(canonical))
+    throw new Error(`${input} is an environment file; code tools do not read it`);
   return canonical;
 }
 
-export async function authorizeOperation(
-  context: ToolContext,
-  permission: "lsp" | "ast_grep_search",
-): Promise<void> {
-  assertCodeReader(context);
-  await context.ask({
-    permission,
-    patterns: ["*"],
-    always: ["*"],
-    metadata: { operation: permission },
-  });
-  context.abort.throwIfAborted();
+/** Turn any failure into the content string a tool returns (R14/R16). */
+export function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -9,8 +9,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { z } from "zod";
-import type { ToolContext } from "@opencode-ai/plugin";
 import {
   loadPrompts,
   loadSettings,
@@ -25,6 +23,7 @@ import {
 } from "../src/config";
 import { StateStore } from "../src/state";
 import { createTools } from "../src/tools";
+import type { ToolCallContext } from "../src/tools/define";
 
 /** Stores in these tests never need a real host lookup; the label is fixed. */
 function stateStore(root: string) {
@@ -45,25 +44,23 @@ async function fixture(run: (root: string, home: string) => Promise<void>) {
     await rm(dir, { recursive: true, force: true });
   }
 }
-function context(
-  root: string,
-  sessionID = "s",
-  agent = "open-gajae",
-  ask: ToolContext["ask"] = async () => {},
-): ToolContext {
-  return {
-    sessionID,
-    agent,
-    messageID: "m",
-    directory: root,
-    worktree: root,
-    abort: new AbortController().signal,
-    metadata() {},
-    ask,
-  };
+function context(sessionID = "s", agent = "open-gajae"): ToolCallContext {
+  return { sessionID, agent, signal: new AbortController().signal };
 }
-function json(value: unknown) {
-  if (typeof value !== "string") throw new Error("Expected JSON tool output");
+/** The v2 tools by name; `call` parses input as the host would. */
+function toolsOf(store: StateStore, root: string) {
+  const list = createTools(store, { locationDir: root, projectDir: root });
+  const call = async (
+    name: string,
+    args: Record<string, unknown>,
+    ctx = context(),
+  ) => {
+    const tool = list.find((candidate) => candidate.name === name)!;
+    return (await tool.execute(tool.input.parse(args) as never, ctx)).content;
+  };
+  return { list, call };
+}
+function json(value: string) {
   return JSON.parse(value);
 }
 test("user/project field precedence for every role", async () =>
@@ -259,129 +256,77 @@ test("planner writes only session plans and drafts and delegates only to the two
     ]);
 });
 
-test("state tools enforce actor and native permissions before writing", async () =>
+test("state tools enforce actors and return refusals as content before writing", async () =>
   fixture(async (root) => {
     const store = stateStore(root),
-      tools = createTools(store);
-    const asked: string[] = [];
-    const ctx = context(root, "s", "open-gajae", async (input) => {
-      asked.push(input.permission);
-    });
+      { call } = toolsOf(store, root);
     const first = json(
-      await tools.state_write.execute(
-        {
-          mode: "deep-interview",
-          state: {
-            task_description: "custom",
-            obsolete: true,
-            _runtime: { arbitrary: true },
-          },
-          task_description: "explicit",
+      await call("state_write", {
+        mode: "deep-interview",
+        state: {
+          task_description: "custom",
+          obsolete: true,
+          _runtime: { arbitrary: true },
         },
-        ctx,
-      ),
+        task_description: "explicit",
+      }),
     );
     expect(first.state.task_description).toBe("explicit");
     expect(first.state._runtime).toEqual({ arbitrary: true });
     expect(first.state._meta.sessionId).toBe("s");
-    expect(asked).toEqual(["state_write"]);
-    await tools.state_write.execute(
-      { mode: "deep-interview", state: { fresh: true } },
-      ctx,
-    );
+    await call("state_write", { mode: "deep-interview", state: { fresh: true } });
     expect((await store.read("s"))?.obsolete).toBeUndefined();
+    const before = await store.read("s");
     for (const agent of [
       "build",
       "open-gajae-explore",
       "open-gajae-document-specialist",
     ]) {
-      await expect(
-        tools.state_write.execute(
-          { mode: "deep-interview" },
-          context(root, "s", agent),
-        ),
-      ).rejects.toThrow();
-      await expect(
-        tools.state_clear.execute(
-          { mode: "deep-interview" },
-          context(root, "s", agent),
-        ),
-      ).rejects.toThrow();
+      for (const name of ["state_write", "state_clear"])
+        expect(
+          await call(name, { mode: "deep-interview" }, context("s", agent)),
+        ).toStartWith("Error: ");
     }
-    await expect(
-      tools.state_read.execute(
-        { mode: "deep-interview" },
-        context(root, "s", "build"),
-      ),
-    ).rejects.toThrow();
-    const before = await store.read("s");
-    for (const operation of [
-      tools.state_read,
-      tools.state_write,
-      tools.state_clear,
-    ])
-      await expect(
-        operation.execute(
-          { mode: "deep-interview" },
-          context(root, "s", "open-gajae", async () => {
-            throw new Error("denied");
-          }),
-        ),
-      ).rejects.toThrow("denied");
+    expect(
+      await call("state_read", { mode: "deep-interview" }, context("s", "build")),
+    ).toStartWith("Error: ");
+    // The read roles may read.
+    for (const agent of ["open-gajae-explore", "open-gajae-document-specialist"])
+      expect(
+        json(
+          await call("state_read", { mode: "deep-interview" }, context("s", agent)),
+        ).exists,
+      ).toBe(true);
     expect(await store.read("s")).toEqual(before);
   }));
-test("current native session is the only selector and denied absent reads make no directories", async () =>
+test("current native session is the only selector and refused calls make no directories", async () =>
   fixture(async (root) => {
     const store = stateStore(root),
-      tools = createTools(store);
-    for (const operation of [
-      tools.state_read,
-      tools.state_write,
-      tools.state_clear,
-    ])
+      { list, call } = toolsOf(store, root);
+    for (const name of ["state_read", "state_write", "state_clear"])
       expect(
-        z
-          .object(operation.args)
-          .safeParse({ mode: "deep-interview", session_id: "foreign" }).success,
+        list
+          .find((tool) => tool.name === name)!
+          .input.safeParse({ mode: "deep-interview", session_id: "foreign" })
+          .success,
       ).toBe(false);
-    await expect(
-      tools.state_read.execute({ mode: "deep-interview" }, context(root, "")),
-    ).rejects.toThrow();
-    await expect(
-      tools.state_write.execute(
-        { mode: "deep-interview", workingDirectory: "/" },
-        context(root),
-      ),
-    ).rejects.toThrow("worktree");
-    await expect(
-      tools.state_write.execute(
-        { mode: "deep-interview" },
-        { ...context(root), worktree: "/" },
-      ),
-    ).rejects.toThrow("worktree");
-    await expect(
-      tools.state_read.execute(
-        { mode: "deep-interview" },
-        context(root, "new", "open-gajae", async () => {
-          throw new Error("denied");
-        }),
-      ),
-    ).rejects.toThrow("denied");
+    expect(
+      await call("state_read", { mode: "deep-interview" }, context("")),
+    ).toContain("a native session is required");
+    expect(
+      await call("state_write", { mode: "deep-interview", workingDirectory: "/" }),
+    ).toContain("worktree");
     expect(await readdir(join(root, ".open-gajae"))).toEqual([]);
     expect(
-      json(
-        await tools.state_read.execute(
-          { mode: "deep-interview" },
-          context(root, "new"),
-        ),
-      ).exists,
+      json(await call("state_read", { mode: "deep-interview" }, context("new")))
+        .exists,
     ).toBe(false);
     expect(await readdir(join(root, ".open-gajae"))).toEqual([]);
   }));
 test("explicit document input does not transfer source state; clear preserves both sessions' documents", async () =>
   fixture(async (root) => {
     const store = stateStore(root),
-      tools = createTools(store);
+      { call } = toolsOf(store, root);
     await store.write("A", { active: true, progress: 4 });
     const a = await store.resolveSessionPaths("A"),
       b = await store.resolveSessionPaths("B");
@@ -394,39 +339,45 @@ test("explicit document input does not transfer source state; clear preserves bo
     // Filesystem fixture models native document I/O, not an actual host tool execution claim.
     const source = await readFile(input, "utf8");
     expect(
-      json(
-        await tools.state_read.execute(
-          { mode: "deep-interview" },
-          context(root, "B"),
-        ),
-      ).exists,
+      json(await call("state_read", { mode: "deep-interview" }, context("B")))
+        .exists,
     ).toBe(false);
-    await tools.state_write.execute(
+    await call(
+      "state_write",
       { mode: "deep-interview", state: { input_path: input, active: true } },
-      context(root, "B"),
+      context("B"),
     );
     await writeFile(output, source + "\nNew session result\n");
-    await tools.state_clear.execute(
-      { mode: "deep-interview" },
-      context(root, "B"),
-    );
+    await call("state_clear", { mode: "deep-interview" }, context("B"));
     expect(await store.read("B")).toBeUndefined();
     expect(await store.read("A")).toEqual(sourceState);
     expect(await readFile(input, "utf8")).toBe(source);
     expect(await readFile(output, "utf8")).toContain("New session result");
   }));
-test("read-only catalog is finite and no lifecycle/custom spec mutation surface remains", async () =>
+test("the catalog is eleven direct tools with visibility permissions and no mutation surface", async () =>
   fixture(async (root) => {
-    expect(Object.keys(createTools(stateStore(root))).sort()).toEqual([
+    const { list } = toolsOf(stateStore(root), root);
+    expect(list.map((tool) => tool.name).sort()).toEqual([
       "ast_grep_search",
+      "lsp_diagnostics",
       "lsp_document_symbols",
       "lsp_find_references",
+      "lsp_goto_definition",
+      "lsp_hover",
       "lsp_servers",
       "lsp_workspace_symbols",
       "state_clear",
       "state_read",
       "state_write",
     ]);
+    for (const tool of list) {
+      expect(tool.options.codemode).toBe(false);
+      expect(tool.options.permission).toBe(
+        tool.name.startsWith("lsp_") ? "lsp" : tool.name,
+      );
+      // Zod 4.6 carries Standard JSON Schema, which the host requires (P4).
+      expect("jsonSchema" in tool.input["~standard"]).toBe(true);
+    }
   }));
 // Original source literals are deliberate contract tests, not expected values derived from the port.
 test("OMC scoring and challenge rules retained without OMX runtime gates", async () => {
