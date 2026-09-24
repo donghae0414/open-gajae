@@ -6,6 +6,8 @@
 //   3. write outside the planner's pattern            → refused (permission), rewritten guidance
 //   4. subagent(open-gajae-explore)                   → runs
 //   5. subagent(open-gajae-critic)                    → refused
+//   6. write into another session's plans/, input sent as stringified JSON →
+//      refused (host input repair + artifact guard), rewritten guidance (P3)
 // and a critic child whose `write` is refused.
 // Run: `bun ./tests/planner-permission-probe.ts`.
 import { existsSync } from "node:fs";
@@ -40,6 +42,10 @@ await runProbe("open-gajae-planner-permission-probe", async (report, scratch) =>
             tool: "subagent",
             args: { agent: "open-gajae-critic", description: "critic probe", prompt: directive({ tag: "critic-nested", steps: [] }) },
           },
+          {
+            tool: "write",
+            rawArgs: JSON.stringify(JSON.stringify({ path: FOREIGN, content: "x" })),
+          },
         ],
       });
       const critic = directive({ tag: "critic", steps: [{ tool: "write", args: { path: "outside/critic.md", content: "x" } }] });
@@ -57,8 +63,8 @@ await runProbe("open-gajae-planner-permission-probe", async (report, scratch) =>
       );
 
       const results = host.provider.thread("planner").at(-1)?.toolResults ?? [];
-      report.check("planner request carried five tool results", results.length === 5, results);
-      const [own, foreign, outside, explore, criticCall] = results.map((r) => r ?? "");
+      report.check("planner request carried six tool results", results.length === 6, results);
+      const [own, foreign, outside, explore, criticCall, stringified] = results.map((r) => r ?? "");
       report.check("1. planner writes its own plans/", existsSync(join(host.project, ownPlan)) && !own.includes('"error"'), own);
       report.check(
         "2. another session's plans/ refused with guidance",
@@ -76,6 +82,11 @@ await runProbe("open-gajae-planner-permission-probe", async (report, scratch) =>
         "5. subagent(open-gajae-critic) refused for the planner",
         criticCall.includes('"error"') && host.provider.thread("critic-nested").length === 0,
         criticCall,
+      );
+      report.check(
+        "6. stringified-JSON write into another session's plans/ refused with guidance",
+        !existsSync(join(host.project, FOREIGN)) && stringified.includes("belongs to another session's plans/drafts") && stringified.includes("may only write under this session's plans/"),
+        stringified,
       );
 
       const criticRequest = host.provider.thread("critic")[0];

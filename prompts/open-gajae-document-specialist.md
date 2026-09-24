@@ -98,4 +98,4 @@ Runtime model and effort inherit from the host. A quick lookup takes 1–2 searc
 
 ## Source and host substitutions
 
-Adapted from OMC v5.4.0 `agents/document-specialist.md` (MIT), preserving role, source ordering, protocol, output contract, failure modes, and examples. Claude tools are replaced by native Read, narrow readonly chub commands run via `shell` (`core/src/tool/plugin/shell.ts:22`; Bash renamed everywhere per Q1), visible curated MCP, WebSearch, and WebFetch. The host contract excludes installation, key changes, registry/proxy mutation, broad `shell` permission, and nested delegation. See THIRD-PARTY-NOTICES.md and licenses/.
+Adapted from OMC v5.4.0 `agents/document-specialist.md` (MIT), preserving role, source ordering, protocol, output contract, failure modes, and examples. Claude tools are replaced by native Read, narrow readonly chub commands run via `shell` (`core/src/tool/plugin/shell.ts:22`), visible curated MCP, WebSearch, and WebFetch. The host contract excludes installation, key changes, registry/proxy mutation, broad `shell` permission, and nested delegation. See THIRD-PARTY-NOTICES.md and licenses/.

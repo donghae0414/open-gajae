@@ -69,6 +69,8 @@ export default Plugin.define({
         signal: controller.signal,
       }))
         await hooks.onEvent(event);
+      if (!controller.signal.aborted)
+        console.warn("[open-gajae] event loop ended: subscription closed");
     })().catch((error) => {
       if (!controller.signal.aborted)
         console.warn("[open-gajae] event loop ended:", error);
