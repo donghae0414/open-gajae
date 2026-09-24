@@ -19,7 +19,12 @@ import {
   type StateMode,
 } from "../src/state";
 
-type Synthetic = { sessionID: string; text: string; resume: boolean };
+type Synthetic = {
+  sessionID: string;
+  text: string;
+  description?: string;
+  resume: boolean;
+};
 
 const PACKAGE_ROOT = new URL("../", import.meta.url).pathname;
 
@@ -127,6 +132,8 @@ async function deliver(
   for (const call of written) {
     expect(call.sessionID).toBe(sessionID);
     expect(call.resume).toBe(false);
+    // The TUI hides a synthetic message without a description.
+    expect(call.description).toMatch(/^open-gajae: .+ notice added$/);
   }
   return { notices: written.map((call) => call.text), event };
 }
@@ -656,6 +663,9 @@ test("a succeeded execution writes one resumed continuation and advances the bre
       "[RALPLAN - CONSENSUS PLANNING | REINFORCEMENT 1/30]",
     );
     expect(synthetics[0].text.startsWith("<ralplan-continuation>")).toBe(true);
+    expect(synthetics[0].description).toBe(
+      "open-gajae: ralplan continuation 1/30",
+    );
 
     const state = await store.read(id, RALPLAN_MODE);
     expect(state?.breaker_count).toBe(1);
@@ -1243,5 +1253,20 @@ test("the guard leaves the ralplan skill confirmation path intact", async () => 
     expect((await store.read(id, RALPLAN_MODE))?.awaiting_confirmation).toBe(
       false,
     );
+  });
+});
+
+test("each notice carries a one-line TUI description naming its skill", async () => {
+  await fixture(async (context) => {
+    const ralplan = nextSession("desc-ralplan");
+    await deliver(context, ralplan, "ralplan 계획 세워줘");
+    const deep = nextSession("desc-deep");
+    await deliver(context, deep, "@deep-interview todo 앱", {
+      skills: ["deep-interview"],
+    });
+    expect(context.synthetics.map((call) => call.description)).toEqual([
+      "open-gajae: ralplan keyword notice added",
+      "open-gajae: deep-interview keyword notice added",
+    ]);
   });
 });

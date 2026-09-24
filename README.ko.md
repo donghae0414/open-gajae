@@ -150,6 +150,7 @@ OMC 계약, 또는 이번에 대체되는 v1 구현으로부터 host 요구에 �
 | deep-interview → ralplan bridge가 input field 대신 skill을 이름으로 지칭 | OMC 스타일 문장("`ralplan` skill을 … context로 호출")을 씁니다. v2 `skill` 도구의 input은 `{ id }`뿐이라, 첫 추측이 틀리면 host input error로 한 번 재시도가 발생할 수 있습니다. |
 | 안내는 실패했을 때만 prompt 텍스트에 덧붙임 | 안내는 state 우선으로 쓴 뒤 `synthetic` 메시지로 보냅니다. `synthetic` 자체가 거부되면 (marker로 감싼) 안내를 prompt 텍스트에 덧붙여 사라지지 않게 합니다. |
 | 안내가 user 메시지 앞에 옴 | host는 `synthetic` 안내를 같은 턴의 user 메시지 앞에 배치합니다. OMC/v1은 뒤에 덧붙였습니다. 설계 선택이 아니라 host 배치 사실입니다. |
+| 삽입 메시지의 TUI 표시 | TUI는 `description`이 없는 `synthetic` 메시지를 표시하지 않습니다. 플러그인이 넣는 모든 안내와 continuation에 한 줄 설명(예: `open-gajae: ralplan keyword notice added`, `open-gajae: ralplan continuation 1/30`)을 붙여 사용자가 삽입 사실을 볼 수 있게 합니다. 본문은 OMC처럼 모델에게만 전달됩니다. |
 | 빌드 없는 TS 소스 패키징 | 루트 `index.ts`와 `package.json`의 `exports["."]`가 `./src/index.ts`를 가리킵니다. `dist/`와 build script는 사라졌습니다. |
 | `model` 없는 `variant`는 설정 오류 | user+project 병합 뒤 agent 이름을 담은 오류로 거부됩니다 — variant를 진단만 남기고 조용히 버리는 v2 host보다 엄격합니다. |
 | continuation이 durable execution 이벤트에서 동작 | `session.execution.succeeded`가 v2에서 발행하지 않는 `session.idle`을 대체합니다. |

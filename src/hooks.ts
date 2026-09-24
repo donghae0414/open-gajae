@@ -7,7 +7,10 @@
 // Notices are `session.synthetic({ resume: false })` messages. The host places
 // them before the user message of the same turn, while OMC and v1 appended after
 // it (Phase 0 P7); this is a recorded deviation. If `synthetic` rejects, the
-// marker-wrapped notice is appended to the prompt text instead (Q3).
+// marker-wrapped notice is appended to the prompt text instead (Q3). Every
+// synthetic message (notice or continuation) carries a one-line `description`:
+// the TUI hides a synthetic message without one (`tui/src/routes/session/
+// rows.ts:314`), and the user must see that the plugin inserted it.
 //
 // Continuation runs on `session.execution.succeeded`, OMC's Stop-hook point. A
 // user interrupt is its own `interrupted` event in v2, so v1's abort window and
@@ -40,6 +43,7 @@ import {
   INJECTION_MARKERS,
   keywordMessage,
   RALPLAN_SKILL_NAME,
+  RALPLAN_STOP_BLOCKER_MAX,
   restoreMessage,
   sanitizeForKeywordDetection,
   seedState,
@@ -60,9 +64,14 @@ export type HostSession = {
   synthetic(input: {
     sessionID: string;
     text: string;
+    /** One visible TUI line; the TUI hides a synthetic message without one. */
+    description?: string;
     resume: boolean;
   }): Promise<unknown>;
 };
+
+/** A synthetic notice and the one line the TUI shows for it. */
+type Notice = { text: string; description: string };
 
 /** The fields of the host's `prompt` hook event these hooks read or write. */
 export type PromptEvent = {
@@ -224,9 +233,13 @@ export function createHooks(
   }
 
   /** Start a run with `text` as a synthetic message. Never throws. */
-  async function inject(sessionID: string, text: string): Promise<void> {
+  async function inject(
+    sessionID: string,
+    text: string,
+    description: string,
+  ): Promise<void> {
     try {
-      await session.synthetic({ sessionID, text, resume: true });
+      await session.synthetic({ sessionID, text, description, resume: true });
     } catch (error) {
       // No retry: the breaker count stays incremented, so the next run retries.
       log("continuation synthetic failed", error);
@@ -277,7 +290,11 @@ export function createHooks(
           },
           RALPLAN_MODE,
         );
-        await inject(sessionID, breakerMessage());
+        await inject(
+          sessionID,
+          breakerMessage(),
+          "open-gajae: ralplan continuation stopped (breaker limit reached)",
+        );
         return;
       }
 
@@ -289,7 +306,11 @@ export function createHooks(
         },
         RALPLAN_MODE,
       );
-      await inject(sessionID, continuationMessage(decision.count));
+      await inject(
+        sessionID,
+        continuationMessage(decision.count),
+        `open-gajae: ralplan continuation ${decision.count}/${RALPLAN_STOP_BLOCKER_MAX}`,
+      );
     } finally {
       inFlight.delete(sessionID);
     }
@@ -407,12 +428,13 @@ export function createHooks(
    * rejection the notice is appended to the prompt text instead (Q3): it is
    * marker-wrapped, so G2 ignores it if it ever re-enters this hook.
    */
-  async function emitNotices(event: PromptEvent, notices: string[]) {
-    for (const text of notices) {
+  async function emitNotices(event: PromptEvent, notices: Notice[]) {
+    for (const { text, description } of notices) {
       try {
         await session.synthetic({
           sessionID: event.sessionID,
           text,
+          description,
           resume: false,
         });
       } catch (error) {
@@ -461,7 +483,7 @@ export function createHooks(
       const keyword = detectRalplanKeyword(text) !== null;
       const detected = ralplanMention || keyword ? ["ralplan"] : [];
       let state = await readState(sessionID);
-      const notices: string[] = [];
+      const notices: Notice[] = [];
 
       // Stale-seed cleanup, the sole replacement for the deleted TTL. A keyword
       // the model never acted on cannot leave a permanently active-but-silent
@@ -493,7 +515,10 @@ export function createHooks(
             { restored_at: new Date().toISOString() },
             RALPLAN_MODE,
           );
-          notices.push(restoreMessage(state));
+          notices.push({
+            text: restoreMessage(state),
+            description: "open-gajae: ralplan restore notice added",
+          });
         }
       }
 
@@ -512,7 +537,10 @@ export function createHooks(
         const patch = seedState(state, new Date().toISOString());
         if (patch) await store.patch(sessionID, patch, RALPLAN_MODE);
         else log("ralplan state already active; skipped re-seed");
-        notices.push(keywordMessage());
+        notices.push({
+          text: keywordMessage(),
+          description: "open-gajae: ralplan keyword notice added",
+        });
       }
 
       // Deep-interview. OMC injects its magic-keyword guide and seeds nothing
@@ -523,17 +551,22 @@ export function createHooks(
         (deepInterviewMention || detectDeepInterviewKeyword(text) !== null) &&
         !text.includes(DEEP_INTERVIEW_MAGIC_MARKER)
       )
-        notices.push(
-          deepInterviewMessage({
+        notices.push({
+          text: deepInterviewMessage({
             skillPath: deepInterviewSkillPath,
             originalPrompt: text,
           }),
-        );
+          description: "open-gajae: deep-interview keyword notice added",
+        });
 
       // Gate. Dormant while EXECUTION_GATE_KEYWORDS is empty; the call site
       // stays so enabling it is a one-line change.
       const gate = applyRalplanGate(detected, cleaned);
-      if (gate.gateApplied) notices.push(gateMessage(gate.gatedKeywords));
+      if (gate.gateApplied)
+        notices.push({
+          text: gateMessage(gate.gatedKeywords),
+          description: "open-gajae: ralplan execution-gate notice added",
+        });
 
       // State first, then the notices (Q3, OMC/v1 order).
       await emitNotices(event, notices);
