@@ -131,7 +131,7 @@ continuation은 ralplan state가 active인 동안 durable `session.execution.suc
 - `ast_grep_search` (`@ast-grep/napi` 0.31.1): AST 검색만 하며 replace는 없습니다.
 - `lsp_goto_definition`, `lsp_hover`, `lsp_diagnostics`, `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`.
 
-LSP server는 감지·보고만 하며 자동 다운로드하지 않습니다. LSP rename, code action, replacement suite는 없습니다. 사용 가능한 actor는 `open-gajae`, `open-gajae-explore`, `open-gajae-architect`, `open-gajae-critic`입니다(document specialist와 planner는 제외). project 경계는 v1의 call마다 host permission을 묻던 방식을 대체합니다: input 경로를 host의 현재 location 디렉터리 기준으로 해석하고, symlink를 따라가며, 실제 대상이 실제 project 디렉터리 안에 있어야 합니다. `.env`와 `.env.*` 파일은 요청한 이름과 해석된 이름 양쪽에서 거부되며, `ast_grep_search`는 traversal 중에도 건너뜁니다. 두 도구 모두 explorer 권한을 넓히거나 arbitrary shell 실행을 허용하지 않습니다.
+LSP server는 감지·보고만 하며 자동 다운로드하지 않습니다. LSP rename, code action, replacement suite는 없습니다. 사용 가능한 actor는 여섯 개 자체 역할 전체입니다 — `open-gajae`, `open-gajae-explore`, `open-gajae-document-specialist`, `open-gajae-planner`, `open-gajae-architect`, `open-gajae-critic` — OMC와 동일하게 모든 agent가 읽기 전용 LSP/AST 도구를 사용할 수 있습니다. project 경계는 v1의 call마다 host permission을 묻던 방식을 대체합니다: input 경로를 host의 현재 location 디렉터리 기준으로 해석하고, symlink를 따라가며, 실제 대상이 실제 project 디렉터리 안에 있어야 합니다. `.env`와 `.env.*` 파일은 요청한 이름과 해석된 이름 양쪽에서 거부되며, `ast_grep_search`는 traversal 중에도 건너뜁니다. 두 도구 모두 explorer 권한을 넓히거나 arbitrary shell 실행을 허용하지 않습니다.
 
 source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT_MS`, `OPEN_GAJAE_LSP_IDLE_TIMEOUT_MS`, `OPEN_GAJAE_LSP_IDLE_CHECK_INTERVAL_MS`, `OPEN_GAJAE_LSP_CONTAINER_ID`, `OPEN_GAJAE_PYTHON_LSP=basedpyright`뿐입니다. 일반 설정이 아니라 LSP 구현 설정입니다.
 

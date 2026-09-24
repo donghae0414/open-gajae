@@ -17,6 +17,9 @@ const readActors = new Set([
   "open-gajae",
   "open-gajae-explore",
   "open-gajae-document-specialist",
+  "open-gajae-planner",
+  "open-gajae-architect",
+  "open-gajae-critic",
 ]);
 
 function scope(

@@ -26,6 +26,8 @@ const CODE_ACTORS = new Set([
   "open-gajae-explore",
   "open-gajae-architect",
   "open-gajae-critic",
+  "open-gajae-planner",
+  "open-gajae-document-specialist",
 ]);
 
 /** The actor check shared by every code tool; also honors cancellation. */

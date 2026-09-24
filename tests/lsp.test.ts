@@ -133,13 +133,11 @@ test("actor and project-boundary refusals are content and precede backend calls"
         "lsp_diagnostics",
         "lsp_servers",
       ]);
-      for (const agent of ["open-gajae-planner", "open-gajae-document-specialist", "build"]) {
-        const refused = context(agent);
-        expect(await call("lsp_document_symbols", { file }, refused)).toContain(
-          "cannot use open-gajae code tools",
-        );
-        expect(await call("lsp_servers", {}, refused)).toContain("cannot use");
-      }
+      const refused = context("build");
+      expect(await call("lsp_document_symbols", { file }, refused)).toContain(
+        "cannot use open-gajae code tools",
+      );
+      expect(await call("lsp_servers", {}, refused)).toContain("cannot use");
       await writeFile(join(root, ".env"), "SECRET=1");
       for (const outside of ["/etc/hosts", "../x.ts", ".env"]) {
         const output = await call("lsp_hover", {
@@ -150,9 +148,14 @@ test("actor and project-boundary refusals are content and precede backend calls"
         expect(output).toStartWith("Error: ");
       }
       expect(lease).not.toHaveBeenCalled();
-      expect(await call("lsp_servers", {}, context("open-gajae-critic"))).toContain(
-        "Language Server Status",
-      );
+      for (const agent of [
+        "open-gajae-critic",
+        "open-gajae-planner",
+        "open-gajae-document-specialist",
+      ])
+        expect(await call("lsp_servers", {}, context(agent))).toContain(
+          "Language Server Status",
+        );
     } finally {
       lease.mockRestore();
     }

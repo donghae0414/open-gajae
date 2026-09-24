@@ -81,7 +81,7 @@ describe("OMC read-only AST search inside the project boundary", () => {
         "parent.ts",
       );
     }));
-  test("architect and critic may search; planner, document-specialist and others get refusal content", async () =>
+  test("all six owned roles may search; a non-owned agent gets refusal content", async () =>
     fixture(async (root) => {
       await writeFile(join(root, "input.ts"), "console.log(1);");
       for (const agent of [
@@ -89,18 +89,15 @@ describe("OMC read-only AST search inside the project boundary", () => {
         "open-gajae-explore",
         "open-gajae-architect",
         "open-gajae-critic",
+        "open-gajae-planner",
+        "open-gajae-document-specialist",
       ])
         expect(await search(at(root), TS, context(agent))).toContain(
           "Found 1 match",
         );
-      for (const agent of [
-        "open-gajae-planner",
-        "open-gajae-document-specialist",
-        "build",
-      ])
-        expect(await search(at(root), TS, context(agent))).toContain(
-          "cannot use open-gajae code tools",
-        );
+      expect(await search(at(root), TS, context("build"))).toContain(
+        "cannot use open-gajae code tools",
+      );
     }));
   test("an outside path, an escaping symlink, .env and .env.local are refused as content", async () =>
     fixture(async (root, outside) => {

@@ -281,6 +281,9 @@ test("state tools enforce actors and return refusals as content before writing",
       "build",
       "open-gajae-explore",
       "open-gajae-document-specialist",
+      "open-gajae-planner",
+      "open-gajae-architect",
+      "open-gajae-critic",
     ]) {
       for (const name of ["state_write", "state_clear"])
         expect(
@@ -290,8 +293,14 @@ test("state tools enforce actors and return refusals as content before writing",
     expect(
       await call("state_read", { mode: "deep-interview" }, context("s", "build")),
     ).toStartWith("Error: ");
-    // The read roles may read.
-    for (const agent of ["open-gajae-explore", "open-gajae-document-specialist"])
+    // All six owned roles may read.
+    for (const agent of [
+      "open-gajae-explore",
+      "open-gajae-document-specialist",
+      "open-gajae-planner",
+      "open-gajae-architect",
+      "open-gajae-critic",
+    ])
       expect(
         json(
           await call("state_read", { mode: "deep-interview" }, context("s", agent)),
