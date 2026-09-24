@@ -15,6 +15,7 @@ import {
   INJECTION_MARKERS,
   isUnderspecifiedForExecution,
   keywordMessage,
+  mentionMessage,
   normalizeRalplanPhase,
   RALPLAN_KEYWORD,
   RALPLAN_STOP_BLOCKER_MAX,
@@ -188,6 +189,7 @@ const BUILDERS: Record<string, () => string> = {
   continuationMessage: () => continuationMessage(1),
   breakerMessage: () => breakerMessage(),
   keywordMessage: () => keywordMessage(),
+  mentionMessage: () => mentionMessage(),
   restoreMessage: () => restoreMessage({ active: true, started_at: iso(0) }),
   gateMessage: () => gateMessage(["ralph"]),
   deepInterviewMessage: () =>
@@ -211,6 +213,7 @@ test("every exported message builder emits a marked block", () => {
   }
   expect(breakerMessage()).toContain("[RALPLAN CIRCUIT BREAKER]");
   expect(keywordMessage()).toContain("[MODE: RALPLAN]");
+  expect(mentionMessage()).toContain("[MODE: RALPLAN]");
   expect(restoreMessage({ active: true })).toContain("[RALPLAN MODE RESTORED]");
   expect(gateMessage(["ralph", "team"])).toContain("Redirecting ralph, team");
   expect(BUILDERS.deepInterviewMessage!()).toContain(

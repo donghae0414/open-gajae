@@ -274,13 +274,16 @@ test("a rejected synthetic appends the marked notice to the prompt and keeps the
   );
 });
 
-test("a @ralplan mention seeds confirmed state without a notice", async () => {
+test("a @ralplan mention seeds confirmed state and writes one mention notice", async () => {
   await fixture(async (context) => {
     const { store } = context;
     const id = nextSession("mention");
-    expect(
-      await notices(context, id, "tidy the hooks", { skills: ["ralplan"] }),
-    ).toHaveLength(0);
+    const written = await notices(context, id, "tidy the hooks", {
+      skills: ["ralplan"],
+    });
+    expect(written).toHaveLength(1);
+    expect(written[0]).toContain("through the `@ralplan` mention");
+    expect(written[0]).toContain("already attached");
     const state = await store.read(id, RALPLAN_MODE);
     expect(state?.active).toBe(true);
     expect(state?.awaiting_confirmation).toBe(false);
@@ -298,7 +301,9 @@ test("a @ralplan mention seeds confirmed state without a notice", async () => {
     const confirmed = nextSession("mention-confirmed");
     await seed(store, confirmed, { active: true, awaiting_confirmation: false });
     const kept = await raw(store, confirmed);
-    await notices(context, confirmed, "go on", { skills: ["ralplan"] });
+    expect(
+      await notices(context, confirmed, "go on", { skills: ["ralplan"] }),
+    ).toHaveLength(1);
     expect(await raw(store, confirmed)).toBe(kept);
   });
 });
@@ -313,7 +318,7 @@ test("a stale awaiting seed followed by a @ralplan mention is confirmed, not cle
 
     expect(
       await notices(context, id, "this one", { skills: ["ralplan"] }),
-    ).toHaveLength(0);
+    ).toHaveLength(1);
     const after = await store.read(id, RALPLAN_MODE);
     expect(strip(after)).toEqual({ ...strip(before), awaiting_confirmation: false });
   });
@@ -1264,9 +1269,14 @@ test("each notice carries a one-line TUI description naming its skill", async ()
     await deliver(context, deep, "@deep-interview todo 앱", {
       skills: ["deep-interview"],
     });
+    const mentioned = nextSession("desc-mention");
+    await deliver(context, mentioned, "plan the cache", {
+      skills: ["ralplan"],
+    });
     expect(context.synthetics.map((call) => call.description)).toEqual([
       "open-gajae: ralplan keyword notice added",
       "open-gajae: deep-interview keyword notice added",
+      "open-gajae: ralplan mention notice added",
     ]);
   });
 });

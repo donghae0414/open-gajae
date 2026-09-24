@@ -253,6 +253,16 @@ export function keywordMessage(): string {
   );
 }
 
+// Host addition for the `@ralplan` mention. OMC also notices an explicit
+// invocation (keyword-detector/index.ts:814-830); here the skill body is
+// already attached, so the notice says so instead of asking for a skill load.
+export function mentionMessage(): string {
+  return wrapInjected(
+    "<ralplan-notice>",
+    "[MODE: RALPLAN] Consensus planning requested through the `@ralplan` mention. The `ralplan` skill is already attached to this message; run its Planner/Architect/Critic workflow for this request.",
+  );
+}
+
 // OMC bridge.ts:2074-2086, with the session_id comparison dropped: session
 // isolation is structural here, since each session owns its state directory.
 export function restoreMessage(state: RalplanStateSnapshot): string {

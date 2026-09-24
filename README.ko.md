@@ -75,7 +75,7 @@ ambiguity 임계값에 도달해 spec을 저장한 뒤에는 인터뷰를 마칠
 
 `@ralplan [--interactive] [--deliberate] <task>` mention, 또는 `ralplan`/`랄플랜` 키워드가 합의 계획을 시작합니다. OMC와 같이 키워드는 호출 문맥에서만 발화합니다: 직접 호출 접두(`$ralplan`, `!ralplan`, `force: ralplan`), 활성화 동사(`use`, `run`, `start`, `please`, `let's`), 또는 메시지 맨 앞의 키워드. 질문, 인용·참조 언급, 코드·표·인용 블록 안의 텍스트는 발화하지 않습니다. 키워드는 모든 primary agent에서 동작하지만, agent가 `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic`인 메시지는 키워드 hook이 무시합니다. 한 메시지에 ralplan과 deep-interview 키워드가 함께 있으면 두 안내가 ralplan부터 순서대로 주입되고 ralplan state만 시딩됩니다.
 
-키워드 턴은 `awaiting_confirmation: true`로 시딩하고 `[MODE: RALPLAN]` 안내를 주입해 모델에게 `ralplan` skill을 열도록 요청합니다. `@ralplan` mention은 이미 확정된 상태(`awaiting_confirmation: false`, 안내 없음)로 시딩합니다 — host가 그 턴에 이미 skill을 붙였기 때문입니다. host의 `id: "ralplan"` `skill` 도구 호출도 `awaiting_confirmation`을 지우며, OMC가 skill load를 관찰해 지우는 것과 같습니다. 확정되지 않은 seed가 남아 있으면 ralplan 키워드나 mention이 없는 다음 사용자 메시지가 지웁니다.
+키워드 턴은 `awaiting_confirmation: true`로 시딩하고 `[MODE: RALPLAN]` 안내를 주입해 모델에게 `ralplan` skill을 열도록 요청합니다. `@ralplan` mention은 이미 확정된 상태(`awaiting_confirmation: false`)로 시딩합니다 — host가 그 턴에 이미 skill을 붙였기 때문입니다. 그리고 skill이 이미 붙었다는 자체 `[MODE: RALPLAN]` 안내를 넣어 삽입 사실이 보이게 합니다(TUI에 `open-gajae: ralplan mention notice added`가 표시됨). host의 `id: "ralplan"` `skill` 도구 호출도 `awaiting_confirmation`을 지우며, OMC가 skill load를 관찰해 지우는 것과 같습니다. 확정되지 않은 seed가 남아 있으면 ralplan 키워드나 mention이 없는 다음 사용자 메시지가 지웁니다.
 
 안내(ralplan 안내, deep-interview magic guide, restore banner, breaker 메시지)는 그 안내를 시딩·갱신한 state 쓰기 뒤에 `ctx.session.synthetic({ resume: false })` 메시지로 기록됩니다. host는 synthetic 메시지를 같은 턴의 user 메시지 **앞**에 배치합니다. OMC/v1은 뒤에 덧붙였으므로 이는 기록된 host 배치 차이이며, 설계 선택이 아닙니다. `synthetic` 자체가 실패하면 안내가 사라지지 않도록 marker로 감싼 채 prompt 텍스트에 덧붙입니다. state 쓰기는 어느 쪽이든 유지됩니다.
 
@@ -161,6 +161,7 @@ OMC 계약, 또는 이번에 대체되는 v1 구현으로부터 host 요구에 �
 | code-tool 경계가 host ask 대신 realpath containment | host의 현재 location 기준으로 해석하고, symlink를 따라가며, 실제 project 디렉터리 안에 있어야 하고, `.env`/`.env.*`를 제외합니다 — v1의 call마다 permission을 묻던 방식을 대체합니다. |
 | LSP surface가 도구 4개에서 7개로 확장 | `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`에 `lsp_goto_definition`, `lsp_hover`, `lsp_diagnostics`가 추가되었습니다. |
 | `@deep-interview` mention도 magic notice를 받음 | OMC parity입니다. v1은 명시적 호출에서 안내를 억제했습니다. |
+| `@ralplan` mention도 안내를 받음 | mention 안내는 skill이 이미 붙었음을 알립니다. OMC도 명시적 호출에 안내를 붙이며, 문구는 host 추가분입니다. 사용자가 모든 삽입을 볼 수 있도록 추가했습니다. |
 | 설치 문서가 디렉터리 plugin 형태만 보여줌 | 일부 host 문서는 파일 경로 `plugins` 예시를 보여주지만, v2 host는 실제로는 파일 경로로 설정된 plugin 항목을 건너뜁니다. |
 
 ## 검증 근거와 한계

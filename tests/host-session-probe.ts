@@ -105,8 +105,11 @@ async function ralplanMention(report: Report, host: Host) {
     (first?.messages ?? []).some((m) => m.text.includes('<skill_content name="ralplan"')),
   );
   report.check(
-    "@ralplan mention: seed is confirmed (active, not awaiting) with no keyword notice",
-    seeded?.active === true && seeded?.awaiting_confirmation === false && occurrences(first, RALPLAN_NOTICE) === 0,
+    "@ralplan mention: seed is confirmed (active, not awaiting) with exactly one mention notice",
+    seeded?.active === true &&
+      seeded?.awaiting_confirmation === false &&
+      occurrences(first, RALPLAN_NOTICE) === 1 &&
+      (first?.messages ?? []).some((m) => m.text.includes("through the `@ralplan` mention")),
     { seeded, notices: occurrences(first, RALPLAN_NOTICE) },
   );
   report.check("@ralplan mention: continuation runs without a skill call", continuations(host, "mention").length >= 1);

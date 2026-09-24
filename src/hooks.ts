@@ -42,6 +42,7 @@ import {
   gateMessage,
   INJECTION_MARKERS,
   keywordMessage,
+  mentionMessage,
   RALPLAN_SKILL_NAME,
   RALPLAN_STOP_BLOCKER_MAX,
   restoreMessage,
@@ -523,8 +524,8 @@ export function createHooks(
       }
 
       // Ralplan seed. The mention already attached the skill, so it seeds
-      // confirmed and carries no notice; the keyword seeds awaiting the
-      // `skill` call and carries the notice.
+      // confirmed; the keyword seeds awaiting the `skill` call. Both carry a
+      // notice so the user sees the insertion (user decision, 2026-09-24).
       if (ralplanMention) {
         if (state?.active !== true) {
           const patch = seedState(state, new Date().toISOString(), {
@@ -533,6 +534,10 @@ export function createHooks(
           if (patch) await store.patch(sessionID, patch, RALPLAN_MODE);
         } else if (state.awaiting_confirmation === true)
           await confirmRalplan(sessionID);
+        notices.push({
+          text: mentionMessage(),
+          description: "open-gajae: ralplan mention notice added",
+        });
       } else if (keyword && !text.includes(KEYWORD_NOTICE_MARKER)) {
         const patch = seedState(state, new Date().toISOString());
         if (patch) await store.patch(sessionID, patch, RALPLAN_MODE);
