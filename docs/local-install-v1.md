@@ -60,7 +60,9 @@ OpenCode v2로 넘어가면서 로컬 OpenCode 설정에서 뺀 open-gajae 항�
 | `agents.<이름>` | 없음 | 역할별 `model`/`variant`. 로컬에서는 primary·explore에 `openai/gpt-5.6-luna`, planner·architect·critic에 `openai/gpt-5.6-terra`를 씁니다. |
 | `companyContext` | `{ "onError": "warn" }` | 회사 맥락 MCP. `tool`을 생략하면 호출하지 않습니다. |
 
-로컬 파일에 있는 `open-gajae-executor`, `open-gajae-qa-tester` 항목은 ultragoal WIP용입니다. `main`은 아래 6개 에이전트 이름만 읽으므로 무시됩니다.
+로컬 파일에 있는 `open-gajae-executor`, `open-gajae-qa-tester` 항목은 ultragoal WIP용입니다.
+
+> **역사적 정정 (2026-09-24, v2 이식 Step 9에서 추가):** 위 문장은 틀렸습니다. `open-gajae-executor`/`open-gajae-qa-tester`처럼 6개 에이전트 이름에 없는 key가 `agents`에 있으면 `main`은 이를 조용히 무시하지 않고 `unknown setting` 오류로 설정 로드 자체를 거부합니다(엄격한 key 검증, `src/config.ts`의 `keys()`). 이 기록 시점(2026-09-23)에 로컬 설정 파일에서 해당 항목을 이미 정리해 두었기 때문에 실제로는 오류가 발생하지 않았을 뿐입니다. v2의 같은 검증 규칙은 [README.ko.md](../README.ko.md)의 "자체 역할과 설정"을 참고하세요.
 
 ## 3. 플러그인이 로드되면 호스트에 등록하는 것
 

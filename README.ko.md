@@ -7,53 +7,53 @@
 ## 범위와 상태
 
 - 기준은 OMC v5.4.0 커밋 `5281b19e0d64f8e6dc6767f2130299a88af2dc71`입니다. OMX는 현재 동작의 원천이 아닙니다.
-- 대상 호스트는 OpenCode v2이고, 로컬 `opencode/` 참조는 `v2.0.15`(`6f3639d82e`)에 고정되어 있습니다. 현재 구현은 아직 v1 플러그인이며 v2로 이식되지 않았습니다. v2 호스트는 이 플러그인을 로드하지 않습니다.
-- 구현 범위는 `deep-interview`와 `ralplan`, `open-gajae`/`open-gajae-explore`/`open-gajae-document-specialist`, `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic` 합의 역할, 세션 상태, native 문서 출력, 읽기 전용 AST/LSP, 선택적 advisory company context입니다.
-- `ralplan`은 제공하며 `pending approval` 상태의 plan에서 끝납니다. ultragoal, autopilot, team, ralph, autoresearch, 계획 실행 핸드오프(deep-interview → ralplan 계획 bridge는 제공), 공유 세션 상태, 자동 migration/recovery는 제공하지 않습니다.
-- 이 문서는 구현 계약을 설명하며 Phase-1 완료를 입증하지 않습니다.
+- 대상 호스트는 OpenCode v2입니다. 이번 이식은 `@opencode/plugin` 2.0.15를 대상으로 하며, 로컬 `opencode/` 참조는 `v2.0.15`(`6f3639d82e`)에 고정되어 있습니다. v1 호스트는 더 이상 이 플러그인을 로드할 수 없습니다(v1 지원 중단 — deviations 표 참고).
+- 패키지는 빌드 단계가 없는 TS 소스입니다. `package.json`의 `exports["."]`는 `./src/index.ts`를 가리키고, 루트 `index.ts`가 이를 re-export합니다. `dist/`는 없습니다.
+- 구현 범위는 `deep-interview`와 `ralplan`, `open-gajae`/`open-gajae-explore`/`open-gajae-document-specialist`, `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic` 합의 역할, 세션 상태, native 문서 출력, 그리고 바로 호출 가능한 도구 11개(상태 도구 3개 + 읽기 전용 AST/LSP 도구 8개)입니다. company context(v1의 advisory MCP hook)는 완전히 제거되었습니다.
+- `ralplan`은 제공하며 `pending approval` 상태의 plan에서 끝납니다. ultragoal, autopilot, team, ralph, autoresearch, 계획 실행 핸드오프(deep-interview → ralplan 계획 bridge는 제공), 공유 세션 상태, 자동 migration/recovery는 제공하지 않습니다. 슬래시 커맨드는 없으며 진입은 skill mention 또는 키워드입니다(아래 "진입" 참고).
+- 이 문서는 `feat/opencode-v2-port` 브랜치 커밋 `f4df6e6` 기준으로 구현된 v2 계약을 설명합니다. Phase 1 완료를 입증하지 않으며, 아래 검증 계층(typecheck, unit test, host probe)이 현재 통과하는지도 이 문서 자체가 주장하지 않습니다. 그 상태는 plan과 ledger에서 관리합니다.
 
-개발 정책은 [AGENTS.md](AGENTS.md), 결정과 근거는 [이식 가이드](docs/analysis/opencode-porting-guide.md), 출처는 [third-party notices](THIRD-PARTY-NOTICES.md)를 확인하세요.
+개발 정책은 [AGENTS.md](AGENTS.md), 배경 분석은 [이식 가이드](docs/analysis/opencode-porting-guide.md)(역사적 자료이며 권위는 AGENTS.md를 따름), 출처는 [third-party notices](THIRD-PARTY-NOTICES.md)를 확인하세요.
 
-## 빌드와 로컬 등록
-
-패키지는 현재 v1 플러그인 API인 `@opencode-ai/plugin` 1.18.30을 사용하므로, 아래 절차는 OpenCode v1 호스트에만 해당합니다. 부모가 수행한 host probe는 OpenCode 1.18.31을 사용했지만, 이는 일반 호환성 보장이 아닙니다. v2 호스트 설치 방법은 v2 이식 뒤에 정하며, 이전 설정은 [v1 로컬 설치 기록](docs/local-install-v1.md)을 참고하세요.
+## 설치 (OpenCode v2)
 
 ```sh
 bun install
 bun run typecheck
-bun run test
-bun run build
-bun run test:host
-bun tests/host-session-probe.ts
-bun tests/package-probe.ts
-bun tests/company-context-probe.ts
+bun test
 ```
 
-`dist/`, `skills/`, `prompts/`, `licenses/`, `THIRD-PARTY-NOTICES.md`를 함께 유지하세요. 배포 플러그인을 갱신하면 다시 빌드하고 OpenCode를 재시작합니다.
-
-로컬 설정 변경을 명시적으로 승인한 뒤에는 기존 OpenCode JSONC를 보존하고 plugin 항목만 변경합니다.
+호스트 설정(보통 `~/.config/opencode/opencode.jsonc`)에 이 저장소의 **디렉터리**(빌드된 파일이 아님)를 가리키는 `plugins` 항목을 추가합니다.
 
 ```jsonc
-{ "plugin": ["file:///Users/dongwuk/apps/open-gajae/dist/index.js"] }
+{
+  "plugins": ["/Users/dongwuk/apps/open-gajae"],
+  "default_agent": "open-gajae",
+  "experimental": { "subagent_depth": 2 }
+}
 ```
 
-이는 전체 설정 교체 예시가 아닙니다. 플러그인은 host 설정을 자동 편집하지 않습니다. 설치된 surface는 다음으로 확인합니다.
+- `plugins`는 디렉터리 경로여야 합니다. v2 호스트는 `<dir>/server`, 그다음 `<dir>/index`를 확장자 추론과 함께 찾으며, 파일 경로로 설정된 plugin 항목은 건너뜁니다(일부 host 문서는 파일 경로 예시를 보여주는데, 이는 기록된 문서-구현 불일치입니다). 이 패키지의 루트 `index.ts`가 `./src/index.ts`를 re-export하므로 호스트는 빌드 없이 TypeScript 소스를 바로 로드합니다.
+- `experimental.subagent_depth: 2`는 `open-gajae-planner` 역할이 native `subagent` 도구로 `open-gajae-explore`/`open-gajae-document-specialist`에 연구를 위임하는 데 필요합니다. 플러그인이 직접 이 값을 올릴 수 없습니다 — v1과 달리 v2 플러그인 API에는 config를 수정하는 domain이 없습니다 — 그래서 이 값은 직접 넣어야 하는 host 설정입니다. 값이 없으면 planner 프롬프트는 직접 `read`/`grep`/`glob`로 조사하고 plan에 그 사실을 남기도록 fallback합니다.
+- `default_agent: "open-gajae"`는 새 세션의 기본 역할을 primary로 정합니다. 필수는 아니지만 권장합니다.
+- 이는 전체 설정 교체 예시가 아닙니다. 파일의 나머지는 그대로 두고 이 key만 추가하세요. 플러그인은 host 설정을 스스로 편집하지 않습니다.
 
-```sh
-opencode debug skill
-opencode debug agent open-gajae
-opencode debug agent open-gajae-explore
-opencode debug agent open-gajae-document-specialist
-opencode debug agent open-gajae-planner
-opencode debug agent open-gajae-architect
-opencode debug agent open-gajae-critic
-```
+이는 요약이며, 검증 체크리스트를 포함한 단계별 설치는 [`docs/local-install-v2.md`](docs/local-install-v2.md)를, 이번에 대체되는 이전 v1 설정은 [`docs/local-install-v1.md`](docs/local-install-v1.md)(역사 기록으로 보존)를 참고하세요.
+
+이 디렉터리에서 첫 프롬프트를 보낸 뒤(플러그인 `setup`은 서버 시작이 아니라 위치별 첫 프롬프트에서 지연 실행됩니다), `GET /api/plugin`(플러그인 id와 `index.ts` source 경로 확인) 또는 `opencode debug agent <id>` / `opencode debug skill`로 설치된 surface를 확인하세요.
+
+## 진입
+
+이 이식에는 슬래시 커맨드가 없습니다. v1의 `/deep-interview`와 `/ralplan`은 사라졌습니다(기록된 deviation). skill 진입은 두 가지입니다.
+
+- **Mention**: `@deep-interview` 또는 `@ralplan`을 입력하고 TUI 자동완성에서 선택합니다. 선택하면 skill이 바로 붙습니다. 자동완성을 선택하지 않고 텍스트만 입력하면 skill이 붙지 않은 일반 텍스트로 전송됩니다 — 서버가 `@` mention을 자체적으로 파싱하지 않기 때문이며, 이 경우 아래 키워드 경로가 대신 감지합니다.
+- **키워드**: v1과 같은 OMC 기반 키워드 감지(영/한/일 표기, 질문·인용·코드 블록 제외, ralplan의 호출 문맥 요구)가 일반 텍스트에서 skill로 진입시키고 안내를 주입합니다.
 
 ## Deep interview와 저장소
 
-`/deep-interview <idea>`는 요구사항 명확화를 시작합니다. 플러그인이 이 커맨드를 명시적으로 등록하므로 host가 skill에서 만든 같은 이름의 커맨드는 가려지고, skill 본문은 메시지로 확장되지 않고 `skill` 도구로 로드됩니다. 일반 텍스트의 `deep interview`/`deep-interview`/`딥인터뷰`/`ディープインタビュー`/`ouroboros` 키워드도 같은 skill로 진입합니다. OMC와 같이 정보성 문맥(질문, 인용·참조 언급, 코드·표·인용 블록 안의 텍스트)만 제외되며, `ouroboros`/`ooo` CLI 형식으로 시작하는 메시지는 무시합니다. 키워드 턴에는 OMC의 `[MAGIC KEYWORD: DEEP-INTERVIEW]` 안내가 주입되고 state는 만들지 않습니다. deep-interview에는 OMC와 같이 idle 연속 주입이 없으며, 질문이 열려 있는 동안은 native `question` 도구가 세션을 붙잡습니다. skill은 native `question`을 한 번에 하나씩 사용합니다. 권한 거부 또는 도구 부재는 보고하며, 일반 문장 질문으로 대체하지 않습니다. 저장된 spec은 구현 승인이 아닙니다.
+`@deep-interview` mention 또는 `deep interview`/`deep-interview`/`딥인터뷰`/`ディープインタビュー`/`ouroboros` 키워드가 요구사항 명확화를 시작합니다. OMC와 같이 정보성 문맥(질문, 인용·참조 언급, 코드·표·인용 블록 안의 텍스트)만 제외되며, `ouroboros`/`ooo` CLI 형식으로 시작하는 메시지는 무시합니다. 키워드가 있는 턴, 또는 명시적 `@deep-interview` mention은 OMC의 `[MAGIC KEYWORD: DEEP-INTERVIEW]` 안내를 최대 한 번 주입하고 state는 만들지 않습니다 — 명시적 mention도 같은 안내를 받는 것은 OMC와 동일한 동작이며, v1은 명시적 호출에서 안내를 억제했습니다(기록된 deviation). skill은 native `question`을 한 번에 하나씩 사용합니다. 권한 거부 또는 도구 부재는 보고하며, 일반 문장 질문으로 대체하지 않습니다. 저장된 spec은 구현 승인이 아닙니다.
 
-ambiguity 임계값에 도달해 spec을 저장한 뒤에는 인터뷰를 마칠지 더 구체화할지 묻습니다. 추가 인터뷰는 현재 세션과 이력을 유지하며, 임계값을 다시 확인하기 전에 요구사항 질문을 하나 더 하고 같은 spec 파일을 갱신합니다. 선택 메뉴 자체는 라운드에 포함하지 않습니다. 누적 `maxRounds`, 명시적 조기 종료와 취소는 그대로 적용하며, 도구 실패를 종료 동의로 취급하지 않습니다. 이는 프롬프트 수준의 대화 계약이며 호스트가 강제하는 상태 머신은 아닙니다.
+ambiguity 임계값에 도달해 spec을 저장한 뒤에는 인터뷰를 마칠지 더 구체화할지 묻습니다. 추가 인터뷰는 현재 세션과 이력을 유지하며, 임계값을 다시 확인하기 전에 요구사항 질문을 하나 더 하고 같은 spec 파일을 갱신합니다. 선택 메뉴 자체는 라운드에 포함하지 않습니다. 누적 `maxRounds`, 명시적 조기 종료와 취소는 그대로 적용하며, 도구 실패를 종료 동의로 취급하지 않습니다. "Refine with ralplan consensus"를 선택하면 spec을 저장한 뒤 저장된 spec 경로(`{specsDir}/deep-interview-{slug}.md`)를 context로 `ralplan` skill을 호출합니다. 이때 input field 이름 대신 OMC 스타일 문장으로 skill을 지칭합니다 — v2 `skill` 도구의 input은 `{ id }`뿐이므로, 모델이 첫 시도에 다른 field 이름을 추측하면 host input error로 한 번 재시도할 위험이 있습니다. 이는 프롬프트 수준의 대화 계약이며 host가 강제하는 상태 머신은 아닙니다.
 
 상태 도구는 `state_read`, `state_write`, `state_clear`입니다. 신뢰 가능한 현재 `ToolContext.sessionID`만 사용하며 호출자가 다른 세션을 고를 수 없습니다. 세션마다 `_session-<YYYYMMDD-HHMMSS>-<세션 ID>` 디렉터리를 하나 가집니다. 라벨은 세션 생성 시각(로컬 시간)이고 ID는 native 세션 ID 원문입니다(예: `_session-20260918-030958-ses_f4f8651eaffeQnjyo1jEd5zVDu`). 생성 시각은 디렉터리를 처음 해석할 때 host에서 한 번 읽고, 이후에는 세션 ID 접미로 디렉터리를 찾으며, 같은 접미의 디렉터리가 둘이면 오류입니다. 생성 경로는 다음과 같습니다.
 
@@ -67,15 +67,19 @@ ambiguity 임계값에 도달해 spec을 저장한 뒤에는 인터뷰를 마칠
 
 상태 쓰기는 model snapshot을 교체합니다. 명시 tool 필드가 우선하며 `_meta`는 매번 다시 만듭니다. `state_clear`는 현재 세션 state JSON 하나만 지우고 같은 세션 문서, 다른 세션, legacy 파일은 보존합니다. 손상/잘못된 상태는 reset하지 않고 보존한 채 오류로 드러냅니다.
 
-동일한 canonical 상태 파일의 연산은 하나의 plugin process 안에서 직렬화되고 temporary file → rename으로 JSON을 게시합니다. IPC lock, state와 문서 저장의 다중 파일 transaction, 전원 손실 내구성, 다중 process 안전성은 아닙니다. 명세는 이 queue 밖에서 native `write`가 있으면 사용하고, 없으면 `apply_patch`로 저장합니다. 추가 인터뷰 결과는 같은 파일에 갱신하며 suffix, receipt, index, 자동 복구는 없습니다.
+동일한 canonical 상태 파일의 연산은 하나의 plugin process 안에서 직렬화되고 temporary file → rename으로 JSON을 게시합니다. IPC lock, state와 문서 저장의 다중 파일 transaction, 전원 손실 내구성, 다중 process 안전성은 아닙니다. 명세는 이 queue 밖에서 native `write`로 저장합니다. 추가 인터뷰 결과는 같은 파일에 갱신하며 suffix, receipt, index, 자동 복구는 없습니다.
 
 사용자가 다른 세션의 spec/plan 경로를 명시하면 입력으로 읽을 수 있습니다. Native Read와 그 권한이 적용되고 실제 읽은 경로를 알려야 합니다. latest 탐색이나 다른 파일 대체는 하지 않습니다. B가 A를 읽어도 state/owner/승인/checkbox가 이전되지 않고 A 원문 편집이나 계획 실행 권한도 생기지 않습니다. B는 자기 state/documents에만 새 결과를 씁니다.
 
 ## Ralplan
 
-`/ralplan [--interactive] [--deliberate] <task>`는 합의 계획을 시작합니다. 일반 텍스트의 `ralplan`/`랄플랜` 키워드도 같은 skill로 진입하지만, OMC와 같이 호출 문맥에서만 동작합니다: 직접 호출 접두(`$ralplan`, `!ralplan`, `force: ralplan`), 활성화 동사(`use`, `run`, `start`, `please`, `let's`), 또는 메시지 맨 앞의 키워드. 질문, 인용·참조 언급, 코드·표·인용 블록 안의 텍스트는 발화하지 않으며, 슬래시 커맨드가 메시지로 확장한 다른 skill 본문도 발화하지 않습니다. 키워드는 모든 primary agent에서 동작하지만, agent가 `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic`인 메시지는 키워드 hook이 무시합니다. 한 메시지에 ralplan과 deep-interview 키워드가 함께 있으면 두 안내가 ralplan부터 순서대로 주입되고 ralplan state만 시딩됩니다.
+`@ralplan [--interactive] [--deliberate] <task>` mention, 또는 `ralplan`/`랄플랜` 키워드가 합의 계획을 시작합니다. OMC와 같이 키워드는 호출 문맥에서만 발화합니다: 직접 호출 접두(`$ralplan`, `!ralplan`, `force: ralplan`), 활성화 동사(`use`, `run`, `start`, `please`, `let's`), 또는 메시지 맨 앞의 키워드. 질문, 인용·참조 언급, 코드·표·인용 블록 안의 텍스트는 발화하지 않습니다. 키워드는 모든 primary agent에서 동작하지만, agent가 `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic`인 메시지는 키워드 hook이 무시합니다. 한 메시지에 ralplan과 deep-interview 키워드가 함께 있으면 두 안내가 ralplan부터 순서대로 주입되고 ralplan state만 시딩됩니다.
 
-native `question` 세 개는 항상 켜져 있습니다. Planner 초안 직후의 intent 확인, 합의 종료 후 확인, 그리고 `Refine further`/`Stop here`를 제공하는 최종 승인 질문입니다. `--interactive`는 draft review만 추가합니다. `--deliberate`는 pre-mortem과 확장된 test plan을 추가하며, 명시적 고위험 신호에서 자동으로 켜집니다.
+키워드 턴은 `awaiting_confirmation: true`로 시딩하고 `[MODE: RALPLAN]` 안내를 주입해 모델에게 `ralplan` skill을 열도록 요청합니다. `@ralplan` mention은 이미 확정된 상태(`awaiting_confirmation: false`, 안내 없음)로 시딩합니다 — host가 그 턴에 이미 skill을 붙였기 때문입니다. host의 `id: "ralplan"` `skill` 도구 호출도 `awaiting_confirmation`을 지우며, OMC가 skill load를 관찰해 지우는 것과 같습니다. 확정되지 않은 seed가 남아 있으면 ralplan 키워드나 mention이 없는 다음 사용자 메시지가 지웁니다.
+
+안내(ralplan 안내, deep-interview magic guide, restore banner, breaker 메시지)는 그 안내를 시딩·갱신한 state 쓰기 뒤에 `ctx.session.synthetic({ resume: false })` 메시지로 기록됩니다. host는 synthetic 메시지를 같은 턴의 user 메시지 **앞**에 배치합니다. OMC/v1은 뒤에 덧붙였으므로 이는 기록된 host 배치 차이이며, 설계 선택이 아닙니다. `synthetic` 자체가 실패하면 안내가 사라지지 않도록 marker로 감싼 채 prompt 텍스트에 덧붙입니다. state 쓰기는 어느 쪽이든 유지됩니다.
+
+native `question` 세 개는 항상 켜져 있습니다. Planner 초안 직후의 intent 확인, 합의 종료 후 확인, 그리고 `Refine further`/`Stop here`를 제공하는 최종 승인 질문입니다. `--interactive`는 draft review만 추가합니다. `--deliberate`는 pre-mortem과 확장된 test plan을 추가하며, 명시적 고위험 신호에서 자동으로 켜집니다. 질문이 열려 있는 동안은 continuation이 발화하지 않습니다 — native `question` 도구가 답이 올 때까지 실행을 붙잡고 있어서 그동안 `session.execution.succeeded`가 발행되지 않기 때문입니다.
 
 세션 산출물은 기존 세션 계약을 확장합니다.
 
@@ -89,9 +93,7 @@ native `question` 세 개는 항상 켜져 있습니다. Planner 초안 직후�
 
 상태 도구는 `mode: "deep-interview" | "ralplan"`을 받습니다. 기본값은 `deep-interview`이므로 기존 deep-interview 동작은 바뀌지 않습니다.
 
-continuation hook은 ralplan state가 active인 동안 `session.idle`마다 세션에 다시 프롬프트를 넣습니다. agent와 model은 마지막 user 메시지에서 상속합니다. circuit breaker는 30회 주입에서 멈추고, breaker 카운터는 45분이 지나면 만료됩니다. 사용자가 Esc로 턴을 중단한 경우(`session.error`의 `MessageAbortedError`, 또는 마지막 assistant 메시지에 남은 abort 오류)에는 그 idle을 건너뛰고 breaker도 올리지 않습니다. state는 active로 남아 있으므로 다음 사용자 턴이 끝나면 continuation이 다시 동작합니다.
-
-`awaiting_confirmation`은 키워드 또는 `/ralplan` 커맨드가 state를 시딩했지만 모델이 아직 skill을 열지 않은 상태를 뜻합니다. host가 `skill` 호출을 관찰하면 지워지며, 타이머로는 지워지지 않습니다. 남겨진 seed는 ralplan 키워드가 없는 다음 사용자 메시지가 지웁니다.
+continuation은 ralplan state가 active인 동안 durable `session.execution.succeeded` 이벤트(v2는 `session.idle`을 발행하지 않습니다)에서 `ctx.session.synthetic({ resume: true })`로 세션에 다시 프롬프트를 넣습니다. circuit breaker는 30회 주입에서 멈추고 breaker 카운터는 45분이 지나면 만료됩니다 — v1과 같은 상수입니다. 사용자가 턴을 중단하면 — `session.execution.interrupted`의 reason이 `user`(Esc 또는 interrupt API) 또는 `shutdown`(취소된 `question` form, 그리고 reason 없는 interrupt의 host 기본값)이면 — stop mark가 설정되고, 다음 실제 user 프롬프트만 이를 지웁니다. `inactivity`와 `superseded`는 mark를 설정하지 않습니다. continuation은 현재 세션 아래에서 실행 중인 background subagent 세션(`background: true`로 실행됨)이 있으면 `session.created`/`session.execution.started`/terminal 이벤트를 `parentID`로 추적해 건너뜁니다(OMC/OMO parity; v1에는 대응 사례가 없었습니다). 그런 child가 끝나면 host 자체의 subagent-completion synthetic이 parent를 재개하고, 그 뒤의 `succeeded`는 같은 breaker로 다른 succeeded와 동일하게 판단됩니다. v2 플러그인 인스턴스는 location마다 하나씩 만들어지지만 공유 서버는 모든 인스턴스에 모든 이벤트를 전달하므로, 이 플러그인은 자기 location과 일치하는 세션에만 동작합니다 — v2에서 새로 생긴 사실이며 위 결정들을 바꾸지는 않습니다.
 
 `[RALPLAN MODE RESTORED]`는 같은 세션 안에서 재개당 최대 한 번만 나타납니다. state는 세션별이므로 세션 간 복원은 없습니다.
 
@@ -101,45 +103,67 @@ continuation hook은 ralplan state가 active인 동안 `session.idle`마다 세�
 
 ## 자체 역할과 설정
 
-- **`open-gajae`**: primary입니다. 수정, 결정, 통합, state write/clear를 소유합니다.
-- **`open-gajae-explore`**: repository 사실을 읽기 전용으로 조사합니다. edit, bash, delegation, question, state write/clear를 할 수 없습니다.
-- **`open-gajae-document-specialist`**: 문서와 인용 근거를 조사합니다. edit, delegation, question, state write/clear를 할 수 없습니다. 문서화된 `chub` 절차는 읽기 전용이며 arbitrary bash 권한을 주지 않습니다.
-- **`open-gajae-planner`**, **`open-gajae-architect`**, **`open-gajae-critic`**: ralplan 합의 역할입니다. 세 역할 모두 `mode: subagent`이고 기본 모델은 없으며 설정의 `agents` 맵으로만 지정합니다. architect와 critic은 읽기 전용으로 edit, task, question, state write/clear가 거부됩니다. planner는 OMC와 같이 plan을 직접 저장하고 조사를 위임합니다. `edit` 권한은 `.open-gajae/_session-*/plans/*`와 `.open-gajae/_session-*/drafts/*`만 허용하고, `tool.execute.before` guard가 그 쓰기를 현재 루트 세션의 디렉터리로 다시 한정합니다. `task` 권한은 `open-gajae-explore`와 `open-gajae-document-specialist`만 허용하며, question과 state write/clear는 계속 거부됩니다. 위임을 위한 별도 설정은 필요 없습니다. 플러그인이 host의 `subagent_depth`를 최소 2로 올리고, 더 큰 사용자 값은 그대로 둡니다.
+- **`open-gajae`**: primary입니다. 수정, 결정, 통합, state write/clear를 소유합니다. host 기본값 외에 추가 rule은 없습니다.
+- **`open-gajae-explore`**: repository 사실을 읽기 전용으로 조사합니다. edit, delegation(`subagent`), question, state write/clear를 할 수 없습니다. `shell`은 전체 허용됩니다(OMC parity — 어떤 역할에도 `shell`/Bash rule을 추가하지 않습니다).
+- **`open-gajae-document-specialist`**: 문서와 인용 근거를 조사합니다. edit, delegation, question, state write/clear를 할 수 없습니다. `chub` 절차는 프롬프트에서 읽기 전용으로 문서화되어 있으며, host permission rule이 `shell`을 `chub` 명령으로 제한하지는 않습니다.
+- **`open-gajae-planner`**, **`open-gajae-architect`**, **`open-gajae-critic`**: ralplan 합의 역할입니다. 세 역할 모두 `mode: subagent`이고 기본 모델은 없으며 설정의 `agents` 맵으로만 지정합니다. architect와 critic은 읽기 전용으로 `edit`, `subagent`, `question`, `state_write`, `state_clear`가 거부됩니다. planner는 OMC와 같이 plan을 직접 저장하고 조사를 위임합니다. `edit` 권한은 `.open-gajae/_session-*/plans/*`와 `.open-gajae/_session-*/drafts/*`만 허용하고, `tool.execute.before` guard가 그 쓰기를 현재 루트 세션의 디렉터리로 다시 한정합니다 — 범위 밖 호출은 input을 무효화해 host의 decode 자체를 실패시키고, `execute.after`가 그 오류(그리고 정적 `edit` rule이 만든 다른 거부)를 모델이 이해할 안내로 다시 씁니다. `subagent` 권한은 `open-gajae-explore`와 `open-gajae-document-specialist`만 허용합니다. `question`, `state_write`, `state_clear`, 그리고 Code Mode의 두 세션 도구(`opencode_session_move`, `opencode_session_rename`)는 다섯 subagent 역할 모두에서 거부됩니다. `subagent_depth`는 플러그인이 올리지 않습니다. host 설정에 `experimental.subagent_depth: 2`를 직접 넣으세요(설치 참고).
 
-역할별 host permission은 보존합니다. 다섯 자체 subagent 역할의 고정 rule은 host wildcard를 포함한 host rule 뒤에 추가되므로 순서로 mandatory deny나 planner의 경로·대상 범위를 완화할 수 없고, 나머지 permission 평가는 native입니다. 설정은 `~/.open-gajae/open-gajae.jsonc`와 `<worktree>/.open-gajae/open-gajae.jsonc`에서 읽습니다. field는 project → user → defaults 순으로 병합됩니다. 알 수 없는 key, 잘못된 JSONC, 잘못된 값은 진단과 함께 실패합니다. 모든 자체 역할의 유효한 host override는 project, user `model`/`variant`보다 우선하고, 생략한 field는 host가 소유합니다. provider fallback, tier mapping, 인위적 collision 거부는 없습니다.
+역할 rule은 각 agent의 `permissions` 배열에 host 기본값 뒤에 추가되지만, **여러분의 host `agents.<id>` permission rule은 플러그인 것보다 뒤에 적용되어 우선합니다** — v1이 순서를 바꿔 mandatory deny를 지켰던 것과 달리, host override가 역할의 기본 deny를 완화할 수 있습니다(기록된 deviation: "user config wins"). 설정은 `~/.open-gajae/open-gajae.jsonc`와 `<worktree>/.open-gajae/open-gajae.jsonc`에서 읽습니다. field는 project → user → defaults 순으로 병합됩니다. 알 수 없는 key, 잘못된 JSONC, 잘못된 값은 진단과 함께 실패합니다.
 
 ```jsonc
 {
   "deepInterview": { "ambiguityThreshold": 0.2, "maxRounds": 20 },
   "agents": {
     "open-gajae": { "model": "provider/model", "variant": "variant-name" },
-    "open-gajae-planner": { "model": "openai/gpt-5.6-luna" },
-    "open-gajae-architect": { "model": "openai/gpt-5.6-terra" },
-    "open-gajae-critic": { "model": "openai/gpt-5.6-terra" }
-  },
-  "companyContext": { "tool": "company_context", "onError": "warn" }
+    "open-gajae-planner": { "model": "openai/gpt-6-luna" },
+    "open-gajae-architect": { "model": "openai/gpt-6-luna", "variant": "high" },
+    "open-gajae-critic": { "model": "openai/gpt-6-luna", "variant": "high" }
+  }
 }
 ```
 
-`companyContext`는 선택 사항입니다. `tool`이 visible·permitted MCP 도구 이름이면 primary prompt가 spec 확정 직전에 `{ "query": "…" }`로 호출하고 `{ "context": "…" }`를 advisory 인용 자료로 다룰 수 있습니다. hook, proxy, registration, 강제 호출이 아닙니다. 미설정이면 건너뛰고 `onError` 기본값은 `warn`이며 `silent`/`fail`도 가능합니다.
+`variant`는 같은(이미 병합된) entry에 `model`이 있어야 합니다: user 레벨 `model` + project 레벨 `variant`는 유효하지만, `variant`만 있거나(한 파일에서든 양쪽에 나뉘어서든) 어디에도 `model`이 없으면 agent 이름과 `model "provider/model"` 추가 요청을 담은 오류로 거부됩니다. 이는 그런 variant를 진단만 남기고 조용히 버리는 v2 host보다 더 엄격합니다. provider fallback, tier mapping, 인위적 collision 거부는 없습니다. v1의 `companyContext` 설정은 사라졌습니다 — 지금 넣으면 `unknown setting`으로 실패합니다.
 
 ## 읽기 전용 코드 도구
 
-등록 도구는 다섯 개입니다.
+플러그인은 읽기 전용 코드 도구 8개를 등록합니다(위의 상태 도구 3개를 더하면 총 11개).
 
 - `ast_grep_search` (`@ast-grep/napi` 0.31.1): AST 검색만 하며 replace는 없습니다.
-- `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`.
+- `lsp_goto_definition`, `lsp_hover`, `lsp_diagnostics`, `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`.
 
-LSP server는 감지·보고만 하며 자동 다운로드하지 않습니다. LSP rename, diagnostics, code action, replacement suite는 없습니다. LSP 권한은 요청 파일/operation을 다루지만 language server 내부 파일 읽기의 sandbox는 아닙니다. AST는 자체 guarded traversal/read 검사를 수행합니다. 두 도구 모두 explorer 권한을 넓히거나 arbitrary shell 실행을 허용하지 않습니다.
+LSP server는 감지·보고만 하며 자동 다운로드하지 않습니다. LSP rename, code action, replacement suite는 없습니다. 사용 가능한 actor는 `open-gajae`, `open-gajae-explore`, `open-gajae-architect`, `open-gajae-critic`입니다(document specialist와 planner는 제외). project 경계는 v1의 call마다 host permission을 묻던 방식을 대체합니다: input 경로를 host의 현재 location 디렉터리 기준으로 해석하고, symlink를 따라가며, 실제 대상이 실제 project 디렉터리 안에 있어야 합니다. `.env`와 `.env.*` 파일은 요청한 이름과 해석된 이름 양쪽에서 거부되며, `ast_grep_search`는 traversal 중에도 건너뜁니다. 두 도구 모두 explorer 권한을 넓히거나 arbitrary shell 실행을 허용하지 않습니다.
 
 source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT_MS`, `OPEN_GAJAE_LSP_IDLE_TIMEOUT_MS`, `OPEN_GAJAE_LSP_IDLE_CHECK_INTERVAL_MS`, `OPEN_GAJAE_LSP_CONTAINER_ID`, `OPEN_GAJAE_PYTHON_LSP=basedpyright`뿐입니다. 일반 설정이 아니라 LSP 구현 설정입니다.
 
+## OMC와 v1 플러그인으로부터의 deviation
+
+OMC 계약, 또는 이번에 대체되는 v1 구현으로부터 host 요구에 의해 바뀐 모든 항목을 여기에 기록합니다(AGENTS.md 정책). 어느 것도 임의로 결정하지 않았으며, 각 항목은 이식의 spec/plan(`.omc/specs/deep-interview-opencode-v2-port.md`, `.omc/plans/ralplan-opencode-v2-port.md`)의 결정으로 추적됩니다.
+
+| Deviation | 내용 |
+|---|---|
+| 슬래시 커맨드 없음 | v1의 `/deep-interview`와 `/ralplan`이 사라졌습니다. 진입은 skill mention이나 일반 텍스트 키워드뿐입니다. |
+| company context 제거 | `companyContext` 설정, runtime-settings block 항목, deep-interview/ralplan의 step-0 지시, `tests/company-context-probe.ts`가 문서화 누락이 아니라 완전히 사라졌습니다. |
+| `subagent_depth`는 host 설정 | v2 플러그인 API에는 config를 수정하는 domain이 없어 v1처럼 플러그인이 직접 올릴 수 없습니다. `experimental.subagent_depth: 2`를 직접 넣으세요. 값이 없으면 planner가 직접 조사로 fallback합니다. |
+| host 설정이 역할 rule보다 우선 | host `agents.<id>` permission rule이 플러그인 것보다 뒤에 적용되어, v1의 rule 재정렬 트릭과 달리 역할의 기본 deny를 완화할 수 있습니다. |
+| explore·document-specialist는 shell 전체 허용 | OMC parity: 어떤 역할에도 `shell`/Bash permission rule을 추가하지 않습니다. |
+| "Bash"를 `shell`로 표기 | 모든 prompt와 skill이 "Bash" 대신 v2 도구 이름 `shell`을 씁니다. |
+| deep-interview → ralplan bridge가 input field 대신 skill을 이름으로 지칭 | OMC 스타일 문장("`ralplan` skill을 … context로 호출")을 씁니다. v2 `skill` 도구의 input은 `{ id }`뿐이라, 첫 추측이 틀리면 host input error로 한 번 재시도가 발생할 수 있습니다. |
+| 안내는 실패했을 때만 prompt 텍스트에 덧붙임 | 안내는 state 우선으로 쓴 뒤 `synthetic` 메시지로 보냅니다. `synthetic` 자체가 거부되면 (marker로 감싼) 안내를 prompt 텍스트에 덧붙여 사라지지 않게 합니다. |
+| 안내가 user 메시지 앞에 옴 | host는 `synthetic` 안내를 같은 턴의 user 메시지 앞에 배치합니다. OMC/v1은 뒤에 덧붙였습니다. 설계 선택이 아니라 host 배치 사실입니다. |
+| 빌드 없는 TS 소스 패키징 | 루트 `index.ts`와 `package.json`의 `exports["."]`가 `./src/index.ts`를 가리킵니다. `dist/`와 build script는 사라졌습니다. |
+| `model` 없는 `variant`는 설정 오류 | user+project 병합 뒤 agent 이름을 담은 오류로 거부됩니다 — variant를 진단만 남기고 조용히 버리는 v2 host보다 엄격합니다. |
+| continuation이 durable execution 이벤트에서 동작 | `session.execution.succeeded`가 v2에서 발행하지 않는 `session.idle`을 대체합니다. |
+| continuation이 background subagent를 기다림 | `background: true`로 실행 중인 child 세션이 있으면 `parentID`와 execution 이벤트로 추적해 건너뜁니다(OMC/OMO parity; v1에는 대응 사례가 없었습니다). |
+| interrupt 처리가 reason 기반 | `user`와 `shutdown`은 다음 실제 프롬프트만 지우는 stop mark를 설정하고, `inactivity`/`superseded`는 설정하지 않습니다. background child 완료 뒤 host가 유발한 재개는 같은 breaker로 다른 `succeeded`와 동일하게 판단됩니다. |
+| location별 이벤트 필터링 | v2 플러그인 인스턴스는 location마다 만들어지지만 공유 서버가 모든 인스턴스에 모든 이벤트를 전달하므로, 이 플러그인은 자기 location과 일치하는 세션에만 동작합니다. v2에서 새로 생긴 사실이며 R-decision을 바꾸지 않습니다. |
+| artifact guard가 throw 대신 input 무효화로 차단 | `execute.before`가 차단할 호출의 input을 `{}`로 바꿔 host의 decode 자체를 실패시키고, `execute.after`가 그 오류(그리고 planner의 permission 범위 거부)를 모델이 이해할 안내로 다시 씁니다. Promise-hook throw는 대신 host defect로 나타났을 것입니다. |
+| code-tool 경계가 host ask 대신 realpath containment | host의 현재 location 기준으로 해석하고, symlink를 따라가며, 실제 project 디렉터리 안에 있어야 하고, `.env`/`.env.*`를 제외합니다 — v1의 call마다 permission을 묻던 방식을 대체합니다. |
+| LSP surface가 도구 4개에서 7개로 확장 | `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`에 `lsp_goto_definition`, `lsp_hover`, `lsp_diagnostics`가 추가되었습니다. |
+| `@deep-interview` mention도 magic notice를 받음 | OMC parity입니다. v1은 명시적 호출에서 안내를 억제했습니다. |
+| 설치 문서가 디렉터리 plugin 형태만 보여줌 | 일부 host 문서는 파일 경로 `plugins` 예시를 보여주지만, v2 host는 실제로는 파일 경로로 설정된 plugin 항목을 건너뜁니다. |
+
 ## 검증 근거와 한계
 
-완료한 검사는 typecheck, unit test, build 및 위의 stable command입니다. `bun run test:host`는 설치된 OpenCode 1.18.31의 plugin load, state/AST/native Write, question·Read·edit·state·LSP 및 읽기 전용 directory Write의 permission denial, Write 게시 뒤 native formatter 실패, 자체 역할 model/variant 우선순위를 다룹니다. Formatter 실패는 best-effort post-processing이므로 이미 게시된 native Write를 rollback하지 않습니다.
+이 이식이 정의하는 검증 계층은 `@opencode/plugin` 2.0.15에서의 `bun run typecheck`/`bun test`, prompt hook·permission rule 생성·continuation·artifact guard·state/code tool에 대한 unit test, 로컬 OpenCode 2.0.15 바이너리를 대상으로 한 host probe(`tests/host-probe.ts`, `tests/host-session-probe.ts`, `tests/planner-permission-probe.ts`, `tests/package-probe.ts`), 그리고 `openai/gpt-6-luna`로 deep-interview → ralplan bridge, 키워드 진입, ralplan 중 Esc interrupt, `experimental.subagent_depth` 유무에 따른 planner delegation을 다루는 manual checklist입니다. 이들의 현재 pass/fail 상태는 이식의 plan과 ledger가 관리하며 이 문서가 주장하지 않습니다.
 
-`bun tests/host-session-probe.ts`는 실제 A/B OpenCode session과 loopback deterministic OpenAI-compatible provider를 사용합니다. state write, native question과 `/questionreply`, B에서 A 문서를 명시 absolute/relative path로 Read, B native Write/clear, same-slug 동작, current-session 격리, 문서 Write 성공 뒤 terminal state write 거부, missing file, targeted external-symlink Read 거부와 자동 대체 없음을 확인합니다. A의 state/source/checkbox/approval bytes가 변하지 않는지도 검증합니다. ralplan continuation 재진입 probe도 포함합니다.
-
-`bun tests/package-probe.ts`는 패키지를 pack한 뒤 isolated consumer에 설치하고 packaged default/config/prompts/skills/state API/AST addon load 및 clear의 문서 보존을 확인합니다. `bun tests/company-context-probe.ts`는 local stdio MCP fake peer를 실제 host와 deterministic provider를 통해 실행해 unset/absent/denied/valid/invalid/error/hostile response 및 모든 `onError` mode를 확인하고 specialist의 controlled missing-`chub` 동작도 검사합니다.
-
-이는 transport와 source-contract 검사이지 LLM obedience, prompt branch 보장, injection resistance, model 의미적 품질, external credential, 설치된 language server의 의미적 정확성 증거가 아닙니다. LSP fixture는 pooled concurrent lease와 recovery도 다루며 server를 자동 다운로드하지 않습니다. 이 가이드는 동작과 evidence scope를 기록하며 독립 completion proof는 durable delivery ledger에 둡니다.
+이 계층들은 transport와 source-contract 검사이지 LLM obedience, prompt branch 보장, injection resistance, model 의미적 품질, external credential, 설치된 language server의 의미적 정확성 증거가 아닙니다. LSP server는 자동 다운로드되지 않습니다. 이 가이드는 동작과 evidence scope를 기록하며 독립 completion proof는 durable delivery ledger에 둡니다.
