@@ -1,6 +1,6 @@
 import { Plugin } from "@opencode/plugin";
-import { relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { projectPrefix } from "./artifact-guard";
 import {
   loadPrompts,
   loadSettings,
@@ -26,8 +26,7 @@ export default Plugin.define({
     const projectDir = ctx.location.project.directory;
     const locationDir = ctx.location.directory;
     const packageRoot = fileURLToPath(new URL("../", import.meta.url));
-    const rel = relative(locationDir, projectDir).split(sep).join("/");
-    const plannerPrefix = rel ? `${rel}/` : "";
+    const plannerPrefix = projectPrefix(locationDir, projectDir);
     // 1. Settings.
     const settings = await loadSettings(projectDir);
     // 2. State store; the session folder label comes from `time.created`.

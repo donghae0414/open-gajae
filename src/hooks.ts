@@ -19,10 +19,12 @@
 // `bridge.ts` session restore, keyword seeding and confirmSkillModeStates — and
 // oh-my-openagent (MIT) for the OpenCode-side in-flight and injection patterns.
 
-import { basename, join, relative, sep } from "node:path";
+import { basename, join } from "node:path";
 import { Error as ToolError } from "@opencode/plugin/promise/tool";
 import {
+  ARTIFACT_TOOLS,
   artifactPathsOf,
+  projectPrefix,
   projectRelative,
   sessionArtifactOwner,
 } from "./artifact-guard.js";
@@ -355,10 +357,7 @@ export function createHooks(
   }
 
   /** The project root as the model addresses it from this location. */
-  const prefix = (() => {
-    const rel = relative(locationDir, projectDir).split(sep).join("/");
-    return rel ? `${rel}/` : "";
-  })();
+  const prefix = projectPrefix(locationDir, projectDir);
 
   function guidance(tool: string, folder: string): string {
     return `${tool} may only write under this session's plans/ or drafts/ (${prefix}.open-gajae/${folder}/plans|drafts/)`;
@@ -591,7 +590,7 @@ export function createHooks(
       const recorded = blocked.get(event.id);
       if (recorded !== undefined) blocked.delete(event.id);
       if (event.status !== "error") return;
-      if (!["edit", "write", "patch"].includes(event.tool)) return;
+      if (!ARTIFACT_TOOLS.has(event.tool)) return;
       let message = recorded;
       if (
         message === undefined &&

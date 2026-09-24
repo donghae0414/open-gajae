@@ -11,7 +11,11 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
 /** The v2 tools that can create, change, move, or delete a file. */
-const ARTIFACT_TOOLS = new Set(["write", "edit", "patch"]);
+export const ARTIFACT_TOOLS: ReadonlySet<string> = new Set([
+  "write",
+  "edit",
+  "patch",
+]);
 
 /**
  * `patch` carries every path inside one string argument. The markers are the
@@ -76,6 +80,15 @@ export function projectRelative(
   if (path === "..") return undefined;
   if (path.startsWith(`..${sep}`) || isAbsolute(path)) return undefined;
   return path.split(sep).join("/");
+}
+
+/**
+ * The project directory as the model addresses it from `locationDir`: a POSIX
+ * path with a trailing `/`, or `""` when the two are the same directory.
+ */
+export function projectPrefix(locationDir: string, projectDir: string): string {
+  const rel = relative(locationDir, projectDir).split(sep).join("/");
+  return rel ? `${rel}/` : "";
 }
 
 /**
