@@ -14,11 +14,14 @@ import type { ToolContext } from "@opencode-ai/plugin";
 import {
   loadPrompts,
   loadSettings,
+  loadSkills,
   registerAgents,
+  registerSkills,
   roleRules,
   agentNames,
   type AgentDraft,
   type Settings,
+  type SkillInfo,
 } from "../src/config";
 import { StateStore } from "../src/state";
 import { createTools } from "../src/tools";
@@ -499,6 +502,29 @@ test("spec completion offers refinement and the ralplan consensus bridge only", 
   expect(primary).toContain(
     "do not end the interview merely because ambiguity met the threshold",
   );
+});
+
+test("both skills register with frontmatter id, name and description", async () => {
+  const added: SkillInfo[] = [];
+  await registerSkills(
+    {
+      async transform(callback) {
+        callback({ add: (skill) => added.push(skill) });
+      },
+    },
+    await loadSkills(resolve(".")),
+  );
+  expect(added.map(({ id, name }) => [id, name])).toEqual([
+    ["deep-interview", "deep-interview"],
+    ["ralplan", "ralplan"],
+  ]);
+  for (const skill of added) {
+    const text = await readFile(skill.path, "utf8");
+    expect(skill.path).toBe(resolve("skills", skill.id, "SKILL.md"));
+    expect(text).toContain(`\ndescription: ${skill.description}\n`);
+    expect(skill.content).not.toStartWith("---");
+    expect(text.endsWith(skill.content)).toBe(true);
+  }
 });
 
 test("consensus role settings load and unknown role names are rejected", async () =>

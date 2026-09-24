@@ -997,8 +997,8 @@ export function compactHookText(
  * OMC's `createSkillInvocation` body (`scripts/keyword-detector.mjs:1544-1568`)
  * for the `deep-interview` skill, with three host substitutions:
  *
- * - `Preferred invocation: /oh-my-claudecode:deep-interview` → `/deep-interview`,
- *   the command `src/config.ts` registers.
+ * - `Preferred invocation: /oh-my-claudecode:deep-interview` → `@deep-interview`,
+ *   the mention of the skill `src/config.ts` registers (v2 has no commands, R9).
  * - OMC's `existsSync(skillPath)` branch is dropped. `skillPath` here is computed
  *   from this package's own root, so the "locate skills/<name>/SKILL.md in the
  *   active install" fallback OMC emitted for a missing path has no case to cover.
@@ -1023,12 +1023,12 @@ export function deepInterviewMessage({
     `[MAGIC KEYWORD: ${DEEP_INTERVIEW_SKILL_NAME.toUpperCase()}]
 
 Skill routing detected: ${DEEP_INTERVIEW_SKILL_NAME}
-Preferred invocation: /${DEEP_INTERVIEW_SKILL_NAME}${args ? ` ${args}` : ""}
+Preferred invocation: @${DEEP_INTERVIEW_SKILL_NAME}${args ? ` ${args}` : ""}
 Read fallback: open ${skillPath} and follow its SKILL.md instructions.${argsSection}
 
 User request (compact echo; original prompt remains authoritative):
 ${compactHookText(originalPrompt)}
 
-IMPORTANT: Start the ${DEEP_INTERVIEW_SKILL_NAME} workflow immediately. If the slash invocation is unavailable, read the SKILL.md at the fallback path instead of relying on this compact guide.`,
+IMPORTANT: Start the ${DEEP_INTERVIEW_SKILL_NAME} workflow immediately. If the \`@${DEEP_INTERVIEW_SKILL_NAME}\` mention is unavailable, read the SKILL.md at the fallback path instead of relying on this compact guide.`,
   );
 }

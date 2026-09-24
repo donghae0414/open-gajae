@@ -262,3 +262,60 @@ ${runtimeSettings}
       });
   });
 }
+
+export interface SkillInfo {
+  id: string;
+  name: string;
+  description?: string;
+  path: string;
+  content: string;
+}
+/** Structural slice of `ctx.skill`, so tests drive a fake editor. */
+export interface SkillHost {
+  transform(
+    callback: (editor: { add(skill: SkillInfo): void }) => void,
+  ): Promise<unknown>;
+}
+
+export const skillNames = ["deep-interview", "ralplan"] as const;
+
+/**
+ * Mirrors the host's SKILL.md reading (`core/src/config/plugin/skill-file.ts:34-58`):
+ * the id is the directory name, `name`/`description` come from the frontmatter,
+ * and `content` is the body after it. Only plain `key: value` lines are read,
+ * which is all these two files use.
+ */
+export async function loadSkills(packageRoot: string): Promise<SkillInfo[]> {
+  return Promise.all(
+    skillNames.map(async (id) => {
+      const path = join(packageRoot, "skills", id, "SKILL.md");
+      const text = await readFile(path, "utf8");
+      const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+      const fields: Record<string, string> = {};
+      for (const line of match?.[1].split(/\r?\n/) ?? []) {
+        const entry = line.match(/^([A-Za-z_][\w-]*)\s*:\s*(.*)$/);
+        if (entry)
+          fields[entry[1]] = entry[2].trim().replace(/^(["'])(.*)\1$/, "$2");
+      }
+      return {
+        id,
+        name: fields.name ?? id,
+        ...(fields.description === undefined
+          ? {}
+          : { description: fields.description }),
+        path,
+        content: match ? text.slice(match[0].length) : text,
+      };
+    }),
+  );
+}
+
+/** No commands (R9): entry is the `@<id>` mention, the keyword, or `skill`. */
+export async function registerSkills(
+  skill: SkillHost,
+  skills: SkillInfo[],
+): Promise<void> {
+  await skill.transform((editor) => {
+    for (const info of skills) editor.add(info);
+  });
+}

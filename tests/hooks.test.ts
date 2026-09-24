@@ -916,7 +916,7 @@ test("the deep-interview keyword appends the magic block and writes no state", a
     const text = String((appended[0] as unknown as { text: string }).text);
     expect(text.startsWith("<deep-interview-notice>")).toBe(true);
     expect(text).toContain("[MAGIC KEYWORD: DEEP-INTERVIEW]");
-    expect(text).toContain("Preferred invocation: /deep-interview");
+    expect(text).toContain("Preferred invocation: @deep-interview");
     // `createHooks` resolves the fallback against the real package root.
     expect(text).toContain("skills/deep-interview/SKILL.md and follow");
 

@@ -446,7 +446,8 @@ test("deepInterviewMessage reproduces OMC's magic-keyword guide", () => {
   expect(message).toContain("[MAGIC KEYWORD: DEEP-INTERVIEW]");
   expect(message).toContain("Skill routing detected: deep-interview");
   // The keyword path always passes no args (OMC keyword-detector.mjs:1793).
-  expect(message).toContain("Preferred invocation: /deep-interview\n");
+  expect(message).toContain("Preferred invocation: @deep-interview\n");
+  expect(message).toContain("If the `@deep-interview` mention is unavailable");
   expect(message).toContain(
     "Read fallback: open /x/skills/deep-interview/SKILL.md and follow its SKILL.md instructions.",
   );
@@ -465,7 +466,7 @@ test("deepInterviewMessage reproduces OMC's magic-keyword guide", () => {
     originalPrompt: "x",
     args: "foo",
   });
-  expect(withArgs).toContain("Preferred invocation: /deep-interview foo");
+  expect(withArgs).toContain("Preferred invocation: @deep-interview foo");
   expect(withArgs).toContain("Arguments: foo");
 });
 

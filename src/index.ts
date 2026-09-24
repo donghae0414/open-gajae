@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 import {
   loadPrompts,
   loadSettings,
+  loadSkills,
   registerAgents,
+  registerSkills,
   type AgentHost,
 } from "./config";
 
@@ -26,6 +28,7 @@ export default Plugin.define({
     // 2. StateStore(projectDir, createdAt from ctx.session.get): Steps 4–6.
     // 3. Read prompts and SKILL.md files.
     const prompts = await loadPrompts(packageRoot);
+    const skills = await loadSkills(packageRoot);
     // 4. Agent, skill and tool transforms (tools: Step 6).
     // `DeepMutable` turns the schema's branded strings (`Agent.Name`,
     // `Provider.ID`) into objects, so plain strings only fit the structural seam.
@@ -34,6 +37,7 @@ export default Plugin.define({
       prompts,
       plannerPrefix,
     });
+    await registerSkills(ctx.skill, skills);
     // 5. Prompt and tool hooks: Steps 4–6.
     // 6. Event loop with an AbortController: Step 5.
     // 7. Cleanup: abort the loop and `lspManager.disconnectAll()`: Steps 5–6.
