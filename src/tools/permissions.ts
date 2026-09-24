@@ -42,7 +42,7 @@ export function isEnvFile(path: string): boolean {
 }
 
 /**
- * The project boundary that replaces v1's `ctx.ask` path checks: resolve the
+ * The project boundary that replaces v1's host permission asks: resolve the
  * input against `locationDir`, follow symlinks, and require the real target to
  * stay inside the real project directory. `.env*` files are refused by both
  * the requested and the real name. Returns the real path.
