@@ -23,9 +23,9 @@ Implementing against outdated or incorrect documentation causes difficult bugs. 
 - Read-only: never create, modify, or delete files; never install software, alter keys, registrations, or permissions.
 - For project-specific questions, inspect README, docs/, migration notes, and local reference guides first.
 - Do not search internal source implementation end-to-end; request Explorer evidence through the primary when it is needed.
-- For external SDK/framework/API correctness, prefer Context Hub (`chub`) when available and covered. Use only native readonly Bash commands `command -v chub`, `chub search <topic>`, and `chub get <doc-id>` after permission is granted.
+- For external SDK/framework/API correctness, prefer Context Hub (`chub`) when available and covered. Use only native readonly `shell` commands `command -v chub`, `chub search <topic>`, and `chub get <doc-id>` after permission is granted.
 - If chub is unavailable or insufficient, use an actually visible curated MCP tool, then native WebSearch and WebFetch for official documentation. Do not claim a known URL fetch was a successful search.
-- Never use arbitrary Bash, install chub, change API keys, or make a missing web/MCP provider appear available.
+- Never use arbitrary `shell`, install chub, change API keys, or make a missing web/MCP provider appear available.
 </Constraints>
 
 <Investigation_Protocol>
@@ -39,7 +39,7 @@ Implementing against outdated or incorrect documentation causes difficult bugs. 
 
 <Tool_Usage>
 - Native Read for local documentation.
-- Native Bash only for `command -v chub`, `chub search`, and `chub get`; no install, shell workaround, or environment mutation.
+- Native `shell` only for `command -v chub`, `chub search`, and `chub get`; no install, shell workaround, or environment mutation.
 - A visible curated MCP tool only when native permission permits it.
 - Native WebSearch to find official documentation, papers, manuals, and reference databases.
 - Native WebFetch to extract details from a specific source.
@@ -79,7 +79,7 @@ Runtime model and effort inherit from the host. A quick lookup takes 1–2 searc
 - Skipping local documentation for a project-specific question.
 - Blog-first sourcing when official documentation exists.
 - Unflagged stale or version-mismatched documentation.
-- Internal codebase implementation search, arbitrary Bash, installation, key changes, or registry changes.
+- Internal codebase implementation search, arbitrary `shell`, installation, key changes, or registry changes.
 - Treating unavailable chub, MCP, WebSearch, or WebFetch as success; state the missing capability instead.
 </Failure_Modes_To_Avoid>
 
@@ -98,4 +98,4 @@ Runtime model and effort inherit from the host. A quick lookup takes 1–2 searc
 
 ## Source and host substitutions
 
-Adapted from OMC v5.4.0 `agents/document-specialist.md` (MIT), preserving role, source ordering, protocol, output contract, failure modes, and examples. Claude tools are replaced by native Read, narrow readonly chub commands, visible curated MCP, WebSearch, and WebFetch. The host contract excludes installation, key changes, registry/proxy mutation, broad Bash permission, and nested delegation. See THIRD-PARTY-NOTICES.md and licenses/.
+Adapted from OMC v5.4.0 `agents/document-specialist.md` (MIT), preserving role, source ordering, protocol, output contract, failure modes, and examples. Claude tools are replaced by native Read, narrow readonly chub commands run via `shell` (`core/src/tool/plugin/shell.ts:22`; Bash renamed everywhere per Q1), visible curated MCP, WebSearch, and WebFetch. The host contract excludes installation, key changes, registry/proxy mutation, broad `shell` permission, and nested delegation. See THIRD-PARTY-NOTICES.md and licenses/.

@@ -42,10 +42,10 @@
 
   <Tool_Usage>
     - Use Glob/Grep/Read for codebase exploration (execute in parallel for speed).
-    - Use lsp_find_references, lsp_document_symbols, and lsp_workspace_symbols for read-only semantic evidence.
+    - Use lsp_find_references, lsp_document_symbols, lsp_workspace_symbols, lsp_goto_definition, lsp_hover, and lsp_diagnostics for read-only semantic evidence.
     - Use lsp_servers only to report actual server availability; do not install servers.
     - Use ast_grep_search to find structural patterns (e.g., "all async functions without try/catch").
-    - Use Bash with git blame/log for change history analysis.
+    - Use `shell` with git blame/log for change history analysis.
   </Tool_Usage>
 
   <Execution_Policy>
@@ -118,4 +118,4 @@
 
 ## Source and host substitutions
 
-Adapted from OMC v5.4.0 `agents/architect.md` (MIT), preserving its role, success criteria, constraints, investigation protocol including the 4-phase and 3-failure-circuit-breaker rules, consensus addendum, output format, final-response contract, failure modes, examples, and final checklist. The frontmatter model pin and `disallowedTools` are removed because host settings supply the model and `src/config.ts` enforces `edit: deny`; the analyst, executor, and qa-tester handoffs are dropped because those roles do not exist here; `lsp_diagnostics` and `lsp_diagnostics_directory` become this plugin's four read-only LSP tools (`lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`), with `ast_grep_search` and Bash retained; the `<External_Consultation>` block is removed because delegation is denied and no team skill exists; "parent Claude Code session" becomes "host session". This role cannot call `question`, `task`, or write files: the ralplan leader owns asking the user, delegating to other roles, and persisting the plan. See THIRD-PARTY-NOTICES.md and licenses/.
+Adapted from OMC v5.4.0 `agents/architect.md` (MIT), preserving its role, success criteria, constraints, investigation protocol including the 4-phase and 3-failure-circuit-breaker rules, consensus addendum, output format, final-response contract, failure modes, examples, and final checklist. The frontmatter model pin and `disallowedTools` are removed because host settings supply the model and `src/config.ts` enforces `edit: deny`; the analyst, executor, and qa-tester handoffs are dropped because those roles do not exist here; `lsp_diagnostics_directory` is dropped, and OMC's LSP surface becomes this plugin's seven read-only LSP tools (`lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`, `lsp_goto_definition`, `lsp_hover`, `lsp_diagnostics`), with `ast_grep_search` and `shell` retained; the `<External_Consultation>` block is removed because delegation is denied and no team skill exists; "parent Claude Code session" becomes "host session". This role cannot call `question`, `subagent`, or write files: the ralplan leader owns asking the user, delegating to other roles, and persisting the plan. See THIRD-PARTY-NOTICES.md and licenses/.

@@ -461,7 +461,7 @@ test("spec completion offers refinement and the ralplan consensus bridge only", 
   const completion =
     skill.split("## After crystallization")[1]?.split("</Steps>")[0] ?? "";
   expect(skill).toContain(
-    "Use native `write` when available; otherwise use `apply_patch`",
+    "Use native `write` when available; otherwise use `patch`",
   );
   expect(skill).toContain("`Update File` after reading an existing spec");
   expect(skill).not.toContain("native Write");
@@ -492,8 +492,10 @@ test("spec completion offers refinement and the ralplan consensus bridge only", 
   );
   expect(completion).toContain("Refine with ralplan consensus");
   expect(completion).toContain(
-    "call the native `skill` tool with name `ralplan`",
+    "invoke the `ralplan` skill with the saved spec path",
   );
+  // Q2: OMC-style wording never names the `skill` tool's input field.
+  expect(completion).not.toContain("with name `ralplan`");
   // The bridge is the single permitted exception; the same block must still
   // forbid every execution workflow by name.
   expect(completion).toContain(
@@ -561,8 +563,10 @@ test("ralplan skill keeps the consensus contract and offers no execution path", 
   expect(skill).not.toContain("Skill(");
   expect(skill).not.toMatch(/codex/i);
   expect(skill).not.toMatch(/--(direct|review|consensus)\b/);
-  for (let step = 0; step <= 9; step += 1)
+  // Step 0 (company context) is removed (R17); numbering is 1-9.
+  for (let step = 1; step <= 9; step += 1)
     expect(skill).toMatch(new RegExp(`^${step}\\. `, "m"));
+  expect(skill).not.toMatch(/^0\. /m);
   expect(skill).toContain("- `--interactive`:");
   expect(skill).toContain("- `--deliberate`:");
   expect(skill).toContain(
