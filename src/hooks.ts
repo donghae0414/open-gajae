@@ -1,5 +1,6 @@
-// Ralplan host hooks: keyword/mention/restore on the v2 `prompt` hook, and the
-// `skill` tool call that replaces OMC's awaiting-confirmation timer. The prompt
+// Ralplan host hooks: continuation on durable execution events, keyword/mention/
+// restore on the v2 `prompt` hook, and the `skill` tool call that replaces OMC's
+// awaiting-confirmation timer. The prompt
 // hook also carries the deep-interview keyword and `@deep-interview` mention,
 // which only inject OMC's magic-keyword guide and seed no state at all.
 //
@@ -7,6 +8,12 @@
 // them before the user message of the same turn, while OMC and v1 appended after
 // it (Phase 0 P7); this is a recorded deviation. If `synthetic` rejects, the
 // marker-wrapped notice is appended to the prompt text instead (Q3).
+//
+// Continuation runs on `session.execution.succeeded`, OMC's Stop-hook point. A
+// user interrupt is its own `interrupted` event in v2, so v1's abort window and
+// transcript sniffing are gone; the mark it sets lasts until the next real user
+// prompt, because a host subagent-completion resume can still end in a later
+// `succeeded` (Phase 0 Q9).
 //
 // Source: oh-my-claudecode v5.4.0 (MIT) — `persistent-mode/index.ts` checkRalplan,
 // `bridge.ts` session restore, keyword seeding and confirmSkillModeStates — and
@@ -20,6 +27,8 @@ import {
 } from "./artifact-guard.js";
 import {
   applyRalplanGate,
+  breakerMessage,
+  continuationMessage,
   DEEP_INTERVIEW_SKILL_NAME,
   deepInterviewMessage,
   detectDeepInterviewKeyword,
@@ -31,6 +40,7 @@ import {
   restoreMessage,
   sanitizeForKeywordDetection,
   seedState,
+  shouldContinue,
 } from "./ralplan.js";
 import { RALPLAN_MODE, type StateStore } from "./state.js";
 
@@ -67,6 +77,8 @@ export type ExecuteBeforeEvent = {
 export type RalplanHooks = {
   prompt(event: PromptEvent): Promise<void>;
   executeBefore(event: ExecuteBeforeEvent): Promise<void>;
+  /** One event from `ctx.event.subscribe`: an envelope `{ type, data }`. */
+  onEvent(event: unknown): Promise<void>;
 };
 
 /**
@@ -81,6 +93,13 @@ const ROLE_SUBAGENTS = new Set([
   "open-gajae-architect",
   "open-gajae-critic",
 ]);
+
+/**
+ * Interrupt reasons that mean "stop" (Q9): `user` is Esc or the interrupt API,
+ * and `shutdown` is a dismissed `question` form and the host default for a
+ * reason-less interrupt (`core/src/session/execution.ts:53`).
+ */
+const STOP_REASONS = new Set(["user", "shutdown"]);
 
 const KEYWORD_NOTICE_MARKER = "[MODE: RALPLAN]";
 const DEEP_INTERVIEW_MAGIC_MARKER = "[MAGIC KEYWORD: DEEP-INTERVIEW]";
@@ -98,6 +117,7 @@ export function createHooks(
   store: StateStore,
   session: HostSession,
   packageRoot: string,
+  locationDir: string,
 ): RalplanHooks {
   // The absolute `Read fallback:` path OMC resolved through `resolveSkillPath`;
   // here it is always this package's own copy, so no existence probe is needed.
@@ -139,6 +159,118 @@ export function createHooks(
       );
     } catch (error) {
       log("could not confirm ralplan skill load", error);
+    }
+  }
+
+  /**
+   * One continuation in flight per session, so a repeated `succeeded` cannot
+   * stack reinforcements. Pattern from oh-my-openagent's ralph-loop handler.
+   */
+  const inFlight = new Set<string>();
+
+  /**
+   * Sessions the user stopped (Q9). Set by an `interrupted` event, cleared only
+   * by the next real user prompt after the G2 marker check.
+   */
+  const interrupted = new Set<string>();
+
+  /**
+   * Whether a session belongs to this instance's location, and its parent.
+   * Every plugin instance on a shared server receives every event, so an
+   * instance handles only sessions whose location is its own (Q10).
+   */
+  const sessions = new Map<string, { own: boolean; parentID?: string }>();
+
+  /** Running child executions per parent session (Q5). */
+  const running = new Map<string, Set<string>>();
+
+  async function sessionOf(
+    sessionID: string,
+    created?: Record<string, unknown>,
+  ): Promise<{ own: boolean; parentID?: string }> {
+    const cached = sessions.get(sessionID);
+    if (cached) return cached;
+    // `session.created` carries `location` and `parentID` itself.
+    const info: Record<string, unknown> =
+      created ?? (await session.get({ sessionID }));
+    const location = info.location;
+    const entry = {
+      own: isRecord(location) && location.directory === locationDir,
+      ...(typeof info.parentID === "string" ? { parentID: info.parentID } : {}),
+    };
+    sessions.set(sessionID, entry);
+    return entry;
+  }
+
+  /** Start a run with `text` as a synthetic message. Never throws. */
+  async function inject(sessionID: string, text: string): Promise<void> {
+    try {
+      await session.synthetic({ sessionID, text, resume: true });
+    } catch (error) {
+      // No retry: the breaker count stays incremented, so the next run retries.
+      log("continuation synthetic failed", error);
+    }
+  }
+
+  async function continueSession(sessionID: string): Promise<void> {
+    if (inFlight.has(sessionID)) {
+      log(`continuation already in flight for ${sessionID}`);
+      return;
+    }
+    inFlight.add(sessionID);
+    try {
+      // Ahead of every state write: a stop the user asked for must neither
+      // inject nor advance the breaker. The ralplan state is left `active`, so
+      // the next real user turn resumes continuation normally.
+      if (interrupted.has(sessionID)) {
+        log("user interrupt; skipping continuation");
+        return;
+      }
+      // OMC skips while owned background work is pending
+      // (persistent-mode/index.ts:529-537); the host resumes the parent when
+      // the child completes, and that later `succeeded` is judged normally.
+      if ((running.get(sessionID)?.size ?? 0) > 0) {
+        log("child executions running; skipping continuation");
+        return;
+      }
+
+      // A subagent runs in its own session with its own directory, so this read
+      // returns undefined and the decision is `skip` at the first clause.
+      const state = await readState(sessionID);
+      const decision = shouldContinue(state, Date.now());
+
+      if (decision.kind === "skip") {
+        if (decision.resetBreaker)
+          await store.patch(sessionID, { breaker_count: 0 }, RALPLAN_MODE);
+        return;
+      }
+
+      if (decision.kind === "breaker") {
+        await store.patch(
+          sessionID,
+          {
+            active: false,
+            breaker_count: 0,
+            deactivated_reason: "stop_breaker_exhausted",
+            completed_at: new Date().toISOString(),
+          },
+          RALPLAN_MODE,
+        );
+        await inject(sessionID, breakerMessage());
+        return;
+      }
+
+      await store.patch(
+        sessionID,
+        {
+          breaker_count: decision.count,
+          breaker_updated_at: new Date().toISOString(),
+        },
+        RALPLAN_MODE,
+      );
+      await inject(sessionID, continuationMessage(decision.count));
+    } finally {
+      inFlight.delete(sessionID);
     }
   }
 
@@ -272,6 +404,10 @@ export function createHooks(
         return;
       }
 
+      // A real user prompt lifts the stop mark. After G2, so a marker-wrapped
+      // fallback notice can never clear it.
+      interrupted.delete(sessionID);
+
       // A mention is checked before the keyword and counts as detected, so a
       // stale seed followed by `@ralplan` is confirmed rather than cleared.
       const skills = event.prompt.skills ?? [];
@@ -380,5 +516,43 @@ export function createHooks(
     }
   };
 
-  return { prompt, executeBefore };
+  const onEvent: RalplanHooks["onEvent"] = async (event) => {
+    try {
+      if (!isRecord(event) || !isRecord(event.data)) return;
+      const { type, data } = event;
+      const sessionID = data.sessionID;
+      if (typeof sessionID !== "string" || sessionID.length === 0) return;
+      if (type === "session.created") {
+        await sessionOf(sessionID, data);
+        return;
+      }
+      if (typeof type !== "string" || !type.startsWith("session.execution."))
+        return;
+      const info = await sessionOf(sessionID);
+      if (!info.own) return;
+
+      if (info.parentID !== undefined) {
+        const children = running.get(info.parentID) ?? new Set<string>();
+        if (type === "session.execution.started") children.add(sessionID);
+        else children.delete(sessionID);
+        if (children.size > 0) running.set(info.parentID, children);
+        else running.delete(info.parentID);
+      }
+
+      if (type === "session.execution.interrupted") {
+        if (STOP_REASONS.has(String(data.reason))) {
+          interrupted.add(sessionID);
+          log(`recorded user interrupt for ${sessionID}`);
+        }
+        return;
+      }
+      // `failed` does not continue.
+      if (type === "session.execution.succeeded")
+        await continueSession(sessionID);
+    } catch (error) {
+      log("execution event handler failed", error);
+    }
+  };
+
+  return { prompt, executeBefore, onEvent };
 }

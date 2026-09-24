@@ -44,10 +44,22 @@ export default Plugin.define({
     });
     await registerSkills(ctx.skill, skills);
     // 5. Prompt and tool hooks (execute.after: Step 6).
-    const hooks = createHooks(store, ctx.session, packageRoot);
+    const hooks = createHooks(store, ctx.session, packageRoot, locationDir);
     await ctx.session.hook("prompt", hooks.prompt);
     await ctx.tool.hook("execute.before", hooks.executeBefore);
-    // 6. Event loop with an AbortController: Step 5.
-    // 7. Cleanup: abort the loop and `lspManager.disconnectAll()`: Steps 5–6.
+    // 6. Event loop. Events are handled one at a time, in order, so a child's
+    // `started` is recorded before its parent's `succeeded` is judged.
+    const controller = new AbortController();
+    void (async () => {
+      for await (const event of ctx.event.subscribe({
+        signal: controller.signal,
+      }))
+        await hooks.onEvent(event);
+    })().catch((error) => {
+      if (!controller.signal.aborted)
+        console.warn("[open-gajae] event loop ended:", error);
+    });
+    // 7. Cleanup (`lspManager.disconnectAll()`: Step 6).
+    return () => controller.abort();
   },
 });
