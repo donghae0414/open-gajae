@@ -314,7 +314,7 @@ export function shouldContinue(
 
   // A plain boolean, with no clock and no fallback: OMC clears this on an
   // observed skill load, not on a timer, and this port reproduces that with
-  // the `tool.execute.before` / `command.execute.before` hooks.
+  // the `skill` call in `execute.before` and the `@ralplan` mention.
   if (state.awaiting_confirmation === true) return { kind: "skip" };
 
   const phase = normalizeRalplanPhase(state);
@@ -337,17 +337,20 @@ export function shouldContinue(
  * plugin just seeded cannot immediately raise a restore banner.
  * n4: `started_at` is written exactly once, at activation; re-stamping it would
  * re-arm the restore predicate.
+ * `awaiting: false` is the `@ralplan` mention seed: the host has already
+ * attached the skill, so there is no load left to confirm.
  */
 export function seedState(
   existing: RalplanStateSnapshot,
   now: string,
+  { awaiting = true }: { awaiting?: boolean } = {},
 ): ExplicitStatePatch | undefined {
   if (existing?.active === true) return undefined;
   return {
     active: true,
     current_phase: "ralplan",
     started_at: now,
-    awaiting_confirmation: true,
+    awaiting_confirmation: awaiting,
     restored_at: now,
     breaker_count: 0,
   };

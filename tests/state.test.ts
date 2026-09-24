@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { sessionDirName, StateStore } from "../src/state";
+import { epochMillis, sessionDirName, StateStore } from "../src/state";
 
 // A fixed instant; the expected label is derived with the same local getters the
 // implementation uses, so these tests do not depend on the machine's timezone.
@@ -451,4 +451,12 @@ test("patch merges explicit fields into the stored snapshot and validates their 
     const created = await store.patch("s", { restored_at: "now" }, "ralplan");
     expect(created.goal).toBe("retained");
   });
+});
+
+test("a v2 session creation time is read as a number or a DateTime", () => {
+  const ms = Date.parse("2026-09-18T03:09:58+09:00");
+  expect(epochMillis(ms)).toBe(ms);
+  expect(epochMillis({ epochMillis: ms })).toBe(ms);
+  expect(epochMillis(new Date(ms))).toBe(ms);
+  expect(epochMillis("2026-09-18")).toBeNaN();
 });

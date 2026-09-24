@@ -187,6 +187,19 @@ export function formatCreatedLabel(createdMs: number): string {
   );
 }
 
+/**
+ * A v2 session `time.created` as epoch ms. The promise client returns a number
+ * (Phase 0 P7); an Effect `DateTime` carries `epochMillis`, and a `Date` is
+ * accepted too. Anything else is not a time, and `formatCreatedLabel` rejects it.
+ */
+export function epochMillis(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (value instanceof Date) return value.getTime();
+  if (isRecord(value) && typeof value.epochMillis === "number")
+    return value.epochMillis;
+  return Number.NaN;
+}
+
 /** `_session-<YYYYMMDD-HHMMSS>-<native session ID>`, one path component. */
 export function sessionDirName(createdMs: number, sessionID: string): string {
   const name = `${SESSION_DIR_PREFIX}${formatCreatedLabel(createdMs)}-${validateSessionID(sessionID)}`;

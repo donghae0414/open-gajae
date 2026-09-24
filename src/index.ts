@@ -9,6 +9,8 @@ import {
   registerSkills,
   type AgentHost,
 } from "./config";
+import { createHooks } from "./hooks";
+import { epochMillis, StateStore } from "./state";
 
 // v2 is a registration model: transforms are synchronous and replayable, so all
 // file I/O finishes before anything is registered. `setup` registers only the
@@ -25,7 +27,10 @@ export default Plugin.define({
     const plannerPrefix = rel ? `${rel}/` : "";
     // 1. Settings.
     const settings = await loadSettings(projectDir);
-    // 2. StateStore(projectDir, createdAt from ctx.session.get): Steps 4–6.
+    // 2. State store; the session folder label comes from `time.created`.
+    const store = new StateStore(projectDir, async (sessionID) =>
+      epochMillis((await ctx.session.get({ sessionID })).time.created),
+    );
     // 3. Read prompts and SKILL.md files.
     const prompts = await loadPrompts(packageRoot);
     const skills = await loadSkills(packageRoot);
@@ -38,7 +43,10 @@ export default Plugin.define({
       plannerPrefix,
     });
     await registerSkills(ctx.skill, skills);
-    // 5. Prompt and tool hooks: Steps 4–6.
+    // 5. Prompt and tool hooks (execute.after: Step 6).
+    const hooks = createHooks(store, ctx.session, packageRoot);
+    await ctx.session.hook("prompt", hooks.prompt);
+    await ctx.tool.hook("execute.before", hooks.executeBefore);
     // 6. Event loop with an AbortController: Step 5.
     // 7. Cleanup: abort the loop and `lspManager.disconnectAll()`: Steps 5–6.
   },

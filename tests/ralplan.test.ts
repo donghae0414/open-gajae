@@ -248,6 +248,10 @@ test("seedState activates once and never re-seeds an active state", () => {
   expect(patch?.started_at).toBe(patch?.restored_at);
   expect(seedState({ active: true }, now)).toBeUndefined();
   expect(seedState({ active: false }, now)).toBeDefined();
+  // The `@ralplan` mention seed is already confirmed.
+  expect(seedState(undefined, now, { awaiting: false })?.awaiting_confirmation).toBe(
+    false,
+  );
 });
 
 test("no awaiting-confirmation timer survives anywhere in src", async () => {
