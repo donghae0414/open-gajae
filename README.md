@@ -7,6 +7,7 @@ An OpenCode plugin with session-bound `deep-interview` and `ralplan` skills, six
 ## Scope and status
 
 - The baseline is OMC v5.4.0, commit `5281b19e0d64f8e6dc6767f2130299a88af2dc71`. OMX is not a current behavior source.
+- The target host is OpenCode v2, and the local `opencode/` reference is pinned to `v2.0.15` (`6f3639d82e`). The current implementation is still a v1 plugin and is not yet ported to v2: a v2 host does not load it.
 - Implemented scope: `deep-interview` and `ralplan`; `open-gajae`, `open-gajae-explore`, and `open-gajae-document-specialist`; the `open-gajae-planner`, `open-gajae-architect`, and `open-gajae-critic` consensus roles; session state; native document output; read-only AST/LSP tools; and optional advisory company context.
 - `ralplan` is implemented and ends at a plan marked `pending approval`. Not provided: ultragoal, autopilot, team, ralph, autoresearch, plan execution handoff (the deep-interview → ralplan planning bridge is provided), shared session state, or automatic migration/recovery.
 - This documentation describes the implemented contract; it does not establish Phase-1 completion.
@@ -15,7 +16,7 @@ See [AGENTS.md](AGENTS.md) for development policy, the [porting guide](docs/anal
 
 ## Build and local registration
 
-The package uses `@opencode-ai/plugin` 1.18.30. Host probes used OpenCode 1.18.31; that observation is not a general compatibility guarantee.
+The package currently uses the v1 plugin API, `@opencode-ai/plugin` 1.18.30, so the steps below apply only to an OpenCode v1 host. Host probes used OpenCode 1.18.31; that observation is not a general compatibility guarantee. Installation on a v2 host will be defined after the v2 port; see [the v1 local install record](docs/local-install-v1.md) for the previous setup.
 
 ```sh
 bun install

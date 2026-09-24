@@ -7,6 +7,7 @@
 ## 범위와 상태
 
 - 기준은 OMC v5.4.0 커밋 `5281b19e0d64f8e6dc6767f2130299a88af2dc71`입니다. OMX는 현재 동작의 원천이 아닙니다.
+- 대상 호스트는 OpenCode v2이고, 로컬 `opencode/` 참조는 `v2.0.15`(`6f3639d82e`)에 고정되어 있습니다. 현재 구현은 아직 v1 플러그인이며 v2로 이식되지 않았습니다. v2 호스트는 이 플러그인을 로드하지 않습니다.
 - 구현 범위는 `deep-interview`와 `ralplan`, `open-gajae`/`open-gajae-explore`/`open-gajae-document-specialist`, `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic` 합의 역할, 세션 상태, native 문서 출력, 읽기 전용 AST/LSP, 선택적 advisory company context입니다.
 - `ralplan`은 제공하며 `pending approval` 상태의 plan에서 끝납니다. ultragoal, autopilot, team, ralph, autoresearch, 계획 실행 핸드오프(deep-interview → ralplan 계획 bridge는 제공), 공유 세션 상태, 자동 migration/recovery는 제공하지 않습니다.
 - 이 문서는 구현 계약을 설명하며 Phase-1 완료를 입증하지 않습니다.
@@ -15,7 +16,7 @@
 
 ## 빌드와 로컬 등록
 
-패키지는 `@opencode-ai/plugin` 1.18.30을 사용합니다. 부모가 수행한 host probe는 OpenCode 1.18.31을 사용했지만, 이는 일반 호환성 보장이 아닙니다.
+패키지는 현재 v1 플러그인 API인 `@opencode-ai/plugin` 1.18.30을 사용하므로, 아래 절차는 OpenCode v1 호스트에만 해당합니다. 부모가 수행한 host probe는 OpenCode 1.18.31을 사용했지만, 이는 일반 호환성 보장이 아닙니다. v2 호스트 설치 방법은 v2 이식 뒤에 정하며, 이전 설정은 [v1 로컬 설치 기록](docs/local-install-v1.md)을 참고하세요.
 
 ```sh
 bun install
