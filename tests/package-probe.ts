@@ -1,117 +1,94 @@
-import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+// v2 package probe (plan Step 8, Q4): the packed package loads as TS source
+// with no build step.
+//   1. `npm pack` the repository; the tarball carries index.ts and src/, no dist/.
+//   2. Install the tarball into a disposable directory and point the disposable
+//      host config's `plugins` at the installed package directory.
+//   3. Name the tarball as a package spec (`open-gajae@file:<tgz>`), so the
+//      host installs it with its own installer into the disposable cache.
+// Each case must load id `open-gajae` from the installed TS source and
+// register the six agents and eleven tools. npm runs with a disposable HOME
+// and cache; the install needs registry access for the dependencies.
+// Run: `bun ./tests/package-probe.ts`.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
+import {
+  AGENTS,
+  directive,
+  OUR_TOOLS,
+  REPO,
+  runProbe,
+  waitFor,
+  withHost,
+  type Host,
+  type Report,
+} from "./host-harness";
 
-const root = resolve(import.meta.dir, "..");
-const base = await mkdtemp(join(tmpdir(), "open-gajae-package-"));
-const consumer = join(base, "consumer"),
-  home = join(base, "home");
-const evidence: {
-  command: string[];
-  cwd: string;
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}[] = [];
-const env = {
-  ...process.env,
-  HOME: home,
-  XDG_CONFIG_HOME: join(home, "config"),
-  XDG_CACHE_HOME: join(home, "cache"),
-  XDG_DATA_HOME: join(home, "data"),
-  XDG_STATE_HOME: join(home, "state"),
-};
-async function run(command: string[], cwd: string) {
-  const child = Bun.spawn(command, {
-    cwd,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
+async function loads(report: Report, host: Host, label: string, expectedEntry: (path: string) => boolean | Promise<boolean>) {
+  const session = await host.createSession({ agent: "open-gajae" });
+  await host.turn(session, directive({ tag: label, steps: [] }), {}, 180_000);
+  const plugin = (await host.list("/api/plugin")).find((p) => p.id === "open-gajae");
+  report.check(`${label}: plugin open-gajae is active`, plugin?.state?.status === "active", plugin);
+  report.check(`${label}: loaded from the installed TS entry`, await expectedEntry(String(plugin?.source?.path ?? "")), plugin?.source);
+  const agents = (await host.list("/api/agent")).map((a) => a.id ?? a.name).filter((id) => AGENTS.includes(id));
+  report.check(`${label}: six agents registered`, agents.length === 6, agents);
+  const tools = host.provider.thread(label)[0]?.tools ?? [];
+  report.check(`${label}: eleven plugin tools offered`, OUR_TOOLS.every((t) => tools.includes(t)), tools);
+}
+
+await runProbe("open-gajae-package-probe", async (report, scratch) => {
+  const npmHome = join(scratch, "npm-home");
+  const npmEnv = {
+    ...process.env,
+    HOME: npmHome,
+    npm_config_cache: join(npmHome, ".npm"),
+    npm_config_userconfig: join(npmHome, ".npmrc"),
+    npm_config_audit: "false",
+    npm_config_fund: "false",
+    npm_config_update_notifier: "false",
+  };
+  const packDir = join(scratch, "pack");
+  const consumer = join(scratch, "consumer");
+  for (const dir of [npmHome, packDir, consumer]) mkdirSync(dir, { recursive: true });
+
+  const pack = spawnSync("npm", ["pack", "--json", "--pack-destination", packDir], { cwd: REPO, env: npmEnv, encoding: "utf8" });
+  report.check("npm pack succeeded", pack.status === 0, pack.stderr.slice(-1_000));
+  const packed = JSON.parse(pack.stdout)[0];
+  const files: string[] = packed.files.map((f: any) => f.path);
+  const tarball = join(packDir, packed.filename);
+  report.check("tarball has no dist/", !files.some((f) => f.startsWith("dist/")), files.filter((f) => f.startsWith("dist/")));
+  report.check(
+    "tarball carries the TS entry, sources, skills and prompts",
+    ["index.ts", "src/index.ts", "skills/ralplan/SKILL.md", "skills/deep-interview/SKILL.md", "prompts/open-gajae.md", "package.json"].every((f) =>
+      files.includes(f),
+    ),
+    files,
+  );
+
+  writeFileSync(join(consumer, "package.json"), JSON.stringify({ name: "consumer", private: true }));
+  const install = spawnSync("npm", ["install", tarball], { cwd: consumer, env: npmEnv, encoding: "utf8" });
+  report.check("npm install <tarball> succeeded", install.status === 0, install.stderr.slice(-1_000));
+  const installed = join(consumer, "node_modules/open-gajae");
+
+  await withHost(report, join(scratch, "host-dir"), { plugins: [installed] }, async (host) => {
+    await loads(report, host, "installed-dir", (path) => path === join(installed, "index.ts"));
   });
-  const timer = setTimeout(() => child.kill(), 60000);
-  try {
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-      child.exited,
-    ]);
-    evidence.push({ command, cwd, exitCode, stdout, stderr });
-    if (exitCode !== 0)
-      throw new Error(`${command.join(" ")} exited ${exitCode}\n${stderr}`);
-    return stdout;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-try {
-  await mkdir(consumer);
-  await mkdir(home);
-  await run([process.execPath, "pm", "pack", "--destination", base], root);
-  const archive = (await readdir(base)).find((name) => name.endsWith(".tgz"));
-  if (!archive) throw new Error("Package archive was not produced");
-  await writeFile(
-    join(consumer, "package.json"),
-    JSON.stringify({
-      name: "open-gajae-fixture-consumer",
-      private: true,
-      type: "module",
-    }),
-  );
-  await run([process.execPath, "add", join(base, archive)], consumer);
-  const script = `
-import plugin from 'open-gajae';
-import { readFile, mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-const worktree=process.cwd();
-// The plugin resolves each session's creation time through the host client.
-const client={session:{get:async({path})=>({data:{id:path.id,time:{created:Date.parse('2026-09-18T03:09:58+09:00')}},error:undefined})}};
-const hooks=await plugin({worktree,client});
-const config={agent:{build:{prompt:'unchanged'}},permission:{read:'allow'}};
-await hooks.config(config);
-if(config.agent.build.prompt!=='unchanged')throw new Error('Unrelated primary changed');
-for(const name of ['open-gajae','open-gajae-explore','open-gajae-document-specialist'])if(!config.agent[name]?.prompt)throw new Error('Missing packaged role '+name);
-const ctx={agent:'open-gajae',sessionID:'package-session',messageID:'m',directory:worktree,worktree,abort:new AbortController().signal,metadata(){},async ask(){}};
-const result=JSON.parse(await hooks.tool.state_write.execute({mode:'deep-interview',state:{consumer:true}},ctx));
-if(result.state.consumer!==true)throw new Error('Packaged state API failed');
-await writeFile(join(worktree,'sample.ts'),'console.log(42);');
-const found=await hooks.tool.ast_grep_search.execute({pattern:'console.log($X)',language:'typescript',path:'sample.ts'},ctx);
-if(!found.includes('Found 1 match'))throw new Error('Packaged native dependency failed: '+found);
-await mkdir(result.specsDir,{recursive:true});const doc=join(result.specsDir,'deep-interview-package.md');await writeFile(doc,'# Consumer spec');
-await hooks.tool.state_clear.execute({mode:'deep-interview'},ctx);
-if(await readFile(doc,'utf8')!=='# Consumer spec')throw new Error('Clear deleted document');
-console.log(JSON.stringify({status:'passed',tools:Object.keys(hooks.tool),skillPaths:config.skills.paths,roles:Object.keys(config.agent),statePath:result.statePath}));
-`;
-  await writeFile(join(consumer, "verify.mjs"), script);
-  await run([process.execPath, "verify.mjs"], consumer);
-  console.log(
-    JSON.stringify(
-      {
-        kind: "package-consumer-report",
-        status: "passed",
-        evidence,
-        limitations: [
-          "Consumer process is standalone Bun; installed OpenCode coverage is separate.",
-          "No registry publication was performed.",
-        ],
-      },
-      null,
-      2,
-    ),
-  );
-} catch (error) {
-  console.error(
-    JSON.stringify(
-      {
-        kind: "package-consumer-report",
-        status: "failed",
-        error: String(error),
-        evidence,
-      },
-      null,
-      2,
-    ),
-  );
-  process.exitCode = 1;
-} finally {
-  await rm(base, { recursive: true, force: true });
-}
+
+  await withHost(report, join(scratch, "host-spec"), { plugins: [`open-gajae@file:${tarball}`] }, async (host) => {
+    // A package source records no path; the host log names the entrypoint,
+    // which for an installed package comes from `package.json` `exports`.
+    // The log is flushed asynchronously, so poll it.
+    await loads(report, host, "named-spec", () =>
+      waitFor(
+        "named-spec entrypoint logged",
+        () => {
+          const log = join(host.home, ".local/share/opencode/log/opencode.log");
+          const text = existsSync(log) ? readFileSync(log, "utf8") : "";
+          const entry = text.match(/msg="loading plugin" id=open-gajae@file:\S+ entrypoint=file:\/\/(\S+)/)?.[1] ?? "";
+          return entry.startsWith(host.root) && entry.endsWith("/node_modules/open-gajae/src/index.ts");
+        },
+        15_000,
+      ).catch(() => false),
+    );
+  });
+});

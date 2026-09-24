@@ -1,1436 +1,290 @@
+// v2 host session probe (plan Step 8): prompt-hook entry paths, the
+// deep-interview → ralplan bridge's `skill` call, and continuation on durable
+// execution events, driven through the installed 2.0.15 host with the
+// deterministic fake provider from `host-harness.ts`.
+// Run: `bun ./tests/host-session-probe.ts`.
+import { join } from "node:path";
 import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  realpath,
-  rename,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
-import { once } from "node:events";
-import { spawn, type ChildProcess } from "node:child_process";
-import { tmpdir } from "node:os";
-import { basename, join, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
-import { continuationMessage, INJECTION_MARKERS } from "../src/ralplan";
-import { SESSION_DIR_PREFIX, sessionDirName } from "../src/state";
+  directive,
+  REPO,
+  runProbe,
+  sleep,
+  waitFor,
+  withHost,
+  type Host,
+  type ProviderEntry,
+  type Report,
+} from "./host-harness";
 
-// This is an integration fixture: it drives the installed OpenCode server and a local
-// OpenAI-compatible provider. It does not emulate OpenCode tools or plugin contexts.
-const host =
-  process.env.OPEN_GAJAE_TEST_HOST ??
-  join(process.env.HOME ?? "", ".opencode/bin/opencode");
-const packageRoot = resolve(import.meta.dir, "..");
-const base = await realpath(
-  await mkdtemp(join(tmpdir(), "open-gajae-host-session-")),
-);
-const root = join(base, "project");
-const home = join(base, "home");
-const events: Array<Record<string, unknown>> = [];
-const providerRequests: Array<Record<string, unknown>> = [];
-const hostLogs: { stdout: string; stderr: string } = { stdout: "", stderr: "" };
-// Workstream 0 spike, kept as a permanent regression probe. The observer is a
-// throwaway second plugin written into this fixture's scratch directory, not a
-// hook in src/index.ts: it observes the same host `plugin.trigger("chat.message",
-// …)` call, mutates nothing, and leaves the shipped plugin clean.
-const ralplanProbeLog = join(base, "ralplan-chat-message.log");
-const ralplanObserverPlugin = join(base, "ralplan-chat-message-observer.mjs");
-// Shared by the fixture provider's task call and the log matcher below, so the
-// two cannot drift apart and silently turn the spike inconclusive.
-const ralplanSubagentPrompt =
-  "Report one repository fact for the ralplan subagent spike.";
-let child: ChildProcess | undefined;
-let provider: ReturnType<typeof Bun.serve> | undefined;
-let failed = false;
-
-function fail(message: string): never {
-  throw new Error(message);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * The folder name the plugin will pick for this session. The host runs on this
- * machine, so `sessionDirName` formats `time.created` in the same local time.
- */
-function sessionFolderName(session: Record<string, unknown>): string {
-  const time = session.time;
-  const created = isRecord(time) ? time.created : undefined;
-  if (typeof session.id !== "string" || typeof created !== "number")
-    fail(`Session lacks id or time.created: ${JSON.stringify(session)}`);
-  return sessionDirName(created, session.id);
-}
-
-async function delay(milliseconds: number) {
-  await new Promise<void>((resolveDelay) =>
-    setTimeout(resolveDelay, milliseconds),
-  );
-}
-
-async function waitFor<T>(
-  name: string,
-  action: () => Promise<T | undefined>,
-  timeout = 20_000,
-): Promise<T> {
-  const deadline = Date.now() + timeout;
-  let lastError: unknown;
-  while (Date.now() < deadline) {
-    try {
-      const value = await action();
-      if (value !== undefined) return value;
-    } catch (error) {
-      lastError = error;
-    }
-    await delay(150);
-  }
-  fail(`${name} timed out${lastError ? `: ${String(lastError)}` : ""}`);
-}
-
-async function runVersion(environment: NodeJS.ProcessEnv) {
-  return await new Promise<string>((resolveVersion, reject) => {
-    const process = spawn(host, ["--version"], {
-      cwd: root,
-      env: environment,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let output = "";
-    let errorOutput = "";
-    const timer = setTimeout(() => process.kill("SIGKILL"), 15_000);
-    process.stdout.on("data", (data) => {
-      output += data;
-    });
-    process.stderr.on("data", (data) => {
-      errorOutput += data;
-    });
-    process.on("error", reject);
-    process.on("close", (code) => {
-      clearTimeout(timer);
-      if (code !== 0)
-        reject(
-          new Error(`OpenCode --version failed (${code}): ${errorOutput}`),
-        );
-      else resolveVersion(output.trim());
-    });
-  });
-}
-
-async function startHost(environment: NodeJS.ProcessEnv) {
-  child = spawn(host, ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
-    cwd: root,
-    env: environment,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  // `pipe` above guarantees these streams; Node's generic ChildProcess type
-  // still marks them nullable because it also represents inherited stdio.
-  child.stdout!.on("data", (data) => {
-    hostLogs.stdout += data;
-  });
-  child.stderr!.on("data", (data) => {
-    hostLogs.stderr += data;
-  });
-  return await waitFor("OpenCode serve", async () => {
-    const match = hostLogs.stdout.match(
-      /opencode server listening on (http:\/\/[^\s]+)/,
-    );
-    if (match?.[1]) return match[1];
-    if (child?.exitCode !== null && child?.exitCode !== undefined)
-      fail(
-        `OpenCode serve exited (${child.exitCode}): ${hostLogs.stderr || hostLogs.stdout}`,
-      );
+const RALPLAN_NOTICE = "[MODE: RALPLAN]";
+const MAGIC_NOTICE = "[MAGIC KEYWORD: DEEP-INTERVIEW]";
+const mention = (id: string) => ({
+  skills: [{ id, mention: { start: 0, end: id.length + 1, text: `@${id}` } }],
+});
+const occurrences = (entry: ProviderEntry | undefined, needle: string) =>
+  (entry?.messages ?? []).reduce((n, m) => n + m.text.split(needle).length - 1, 0);
+const parse = (text: string | undefined): any => {
+  try {
+    return JSON.parse(text ?? "");
+  } catch {
     return undefined;
-  });
-}
+  }
+};
+const continuations = (host: Host, tag: string) =>
+  host.provider.thread(tag).filter((e) => e.kind === "continuation");
 
-async function stopHost() {
-  if (!child || child.exitCode !== null) return;
-  child.kill("SIGKILL");
-  await Promise.race([once(child, "close"), delay(5_000)]);
-}
-
-function textResponse(text: string) {
-  const chunk = {
-    id: "chatcmpl-open-gajae-fixture",
-    object: "chat.completion.chunk",
-    created: Math.floor(Date.now() / 1000),
-    model: "fixture-model",
-    choices: [
-      {
-        index: 0,
-        delta: { role: "assistant", content: text },
-        finish_reason: null,
-      },
-    ],
-  };
-  const done = {
-    ...chunk,
-    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-  };
-  return new Response(
-    `data: ${JSON.stringify(chunk)}\n\ndata: ${JSON.stringify(done)}\n\ndata: [DONE]\n\n`,
-    {
-      headers: {
-        "content-type": "text/event-stream",
-        "cache-control": "no-cache",
-      },
-    },
+async function keywordEntry(report: Report, host: Host) {
+  // Keyword → awaiting seed + notice; the `skill` call confirms it; the
+  // `succeeded` that follows re-enters through a synthetic resume.
+  const s = await host.createSession({ agent: "open-gajae" });
+  const since = Date.now();
+  await host.prompt(
+    s,
+    `ralplan the cache layer\n${directive({
+      tag: "kw",
+      clearAfter: 2,
+      steps: [
+        { tool: "state_read", args: { mode: "ralplan" } },
+        { tool: "skill", args: { id: "ralplan" } },
+      ],
+    })}`,
   );
+  await waitFor("kw cleared", () => continuations(host, "kw").some((e) => e.count === 2 && e.step >= 1), 90_000);
+  await host.settle(s);
+  const thread = host.provider.thread("kw");
+  const first = thread.find((e) => e.kind === "directive" && e.step === 0);
+  const notice = first?.messages.findIndex((m) => m.text.includes(RALPLAN_NOTICE)) ?? -1;
+  const user = first?.messages.findIndex((m) => m.text.includes('"tag":"kw"')) ?? -1;
+  report.check(
+    `keyword: ralplan notice in the same turn (position: ${notice < user ? "before" : "after"} the user message)`,
+    notice >= 0 && user >= 0 && occurrences(first, RALPLAN_NOTICE) === 1,
+    { notice, user },
+  );
+  const seeded = parse(thread.find((e) => e.step === 1 && e.kind === "directive")?.toolResults.at(-1))?.state;
+  report.check(
+    "keyword: seed is active and awaiting the skill call",
+    seeded?.active === true && seeded?.awaiting_confirmation === true,
+    seeded,
+  );
+  const skillResult = thread.find((e) => e.step === 2 && e.kind === "directive")?.toolResults.at(-1) ?? "";
+  report.check(
+    "keyword: skill({ id: \"ralplan\" }) loads the skill",
+    !/"error"|Invalid arguments/.test(skillResult) && skillResult.includes("ralplan"),
+    skillResult.slice(0, 300),
+  );
+  const [c1, c2] = [1, 2].map((n) => continuations(host, "kw").find((e) => e.count === n && e.step === 0));
+  report.check(
+    "continuation re-enters after a synthetic resume on succeeded (1/30, then 2/30)",
+    !!c1 && !!c2 && c1.system === first?.system,
+    { c1: !!c1, c2: !!c2, sameAgent: c1?.system === first?.system },
+  );
+  const types = host.sessionEvents(s, since).map((e) => e.type);
+  report.check(
+    "continuation: each succeeded is followed by a new execution until state_clear",
+    types.filter((t) => t === "session.execution.started").length >= 3 &&
+      !continuations(host, "kw").some((e) => (e.count ?? 0) > 2),
+    types,
+  );
+  report.check("continuation: ralplan state cleared by state_clear", host.ralplanState(s) === undefined, host.ralplanState(s));
 }
 
-function toolResponse(name: string, id: string, args: Record<string, unknown>) {
-  // The installed AI SDK provider requests streaming chat completions. Emit the
-  // native OpenAI SSE tool-call shape rather than shortcutting a host tool result.
-  events.push({ kind: "provider-tool-call", name, id, args });
-  const created = Math.floor(Date.now() / 1000);
-  const call = {
-    id: "chatcmpl-open-gajae-fixture",
-    object: "chat.completion.chunk",
-    created,
-    model: "fixture-model",
-    choices: [
-      {
-        index: 0,
-        delta: {
-          role: "assistant",
-          tool_calls: [
-            {
-              index: 0,
-              id,
-              type: "function",
-              function: { name, arguments: JSON.stringify(args) },
-            },
-          ],
+async function ralplanMention(report: Report, host: Host) {
+  const s = await host.createSession({ agent: "open-gajae" });
+  await host.prompt(
+    s,
+    `@ralplan plan the cache layer\n${directive({ tag: "mention", steps: [{ tool: "state_read", args: { mode: "ralplan" } }] })}`,
+    mention("ralplan"),
+  );
+  await waitFor("mention continuation", () => continuations(host, "mention").some((e) => e.step >= 1), 60_000);
+  await host.settle(s);
+  const thread = host.provider.thread("mention");
+  const first = thread.find((e) => e.kind === "directive" && e.step === 0);
+  const seeded = parse(thread.find((e) => e.kind === "directive" && e.step === 1)?.toolResults.at(-1))?.state;
+  report.check(
+    "@ralplan mention: host attached the ralplan skill",
+    (first?.messages ?? []).some((m) => m.text.includes('<skill_content name="ralplan"')),
+  );
+  report.check(
+    "@ralplan mention: seed is confirmed (active, not awaiting) with no keyword notice",
+    seeded?.active === true && seeded?.awaiting_confirmation === false && occurrences(first, RALPLAN_NOTICE) === 0,
+    { seeded, notices: occurrences(first, RALPLAN_NOTICE) },
+  );
+  report.check("@ralplan mention: continuation runs without a skill call", continuations(host, "mention").length >= 1);
+}
+
+async function deepInterviewEntries(report: Report, host: Host) {
+  const s = await host.createSession({ agent: "open-gajae" });
+  await host.turn(s, `@deep-interview build a todo app\n${directive({ tag: "di-mention", steps: [] })}`, mention("deep-interview"));
+  const first = host.provider.thread("di-mention")[0];
+  report.check(
+    "@deep-interview mention: exactly one magic notice (Q8)",
+    occurrences(first, MAGIC_NOTICE) === 1,
+    occurrences(first, MAGIC_NOTICE),
+  );
+  report.check("@deep-interview mention: no ralplan state", host.ralplanState(s) === undefined);
+
+  const k = await host.createSession({ agent: "open-gajae" });
+  await host.turn(k, `deep-interview a todo app\n${directive({ tag: "di-keyword", steps: [] })}`);
+  const keyword = host.provider.thread("di-keyword")[0];
+  report.check("deep-interview keyword: exactly one magic notice", occurrences(keyword, MAGIC_NOTICE) === 1, occurrences(keyword, MAGIC_NOTICE));
+}
+
+async function bridge(report: Report, host: Host) {
+  // The fake provider plays the model after the "Refine with ralplan" choice.
+  // A real model's choice of the `skill` input field (Q2 wording) is only
+  // observable with a real model: manual checklist item 1.
+  const s = await host.createSession({ agent: "open-gajae" });
+  const since = Date.now();
+  await host.prompt(
+    s,
+    `@deep-interview build a todo app\n${directive({
+      tag: "bridge",
+      steps: [
+        {
+          tool: "question",
+          args: {
+            questions: [
+              {
+                question: "The spec is ready. What next?",
+                header: "Next",
+                options: [
+                  { label: "Refine with ralplan consensus", description: "plan it" },
+                  { label: "Finish", description: "stop" },
+                ],
+              },
+            ],
+          },
         },
-        finish_reason: null,
-      },
-    ],
-  };
-  const done = {
-    id: "chatcmpl-open-gajae-fixture",
-    object: "chat.completion.chunk",
-    created,
-    model: "fixture-model",
-    choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
-  };
-  return new Response(
-    `data: ${JSON.stringify(call)}\n\ndata: ${JSON.stringify(done)}\n\ndata: [DONE]\n\n`,
-    {
-      headers: {
-        "content-type": "text/event-stream",
-        "cache-control": "no-cache",
-      },
-    },
+        { tool: "skill", args: { id: "ralplan" } },
+        { tool: "state_read", args: { mode: "ralplan" } },
+        {
+          tool: "state_write",
+          args: {
+            mode: "ralplan",
+            active: true,
+            current_phase: "ralplan",
+            awaiting_confirmation: false,
+            started_at: new Date().toISOString(),
+            restored_at: new Date().toISOString(),
+          },
+        },
+      ],
+    })}`,
+    mention("deep-interview"),
+  );
+  const form = await waitFor(
+    "bridge question form",
+    async () => (await host.list(`/api/session/${s}/form`))[0],
+    30_000,
+  );
+  await host.api("POST", `/api/session/${s}/form/${form.id}/reply`, { answer: { q0: "Refine with ralplan consensus" } });
+  await waitFor("bridge continuation", () => continuations(host, "bridge").some((e) => e.step >= 1), 60_000);
+  await host.settle(s);
+  const thread = host.provider.thread("bridge");
+  const skillCalls = thread
+    .flatMap((e) => e.body.messages)
+    .filter((m: any) => m.role === "assistant")
+    .flatMap((m: any) => m.tool_calls ?? [])
+    .filter((call: any) => call.function?.name === "skill");
+  const uniqueSkillCalls = new Set(skillCalls.map((call: any) => call.id)).size;
+  const skillResult = thread.find((e) => e.kind === "directive" && e.step === 2)?.toolResults.at(-1) ?? "";
+  report.check(
+    "bridge: one skill({ id: \"ralplan\" }) call, accepted on the first attempt",
+    uniqueSkillCalls === 1 && !/"error"|Invalid arguments/.test(skillResult) && skillResult.includes("ralplan"),
+    { uniqueSkillCalls, skillResult: skillResult.slice(0, 300) },
+  );
+  const written = parse(thread.find((e) => e.kind === "directive" && e.step === 4)?.toolResults.at(-1))?.state;
+  report.check(
+    "bridge: ralplan entry write confirmed (active, not awaiting) and continuation follows",
+    written?.active === true && written?.awaiting_confirmation === false && continuations(host, "bridge").length >= 1,
+    written,
+  );
+  report.check(
+    "bridge: the answered question ended in succeeded, not interrupted",
+    !host.sessionEvents(s, since).some((e) => e.type === "session.execution.interrupted"),
   );
 }
 
-function findStatePaths(
-  value: unknown,
-): { statePath: string; specsDir: string } | undefined {
-  if (isRecord(value)) {
-    if (
-      typeof value.statePath === "string" &&
-      typeof value.specsDir === "string"
-    )
-      return { statePath: value.statePath, specsDir: value.specsDir };
-    for (const nested of Object.values(value)) {
-      const result = findStatePaths(nested);
-      if (result) return result;
-    }
-    return undefined;
-  }
-  if (Array.isArray(value)) {
-    for (const nested of value) {
-      const result = findStatePaths(nested);
-      if (result) return result;
-    }
-    return undefined;
-  }
-  if (typeof value === "string") {
-    try {
-      return findStatePaths(JSON.parse(value));
-    } catch {
-      return undefined;
-    }
-  }
-  return undefined;
-}
-
-function findStatePathsForSession(value: unknown, sessionID: string) {
-  // Every session folder ends with the native session ID.
-  const expected = `-${sessionID}${sep}`;
-  const visit = (
-    candidate: unknown,
-  ): { statePath: string; specsDir: string } | undefined => {
-    if (isRecord(candidate)) {
-      if (
-        typeof candidate.statePath === "string" &&
-        typeof candidate.specsDir === "string" &&
-        candidate.statePath.includes(SESSION_DIR_PREFIX) &&
-        candidate.statePath.includes(expected) &&
-        candidate.specsDir.includes(expected)
-      )
-        return { statePath: candidate.statePath, specsDir: candidate.specsDir };
-      for (const nested of Object.values(candidate)) {
-        const result = visit(nested);
-        if (result) return result;
-      }
-      return undefined;
-    }
-    if (Array.isArray(candidate)) {
-      for (const nested of candidate) {
-        const result = visit(nested);
-        if (result) return result;
-      }
-      return undefined;
-    }
-    if (typeof candidate === "string") {
-      try {
-        return visit(JSON.parse(candidate));
-      } catch {
-        return undefined;
-      }
-    }
-    return undefined;
-  };
-  return visit(value);
-}
-
-function toolNames(payload: unknown) {
-  if (!isRecord(payload) || !Array.isArray(payload.tools)) return [];
-  return payload.tools.flatMap((tool) => {
-    if (
-      !isRecord(tool) ||
-      !isRecord(tool.function) ||
-      typeof tool.function.name !== "string"
-    )
-      return [];
-    return [tool.function.name];
-  });
-}
-
-async function main() {
-  await mkdir(root);
-  await mkdir(home);
-  const git = Bun.spawnSync(["git", "init", "--quiet", root], {
-    env: { ...process.env, HOME: home, GIT_CONFIG_NOSYSTEM: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  if (git.exitCode !== 0)
-    fail(`Fixture git init failed: ${git.stderr.toString()}`);
-  await writeFile(join(root, "sample.ts"), "export const fixture = true;\n");
-  // The markers are interpolated from the module under test, so the observer
-  // cannot drift from what the builders actually emit.
-  await writeFile(
-    ralplanObserverPlugin,
-    `import { appendFile } from "node:fs/promises";
-const MARKERS = ${JSON.stringify(INJECTION_MARKERS)};
-const LOG = ${JSON.stringify(ralplanProbeLog)};
-export default async () => ({
-  "chat.message": async (input, output) => {
-    const text = (output.parts ?? [])
-      .filter((part) => part.type === "text")
-      .map((part) => (typeof part.text === "string" ? part.text : ""))
-      .join("");
-    await appendFile(
-      LOG,
-      JSON.stringify({
-        sessionID: input.sessionID,
-        agent: input.agent ?? null,
-        agentFieldPresent: "agent" in input,
-        variant: input.variant ?? null,
-        variantFieldPresent: "variant" in input,
-        markerHit: MARKERS.find((marker) => text.includes(marker)) ?? null,
-        textHead: text.slice(0, 160),
-      }) + "\\n",
-      "utf8",
-    );
+const background = (tag: string, ms: number) => ({
+  tool: "subagent",
+  args: {
+    agent: "open-gajae-explore",
+    description: "background probe",
+    background: true,
+    prompt: directive({ tag, steps: [{ sleep: ms, text: "child-done" }] }),
   },
 });
-`,
+
+async function interruptDuringBackground(report: Report, host: Host) {
+  const s = await host.createSession({ agent: "open-gajae" });
+  const since = Date.now();
+  await host.prompt(
+    s,
+    `@ralplan plan the queue\n${directive({ tag: "int", steps: [background("int-child", 6_000), { sleep: 30_000, text: "parent-late" }] })}`,
+    mention("ralplan"),
   );
-
-  let stage:
-    | "initial"
-    | "question"
-    | "write"
-    | "complete"
-    | "done"
-    | "b-read-absolute"
-    | "b-read-relative"
-    | "b-state-write"
-    | "b-write"
-    | "b-state-clear"
-    | "b-done"
-    | "b-denied-state-write"
-    | "b-denied-done"
-    | "b-denied-write"
-    | "b-denied-write-done"
-    | "missing-read"
-    | "missing-done"
-    | "symlink-read"
-    | "symlink-done"
-    | "ralplan-continuation"
-    | "ralplan-continuation-done"
-    | "ralplan-task"
-    | "ralplan-task-child"
-    | "ralplan-task-done" = "initial";
-  let statePaths: { statePath: string; specsDir: string } | undefined;
-  let secondStatePaths: { statePath: string; specsDir: string } | undefined;
-  let expectedDocument: string | undefined;
-  let secondDocument: string | undefined;
-  let firstAbsoluteDocument: string | undefined;
-  let firstRelativeDocument: string | undefined;
-  let missingPath: string | undefined;
-  let symlinkPath: string | undefined;
-  let secondSessionIDForProvider: string | undefined;
-  provider = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch(request) {
-      const url = new URL(request.url);
-      if (!url.pathname.endsWith("/chat/completions"))
-        return new Response("fixture provider route not found", {
-          status: 404,
-        });
-      return request
-        .json()
-        .then((payload: unknown) => {
-          providerRequests.push({ path: url.pathname, payload });
-          statePaths ??= findStatePaths(payload);
-          if (stage === "b-write" && secondSessionIDForProvider)
-            secondStatePaths ??= findStatePathsForSession(
-              payload,
-              secondSessionIDForProvider,
-            );
-          const available = toolNames(payload);
-          events.push({
-            kind: "provider-request",
-            stage,
-            availableTools: available,
-          });
-          if (stage === "initial") {
-            if (!available.includes("state_write"))
-              return new Response("state_write was not exposed to provider", {
-                status: 400,
-              });
-            stage = "question";
-            return toolResponse("state_write", "call_fixture_state_initial", {
-              mode: "deep-interview",
-              state: {
-                current_phase: "awaiting_human_reply",
-                task_description: "native host session fixture",
-                approval: "A-only approval",
-                checklist: ["[ ] A-only checkbox"],
-              },
-            });
-          }
-          if (stage === "question") {
-            if (!statePaths)
-              return new Response(
-                "state_write result did not contain current-session paths",
-                { status: 400 },
-              );
-            if (!available.includes("question"))
-              return new Response(
-                "native question was not exposed to provider",
-                { status: 400 },
-              );
-            stage = "write";
-            return toolResponse("question", "call_fixture_question", {
-              questions: [
-                {
-                  header: "Fixture decision",
-                  question:
-                    "Which deterministic answer should the host deliver?",
-                  options: [
-                    {
-                      label: "Fixture answer",
-                      description: "Exercise the real question reply endpoint.",
-                    },
-                  ],
-                },
-              ],
-            });
-          }
-          if (stage === "write") {
-            if (!statePaths)
-              return new Response(
-                "missing captured state paths before native Write",
-                { status: 400 },
-              );
-            if (!available.includes("write"))
-              return new Response("native Write was not exposed to provider", {
-                status: 400,
-              });
-            expectedDocument = join(
-              statePaths.specsDir,
-              "deep-interview-fixture.md",
-            );
-            stage = "complete";
-            return toolResponse("write", "call_fixture_write", {
-              filePath: expectedDocument,
-              content:
-                "# Native host-session fixture\n\nAnswer: Fixture answer\n\n- [ ] A-only checkbox\n\nApproval: A-only approval\n",
-            });
-          }
-          if (stage === "complete") {
-            if (!available.includes("state_write"))
-              return new Response(
-                "final state_write was not exposed to provider",
-                { status: 400 },
-              );
-            stage = "done";
-            return toolResponse("state_write", "call_fixture_state_complete", {
-              mode: "deep-interview",
-              state: {
-                current_phase: "completed",
-                task_description: "native host session fixture",
-                answer: "Fixture answer",
-                approval: "A-only approval",
-                checklist: ["[ ] A-only checkbox"],
-              },
-            });
-          }
-          if (stage === "b-read-absolute") {
-            if (!firstAbsoluteDocument || !available.includes("read"))
-              return new Response("B absolute native Read was not available", {
-                status: 400,
-              });
-            stage = "b-read-relative";
-            return toolResponse("read", "call_fixture_b_read_absolute", {
-              filePath: firstAbsoluteDocument,
-            });
-          }
-          if (stage === "b-read-relative") {
-            if (!firstRelativeDocument || !available.includes("read"))
-              return new Response("B relative native Read was not available", {
-                status: 400,
-              });
-            stage = "b-state-write";
-            return toolResponse("read", "call_fixture_b_read_relative", {
-              filePath: firstRelativeDocument,
-            });
-          }
-          if (stage === "b-state-write") {
-            if (!available.includes("state_write"))
-              return new Response("B state_write was not exposed to provider", {
-                status: 400,
-              });
-            stage = "b-write";
-            return toolResponse("state_write", "call_fixture_b_state_write", {
-              mode: "deep-interview",
-              state: {
-                current_phase: "current-session-only",
-                task_description: "second native host session fixture",
-              },
-            });
-          }
-          if (stage === "b-write") {
-            if (!secondStatePaths || !available.includes("write"))
-              return new Response("B native Write was not available", {
-                status: 400,
-              });
-            secondDocument = join(
-              secondStatePaths.specsDir,
-              "deep-interview-fixture.md",
-            );
-            stage = "b-state-clear";
-            return toolResponse("write", "call_fixture_b_write", {
-              filePath: secondDocument,
-              content:
-                "# Native host-session fixture\n\nAnswer: B session only\n\n- [ ] approval does not transfer\n",
-            });
-          }
-          if (stage === "b-state-clear") {
-            if (!available.includes("state_clear"))
-              return new Response("B state_clear was not exposed to provider", {
-                status: 400,
-              });
-            stage = "b-done";
-            return toolResponse("state_clear", "call_fixture_b_state_clear", {
-              mode: "deep-interview",
-            });
-          }
-          if (stage === "b-denied-state-write") {
-            if (!available.includes("state_write")) {
-              stage = "b-denied-done";
-              events.push({
-                kind: "native-tool-filtered",
-                tool: "state_write",
-                reason: "session permission deny",
-              });
-              return textResponse(
-                "state_write denied by native permission filtering; the previously written document remains a separate result.",
-              );
-            }
-            stage = "b-denied-done";
-            return toolResponse(
-              "state_write",
-              "call_fixture_b_denied_state_write",
-              {
-                mode: "deep-interview",
-                state: {
-                  current_phase: "must-not-persist",
-                  task_description: "configured state_write denial",
-                },
-              },
-            );
-          }
-          if (stage === "b-denied-write") {
-            if (!available.includes("write")) {
-              stage = "b-denied-write-done";
-              events.push({
-                kind: "native-tool-filtered",
-                tool: "write",
-                reason: "session edit deny",
-              });
-              return textResponse(
-                "Forbidden replacement was not attempted: write denied by native permission filtering.",
-              );
-            }
-            if (!secondDocument)
-              return new Response(
-                "B denied-write native Write was not exposed to provider",
-                { status: 400 },
-              );
-            stage = "b-denied-write-done";
-            return toolResponse("write", "call_fixture_b_denied_write", {
-              filePath: secondDocument,
-              content: "# Forbidden replacement\n",
-            });
-          }
-          if (stage === "missing-read") {
-            if (!missingPath || !available.includes("read"))
-              return new Response(
-                "missing-path native Read was not available",
-                {
-                  status: 400,
-                },
-              );
-            stage = "missing-done";
-            return toolResponse("read", "call_fixture_missing_read", {
-              filePath: missingPath,
-            });
-          }
-          if (stage === "symlink-read") {
-            if (!symlinkPath || !available.includes("read"))
-              return new Response("symlink native Read was not available", {
-                status: 400,
-              });
-            stage = "symlink-done";
-            return toolResponse("read", "call_fixture_symlink_read", {
-              filePath: symlinkPath,
-            });
-          }
-          // Workstream 0 spike: the model turn itself is irrelevant here. What
-          // is observed is whether the plugin's own `chat.message` hook fired
-          // for the injected continuation prompt, and under which agent.
-          if (stage === "ralplan-continuation") {
-            stage = "ralplan-continuation-done";
-            return textResponse("Ralplan continuation turn observed.");
-          }
-          if (stage === "ralplan-task") {
-            if (!available.includes("task"))
-              return new Response(
-                "native task was not exposed to provider for the subagent spike",
-                { status: 400 },
-              );
-            stage = "ralplan-task-child";
-            return toolResponse("task", "call_fixture_ralplan_task", {
-              description: "Ralplan subagent probe",
-              prompt: ralplanSubagentPrompt,
-              subagent_type: "open-gajae-explore",
-            });
-          }
-          if (stage === "ralplan-task-child") {
-            stage = "ralplan-task-done";
-            return textResponse("Subagent turn observed.");
-          }
-          if (
-            stage === "b-done" ||
-            stage === "b-denied-done" ||
-            stage === "b-denied-write-done" ||
-            stage === "missing-done" ||
-            stage === "symlink-done"
-          )
-            return textResponse("Fixture sequence complete.");
-          return textResponse("Fixture sequence complete.");
-        })
-        .catch(
-          (error) =>
-            new Response(`invalid fixture provider request: ${String(error)}`, {
-              status: 400,
-            }),
-        );
-    },
-  });
-
-  const environment = {
-    ...process.env,
-    HOME: home,
-    XDG_CONFIG_HOME: join(home, "config"),
-    XDG_DATA_HOME: join(home, "data"),
-    XDG_CACHE_HOME: join(home, "cache"),
-    XDG_STATE_HOME: join(home, "state"),
-    OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
-    OPENCODE_DISABLE_MODELS_FETCH: "1",
-    OPENCODE_DISABLE_AUTOUPDATE: "1",
-    OPENCODE_CONFIG_CONTENT: JSON.stringify({
-      plugin: [
-        pathToFileURL(join(packageRoot, "dist/index.js")).href,
-        pathToFileURL(ralplanObserverPlugin).href,
-      ],
-      permission: { "*": "allow" },
-      model: "fixture/fixture-model",
-      provider: {
-        fixture: {
-          npm: "@ai-sdk/openai-compatible",
-          name: "Local deterministic fixture provider",
-          options: {
-            baseURL: `http://127.0.0.1:${provider.port}/v1`,
-            apiKey: "fixture-no-network-key",
-            timeout: 15_000,
-            headerTimeout: 15_000,
-            chunkTimeout: 15_000,
-          },
-          models: {
-            "fixture-model": {
-              name: "Fixture model",
-              tool_call: true,
-              limit: { context: 32_768, output: 4_096 },
-            },
-          },
-        },
-      },
-      agent: { "open-gajae": { model: "fixture/fixture-model" } },
-    }),
-  };
-
-  const version = await runVersion(environment);
-  if (!version.includes("1.18.31"))
-    fail(`Expected OpenCode 1.18.31, got ${version}`);
-  const server = await startHost(environment);
-  const headers = {
-    "content-type": "application/json",
-    "x-opencode-directory": root,
-  };
-  async function api(path: string, init: RequestInit = {}) {
-    const response = await fetch(`${server}${path}`, {
-      ...init,
-      headers: { ...headers, ...init.headers },
-    });
-    const body = await response.text();
-    if (!response.ok)
-      fail(
-        `${init.method ?? "GET"} ${path} failed (${response.status}): ${body}`,
-      );
-    return body.length ? JSON.parse(body) : undefined;
-  }
-  async function waitForIdle(sessionID: string, name: string) {
-    await waitFor(
-      name,
-      async () => {
-        const status = await api("/session/status");
-        if (
-          isRecord(status) &&
-          isRecord(status[sessionID]) &&
-          status[sessionID].type !== "idle"
-        )
-          return undefined;
-        return true;
-      },
-      15_000,
-    );
-  }
-
-  const session = await api("/session", { method: "POST", body: "{}" });
-  if (!isRecord(session) || typeof session.id !== "string")
-    fail(`Session create did not return an id: ${JSON.stringify(session)}`);
-  const sessionID = session.id;
-  const sessionFolder = sessionFolderName(session);
-  const expectedStatePath = join(
-    root,
-    ".open-gajae",
-    sessionFolder,
-    "state",
-    "deep-interview-state.json",
-  );
-  const expectedSpecsDir = join(root, ".open-gajae", sessionFolder, "specs");
-  events.push({ kind: "session-created", sessionID, sessionFolder });
-
-  await api(`/session/${encodeURIComponent(sessionID)}/prompt_async`, {
-    method: "POST",
-    body: JSON.stringify({
-      agent: "open-gajae",
-      model: { providerID: "fixture", modelID: "fixture-model" },
-      parts: [
-        {
-          type: "text",
-          text: "Run the deterministic native host-session fixture.",
-        },
-      ],
-    }),
-  });
-
-  const question = await waitFor("native question request", async () => {
-    const pending = await api("/question");
-    if (
-      !Array.isArray(pending) ||
-      pending.length !== 1 ||
-      !isRecord(pending[0]) ||
-      typeof pending[0].id !== "string"
-    )
-      return undefined;
-    return pending[0];
-  });
-  const questionID = question.id as string;
-  const questionText = JSON.stringify(question);
-  if (!questionText.includes("Fixture decision"))
-    fail(`Unexpected native question payload: ${questionText}`);
-  await api(`/question/${encodeURIComponent(questionID)}/reply`, {
-    method: "POST",
-    body: JSON.stringify({ answers: [["Fixture answer"]] }),
-  });
-  events.push({
-    kind: "question-replied",
-    questionID,
-    answers: [["Fixture answer"]],
-  });
-
+  await waitFor("int step 1 in flight", () => host.provider.thread("int").find((e) => e.step === 1), 30_000);
+  const interrupt = await host.api("POST", `/api/session/${s}/interrupt?resume=true`);
   await waitFor(
-    "provider completion",
-    async () => (stage === "done" ? true : undefined),
-    30_000,
-  );
-  if (
-    !statePaths ||
-    statePaths.statePath !== expectedStatePath ||
-    statePaths.specsDir !== expectedSpecsDir
-  )
-    fail(
-      `state_write did not return trusted current-session paths: ${JSON.stringify(statePaths)}`,
-    );
-  if (!expectedDocument)
-    fail("provider never derived native Write path from state_write output");
-  const state = await waitFor(
-    "completed current-session state",
-    async () => {
-      const text = await readFile(expectedStatePath, "utf8").catch(
-        () => undefined,
-      );
-      if (!text) return undefined;
-      const parsed = JSON.parse(text) as Record<string, unknown>;
-      return parsed.current_phase === "completed" ? parsed : undefined;
-    },
-    30_000,
-  );
-  const document = await waitFor(
-    "native Write document",
-    async () => {
-      const text = await readFile(expectedDocument!, "utf8").catch(
-        () => undefined,
-      );
-      return text ===
-        "# Native host-session fixture\n\nAnswer: Fixture answer\n\n- [ ] A-only checkbox\n\nApproval: A-only approval\n"
-        ? text
-        : undefined;
-    },
-    15_000,
-  );
-  if (expectedDocument !== join(expectedSpecsDir, "deep-interview-fixture.md"))
-    fail("native Write escaped the returned specsDir");
-  // The last state_write occurs after native Write; checking both files now proves the
-  // current-session state update preserved the document rather than replacing its directory.
-  if (!document.includes("Fixture answer") || state.answer !== "Fixture answer")
-    fail("final state or document lost the native reply");
-  if (
-    state.approval !== "A-only approval" ||
-    !Array.isArray(state.checklist) ||
-    !state.checklist.includes("[ ] A-only checkbox") ||
-    !document.includes("[ ] A-only checkbox") ||
-    !document.includes("Approval: A-only approval")
-  )
-    fail("A session did not retain its checkbox and approval evidence");
-  const aStateBytes = await readFile(expectedStatePath);
-  const aDocumentBytes = await readFile(expectedDocument);
+    "host resumes the parent after the child completes",
+    () => host.provider.thread("int").find((e) => e.kind === "other" && e.messages.at(-1)?.text.includes("<subagent")),
+    40_000,
+  ).catch(() => undefined);
+  await host.settle(s, 5_000);
+  const events = host.sessionEvents(s, since);
+  const interrupted = events.find((e) => e.type === "session.execution.interrupted");
+  report.check("interrupt: session.execution.interrupted with reason user", interrupted?.data?.reason === "user", {
+    interrupt: interrupt.json,
+    interrupted: interrupted?.data,
+  });
+  const resumed = host.provider.thread("int").some((e) => e.kind === "other" && e.messages.at(-1)?.text.includes("<subagent"));
+  const laterSucceeded = events.some((e) => e.type === "session.execution.succeeded" && e.t > (interrupted?.t ?? Infinity));
+  report.check("interrupt: the background child's completion resumed the parent (later succeeded)", resumed && laterSucceeded, {
+    resumed,
+    laterSucceeded,
+  });
+  report.check("interrupt: no continuation after the user interrupt", continuations(host, "int").length === 0, continuations(host, "int").length);
+  report.check("interrupt: ralplan state left active", host.ralplanState(s)?.active === true, host.ralplanState(s));
 
-  const messages = await api(
-    `/session/${encodeURIComponent(sessionID)}/message`,
+  // The next real user prompt lifts the mark.
+  await host.prompt(s, `go on\n${directive({ tag: "int-next", steps: [] })}`);
+  await waitFor("continuation after the next real prompt", () => continuations(host, "int-next").some((e) => e.step >= 1), 60_000).catch(
+    () => undefined,
   );
-  const transcript = JSON.stringify(messages);
-  if (!transcript.includes("Fixture answer"))
-    fail("host session messages do not retain the native question answer");
-  if ((transcript.match(/Fixture decision/g) ?? []).length !== 1)
-    fail("host recorded duplicate native question requests");
-  if (transcript.includes("Idle injection"))
-    fail("unexpected idle injection appeared in host messages");
-  if (providerRequests.length < 5)
-    fail(
-      `Expected provider tool pipeline, saw ${providerRequests.length} requests`,
-    );
-  if (!statePaths || !expectedDocument)
-    fail("A session did not expose trusted paths for B's explicit reads");
+  await host.settle(s);
+  report.check("interrupt: the next real prompt re-enables continuation", continuations(host, "int-next").length >= 1);
+}
 
-  // The final state tool can finish before A's final model response. Do not
-  // advance the shared scripted provider while A is still consuming it.
-  await waitForIdle(sessionID, "A completed workflow idle");
-  firstAbsoluteDocument = expectedDocument;
-  firstRelativeDocument = join(
-    ".open-gajae",
-    sessionFolder,
-    "specs",
-    "deep-interview-fixture.md",
-  );
-  stage = "b-read-absolute";
-  const secondSession = await api("/session", { method: "POST", body: "{}" });
-  if (!isRecord(secondSession) || typeof secondSession.id !== "string")
-    fail(
-      `Second session create did not return an id: ${JSON.stringify(secondSession)}`,
-    );
-  const secondSessionID = secondSession.id;
-  secondSessionIDForProvider = secondSessionID;
-  const secondSessionFolder = sessionFolderName(secondSession);
-  const expectedSecondStatePath = join(
-    root,
-    ".open-gajae",
-    secondSessionFolder,
-    "state",
-    "deep-interview-state.json",
-  );
-  const expectedSecondSpecsDir = join(
-    root,
-    ".open-gajae",
-    secondSessionFolder,
-    "specs",
-  );
-  await api(`/session/${encodeURIComponent(secondSessionID)}/prompt_async`, {
-    method: "POST",
-    body: JSON.stringify({
-      agent: "open-gajae",
-      model: { providerID: "fixture", modelID: "fixture-model" },
-      parts: [
-        {
-          type: "text",
-          text: "Read A by the two explicit paths, then use B current-session state and document paths only.",
-        },
-      ],
-    }),
-  });
-  await waitFor(
-    "second-session provider completion",
-    async () => (stage === "b-done" ? true : undefined),
-    30_000,
-  );
-  await waitForIdle(secondSessionID, "B first workflow idle");
-  if (
-    !secondStatePaths ||
-    secondStatePaths.statePath !== expectedSecondStatePath ||
-    secondStatePaths.specsDir !== expectedSecondSpecsDir ||
-    !secondDocument
-  )
-    fail(
-      `B state_write did not return trusted current-session paths: ${JSON.stringify(secondStatePaths)}`,
-    );
-  const secondDocumentBytes = await waitFor(
-    "B native Write document",
-    async () => {
-      const text = await readFile(secondDocument!, "utf8").catch(
-        () => undefined,
-      );
-      return text?.includes("B session only") ? Buffer.from(text) : undefined;
-    },
-    15_000,
-  );
-  const clearedSecondState = await waitFor(
-    "B current-session state clear",
-    async () =>
-      (await readFile(expectedSecondStatePath, "utf8").then(
-        () => false,
-        () => true,
-      ))
-        ? true
-        : undefined,
-    15_000,
-  );
-  if (!clearedSecondState)
-    fail("B state_clear left a current-session state file behind");
-  if (
-    secondDocument !==
-      join(expectedSecondSpecsDir, "deep-interview-fixture.md") ||
-    !secondDocumentBytes.includes("approval does not transfer") ||
-    secondDocumentBytes.includes("A-only approval")
-  )
-    fail("B native Write did not use its returned specsDir and same slug");
-  if (
-    !Buffer.from(await readFile(expectedStatePath)).equals(aStateBytes) ||
-    !Buffer.from(await readFile(expectedDocument)).equals(aDocumentBytes)
-  )
-    fail("B workflow modified A state or approval/checklist document");
-  const secondMessages = await api(
-    `/session/${encodeURIComponent(secondSessionID)}/message`,
-  );
-  const secondTranscript = JSON.stringify(secondMessages);
-  if (
-    !secondTranscript.includes(firstAbsoluteDocument) ||
-    !secondTranscript.includes(firstRelativeDocument)
-  )
-    fail("B actual tool trace did not retain the two explicit A reads");
-  await api(`/session/${encodeURIComponent(secondSessionID)}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      permission: [
-        {
-          permission: "state_write",
-          pattern: expectedSecondStatePath,
-          action: "deny",
-        },
-      ],
-    }),
-  });
-  stage = "b-denied-state-write";
-  await api(`/session/${encodeURIComponent(secondSessionID)}/prompt_async`, {
-    method: "POST",
-    body: JSON.stringify({
-      agent: "open-gajae",
-      model: { providerID: "fixture", modelID: "fixture-model" },
-      parts: [
-        {
-          type: "text",
-          text: "Attempt the configured denied state write without changing B's document.",
-        },
-      ],
-    }),
-  });
-  await waitFor(
-    "B denied state_write provider completion",
-    async () => (stage === "b-denied-done" ? true : undefined),
-    20_000,
-  );
-  await waitForIdle(secondSessionID, "B denied state_write workflow idle");
-  const deniedStateTranscript = await waitFor(
-    "B configured state_write denial",
-    async () => {
-      const messages = await api(
-        `/session/${encodeURIComponent(secondSessionID)}/message`,
-      );
-      const transcript = JSON.stringify(messages);
-      return /state_write/.test(transcript) &&
-        /denied|permission/i.test(transcript)
-        ? transcript
-        : undefined;
-    },
-    15_000,
-  );
-  if (
-    !(await readFile(secondDocument, "utf8")).includes("B session only") ||
-    (await readFile(expectedSecondStatePath, "utf8").then(
-      () => true,
-      () => false,
-    ))
-  )
-    fail(
-      "B native document did not survive its separately denied state persistence",
-    );
-  await api(`/session/${encodeURIComponent(secondSessionID)}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      permission: [{ permission: "edit", pattern: "*", action: "deny" }],
-    }),
-  });
-  stage = "b-denied-write";
-  await api(`/session/${encodeURIComponent(secondSessionID)}/prompt_async`, {
-    method: "POST",
-    body: JSON.stringify({
-      agent: "open-gajae",
-      model: { providerID: "fixture", modelID: "fixture-model" },
-      parts: [
-        {
-          type: "text",
-          text: "Attempt the configured denied replacement Write.",
-        },
-      ],
-    }),
-  });
-  await waitFor(
-    "B denied native Write provider completion",
-    async () => (stage === "b-denied-write-done" ? true : undefined),
-    20_000,
-  );
-  await waitForIdle(secondSessionID, "B denied native Write workflow idle");
-  const deniedWriteTranscript = await waitFor(
-    "B configured native Write denial",
-    async () => {
-      const messages = await api(
-        `/session/${encodeURIComponent(secondSessionID)}/message`,
-      );
-      const transcript = JSON.stringify(messages);
-      return transcript.includes("Forbidden replacement") &&
-        /denied|permission/i.test(transcript)
-        ? transcript
-        : undefined;
-    },
-    15_000,
-  );
-  if (
-    (await readFile(secondDocument, "utf8")) !== secondDocumentBytes.toString()
-  )
-    fail("Configured native Write denial modified the existing B document");
-
-  missingPath = `${firstAbsoluteDocument}.missing`;
-  stage = "missing-read";
-  const missingSession = await api("/session", { method: "POST", body: "{}" });
-  if (!isRecord(missingSession) || typeof missingSession.id !== "string")
-    fail("Missing-path session create did not return an id");
-  const missingSessionID = missingSession.id;
-  await api(`/session/${encodeURIComponent(missingSession.id)}/prompt_async`, {
-    method: "POST",
-    body: JSON.stringify({
-      agent: "open-gajae",
-      model: { providerID: "fixture", modelID: "fixture-model" },
-      parts: [{ type: "text", text: "Attempt only the missing A path." }],
-    }),
-  });
-  await waitFor(
-    "missing-path provider completion",
-    async () => (stage === "missing-done" ? true : undefined),
-    20_000,
-  );
-  const missingTranscript = await waitFor(
-    "missing-path native Read failure",
-    async () => {
-      const messages = await api(
-        `/session/${encodeURIComponent(missingSessionID)}/message`,
-      );
-      const transcript = JSON.stringify(messages);
-      return transcript.includes(missingPath!) &&
-        /not found|enoent|does not exist|error/i.test(transcript)
-        ? transcript
-        : undefined;
-    },
-    15_000,
-  );
-
-  const outsideFile = join(base, "outside.txt");
-  await writeFile(outsideFile, "external fixture source\n");
-  symlinkPath = join(root, "external-link.txt");
-  await symlink(outsideFile, symlinkPath);
-  stage = "symlink-read";
-  const deniedSession = await api("/session", {
-    method: "POST",
-    body: JSON.stringify({
-      permission: [
-        { permission: "read", pattern: "*external-link.txt", action: "deny" },
-      ],
-    }),
-  });
-  if (!isRecord(deniedSession) || typeof deniedSession.id !== "string")
-    fail("Denied-read session create did not return an id");
-  const deniedSessionID = deniedSession.id;
-  await api(`/session/${encodeURIComponent(deniedSession.id)}/prompt_async`, {
-    method: "POST",
-    body: JSON.stringify({
-      agent: "open-gajae",
-      model: { providerID: "fixture", modelID: "fixture-model" },
-      parts: [
-        { type: "text", text: "Attempt only the denied external symlink." },
-      ],
-    }),
-  });
-  await waitFor(
-    "denied-symlink provider completion",
-    async () => (stage === "symlink-done" ? true : undefined),
-    20_000,
-  );
-  const deniedTranscript = await waitFor(
-    "configured external-symlink read denial",
-    async () => {
-      const messages = await api(
-        `/session/${encodeURIComponent(deniedSessionID)}/message`,
-      );
-      const transcript = JSON.stringify(messages);
-      return transcript.includes(symlinkPath!) &&
-        !transcript.includes(outsideFile) &&
-        /denied|permission/i.test(transcript)
-        ? transcript
-        : undefined;
-    },
-    15_000,
-  );
-  // --- Workstream 0 host-behavior spike (permanent regression probe) ---------
-  // R12 asks whether a prompt this plugin injects re-enters this plugin's own
-  // `chat.message` hook, and under which agent. `client.session.promptAsync`
-  // from a plugin and this POST reach the identical host path
-  // (opencode/packages/opencode/src/session/prompt.ts:999-1009), so driving it
-  // here observes exactly what a plugin-side injection would produce.
-  const ralplanSession = await api("/session", { method: "POST", body: "{}" });
-  if (!isRecord(ralplanSession) || typeof ralplanSession.id !== "string")
-    fail("Ralplan spike session create did not return an id");
-  const ralplanSessionID = ralplanSession.id;
-  const continuationText = continuationMessage(1);
-  if (!continuationText.includes("<ralplan-continuation>"))
-    fail("continuationMessage did not carry its injection marker");
-  stage = "ralplan-continuation";
-  await api(`/session/${encodeURIComponent(ralplanSessionID)}/prompt_async`, {
-    method: "POST",
-    body: JSON.stringify({
-      agent: "open-gajae",
-      model: { providerID: "fixture", modelID: "fixture-model" },
-      parts: [{ type: "text", text: continuationText }],
-    }),
-  });
-  await waitFor(
-    "ralplan continuation provider completion",
-    async () => (stage === "ralplan-continuation-done" ? true : undefined),
-    20_000,
-  );
-  await waitForIdle(ralplanSessionID, "ralplan continuation idle");
-
-  stage = "ralplan-task";
-  await api(`/session/${encodeURIComponent(ralplanSessionID)}/prompt_async`, {
-    method: "POST",
-    body: JSON.stringify({
-      agent: "open-gajae",
-      model: { providerID: "fixture", modelID: "fixture-model" },
-      parts: [
-        {
-          type: "text",
-          text: "Delegate the ralplan subagent probe to open-gajae-explore.",
-        },
-      ],
-    }),
-  });
-  await waitFor(
-    "ralplan subagent provider completion",
-    async () => (stage === "ralplan-task-done" ? true : undefined),
-    30_000,
-  );
-  await waitForIdle(ralplanSessionID, "ralplan subagent idle");
-
-  type RalplanProbeLine = {
-    sessionID: string;
-    agent: string | null;
-    agentFieldPresent: boolean;
-    variant: string | null;
-    variantFieldPresent: boolean;
-    markerHit: string | null;
-    textHead: string;
-  };
-  const ralplanProbeLines = await waitFor(
-    "ralplan chat.message observer log (the observer plugin must be loaded)",
-    async () => {
-      const text = await readFile(ralplanProbeLog, "utf8").catch(
-        () => undefined,
-      );
-      if (!text) return undefined;
-      const lines = text
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .map((line) => JSON.parse(line) as RalplanProbeLine);
-      // Wait for both spike turns rather than reporting a partial log.
-      return lines.some((line) => line.markerHit === "<ralplan-continuation>") &&
-        lines.some((line) => line.textHead.includes(ralplanSubagentPrompt))
-        ? lines
-        : undefined;
-    },
-    20_000,
-  );
-  const continuationLine = ralplanProbeLines.find(
-    (line) =>
-      line.sessionID === ralplanSessionID &&
-      line.markerHit === "<ralplan-continuation>",
-  );
-  if (!continuationLine)
-    fail(
-      `Ralplan continuation did not re-enter chat.message for its own session: ${JSON.stringify(ralplanProbeLines)}`,
-    );
-  if (!continuationLine.agentFieldPresent || !continuationLine.agent)
-    fail(
-      `Ralplan continuation chat.message carried no agent field: ${JSON.stringify(continuationLine)}`,
-    );
-  // The subagent turn is the child session created by the task tool
-  // (opencode/packages/opencode/src/tool/task.ts:157-161, agent: next.name).
-  const subagentLine = ralplanProbeLines.find(
-    (line) =>
-      line.sessionID !== ralplanSessionID &&
-      line.textHead.includes(ralplanSubagentPrompt),
-  );
-  if (!subagentLine)
-    fail(
-      `Task subagent turn produced no chat.message in a child session: ${JSON.stringify(ralplanProbeLines)}`,
-    );
-  // G1's deny-list is a list of subagent names, so it only works while the host
-  // reports the subagent's own name here. Fail loudly if that ever changes.
-  if (subagentLine.agent !== "open-gajae-explore")
-    fail(
-      `Task subagent chat.message did not carry the subagent name: ${JSON.stringify(subagentLine)}`,
-    );
-  const ralplanSpike = {
-    branch:
-      continuationLine.agent === "open-gajae"
-        ? "(a) chat.message fires for the injected continuation with the agent passed to promptAsync"
-        : "(a-variant) chat.message fires for the injected continuation, but under a different agent",
-    injectedReentersChatMessage: true,
-    continuationAgent: continuationLine.agent,
-    continuationAgentMatchesPrompt: continuationLine.agent === "open-gajae",
-    subagentSessionID: subagentLine.sessionID,
-    subagentAgent: subagentLine.agent,
-    subagentAgentIsSubagentName:
-      subagentLine.agent === "open-gajae-explore",
-    // Plan Q2: `variant` is an input field on the chat.message hook in the
-    // pinned SDK. Record what 1.18.31 actually delivers.
-    variantFieldPresentOnHook: continuationLine.variantFieldPresent,
-    continuationVariant: continuationLine.variant,
-    logPath: ralplanProbeLog,
-    lines: ralplanProbeLines,
-  };
-
-  const providerToolCalls = events.filter(
-    (event) => event.kind === "provider-tool-call",
-  );
-  const callsFor = (prefix: string) =>
-    providerToolCalls.filter(
-      (event) => typeof event.id === "string" && event.id.startsWith(prefix),
-    );
-  const missingCalls = callsFor("call_fixture_missing");
-  const symlinkCalls = callsFor("call_fixture_symlink");
-  if (
-    missingCalls.length !== 1 ||
-    missingCalls[0]?.name !== "read" ||
-    JSON.stringify(missingCalls[0]?.args) !==
-      JSON.stringify({ filePath: missingPath })
-  )
-    fail("Missing-path fixture emitted an alternative file or selector");
-  if (
-    symlinkCalls.length !== 1 ||
-    symlinkCalls[0]?.name !== "read" ||
-    JSON.stringify(symlinkCalls[0]?.args) !==
-      JSON.stringify({ filePath: symlinkPath })
-  )
-    fail("Denied-symlink fixture emitted an alternative file or selector");
-
-  console.log(
-    JSON.stringify(
-      {
-        kind: "api-package-test-report",
-        status: "passed",
-        hostVersion: version,
-        runtime: {
-          host,
-          provider: "@ai-sdk/openai-compatible",
-          baseURL: `http://127.0.0.1:${provider.port}/v1`,
-          externalNetwork: false,
-        },
-        session: {
-          id: sessionID,
-          folder: sessionFolder,
-          statePath: expectedStatePath,
-          specsDir: expectedSpecsDir,
-        },
-        toolSequence: [
-          "state_write",
-          "question",
-          "question.reply",
-          "write",
-          "state_write",
-          "B: read(A absolute)",
-          "B: read(A relative)",
-          "B: state_write",
-          "B: write(same slug)",
-          "B: state_clear",
-          "B: configured state_write denial after successful Write",
-          "B: configured native Write denial preserves prior document",
-          "adversarial: read(missing A path)",
-          "adversarial: read(denied external symlink)",
-          "ralplan spike: prompt(continuationMessage) chat.message re-entry",
-          "ralplan spike: task(open-gajae-explore) child chat.message agent",
-        ],
-        evidence: {
-          state,
-          documentPath: expectedDocument,
-          aStateBytes: aStateBytes.length,
-          aDocumentBytes: aDocumentBytes.length,
-          secondSession: {
-            id: secondSessionID,
-            folder: secondSessionFolder,
-            stateCleared: clearedSecondState,
-            documentPath: secondDocument,
-            deniedStateWriteObserved: /denied|permission/i.test(
-              deniedStateTranscript,
-            ),
-            deniedWriteObserved: /denied|permission/i.test(
-              deniedWriteTranscript,
-            ),
-          },
-          adversarial: {
-            missingPath,
-            symlinkPath,
-            configuredReadDeny: true,
-            missingReadFailureObserved:
-              /not found|enoent|does not exist|error/i.test(missingTranscript),
-            deniedSymlinkReadObserved: /denied|permission/i.test(
-              deniedTranscript,
-            ),
-            providerToolCalls,
-          },
-          ralplanSpike,
-          providerRequests: providerRequests.length,
-          events,
-        },
-        limitations: [
-          "The deterministic provider validates OpenCode protocol and plugin integration only; it does not measure model intelligence quality.",
-          "The B workflow proves current-session disk isolation and explicit host tool routing. It does not establish model resistance to hostile document content; the deterministic provider does not interpret that content.",
-          "The adversarial reads prove this fixture sent no automatic alternative file path or selector after an actual host read failure or configured session denial.",
-        ],
-      },
-      null,
-      2,
-    ),
+async function backgroundChildPending(report: Report, host: Host) {
+  // Q5: skip while the parent has a running child; the host's completion
+  // resume produces a later succeeded, which continues.
+  const s = await host.createSession({ agent: "open-gajae" });
+  const since = Date.now();
+  await host.prompt(s, `@ralplan plan the cache\n${directive({ tag: "q5", steps: [background("q5-child", 6_000)] })}`, mention("ralplan"));
+  await waitFor("q5 continuation", () => continuations(host, "q5").some((e) => e.step >= 1), 60_000).catch(() => undefined);
+  await host.settle(s);
+  const thread = host.provider.thread("q5");
+  const resume = thread.find((e) => e.kind === "other" && e.messages.at(-1)?.text.includes("<subagent"));
+  const first = continuations(host, "q5")[0];
+  const succeeded = host.sessionEvents(s, since).filter((e) => e.type === "session.execution.succeeded");
+  report.check(
+    "Q5: parent succeeded while the child ran, and no continuation before the completion resume",
+    succeeded.length >= 2 && !!resume && !!first && first.t > resume.t,
+    { succeeded: succeeded.length, resume: resume?.t, continuation: first?.t },
   );
 }
 
-try {
-  const deadline = setTimeout(() => {
-    void stopHost();
-    provider?.stop(true);
-  }, 115_000);
-  try {
-    await main();
-  } finally {
-    clearTimeout(deadline);
-  }
-} catch (error) {
-  failed = true;
-  const report = {
-    kind: "api-package-test-report",
-    status: "failed",
-    error: String(error),
-    host,
-    hostLogs,
-    providerRequests,
-    events,
-  };
-  await writeFile(join(base, "report.json"), JSON.stringify(report, null, 2));
-  console.error(JSON.stringify(report, null, 2));
-  process.exitCode = 1;
-} finally {
-  await stopHost();
-  provider?.stop(true);
-  const preserveDirectory = process.env.OPEN_GAJAE_TEST_PRESERVE_FAILURE_DIR;
-  if (failed && preserveDirectory) {
-    await mkdir(preserveDirectory, { recursive: true });
-    const retainedFixture = join(preserveDirectory, basename(base));
-    await rename(base, retainedFixture);
-    console.error(
-      JSON.stringify(
-        { kind: "api-package-test-report", retainedFixture },
-        null,
-        2,
-      ),
-    );
-  } else {
-    await rm(base, { recursive: true, force: true });
-  }
-}
+await runProbe("open-gajae-host-session-probe", async (report, scratch) => {
+  await withHost(report, join(scratch, "host"), { plugins: [REPO] }, async (host) => {
+    // Plugin setup runs on the first prompt in a location (Phase 0 P5).
+    await host.turn(await host.createSession({ agent: "open-gajae" }), directive({ tag: "warmup", steps: [] }));
+    await sleep(500);
+    for (const scenario of [keywordEntry, ralplanMention, deepInterviewEntries, bridge, interruptDuringBackground, backgroundChildPending]) {
+      try {
+        await scenario(report, host);
+      } catch (error) {
+        report.check(`${scenario.name} ran to completion`, false, String(error));
+      }
+    }
+  });
+});
