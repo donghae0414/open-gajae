@@ -106,3 +106,19 @@ export function sessionArtifactOwner(
   if (path === undefined) return undefined;
   return SESSION_ARTIFACT.exec(path)?.[1];
 }
+
+/**
+ * Ultragoal files and state belong to the `ultragoal` tool (R2): no role may
+ * write them with `write`/`edit`/`patch`, in any session (plan §10).
+ */
+const ULTRAGOAL_OWNED =
+  /^\.open-gajae\/_session-[^/]+\/(?:ultragoal(?:\/|$)|state\/ultragoal-state\.json$)/;
+
+export function isUltragoalOwned(
+  locationDir: string,
+  projectDir: string,
+  p: string,
+): boolean {
+  const path = projectRelative(locationDir, projectDir, p);
+  return path !== undefined && ULTRAGOAL_OWNED.test(path);
+}

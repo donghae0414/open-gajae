@@ -2,15 +2,15 @@
 
 # open-gajae
 
-An OpenCode plugin with session-bound `deep-interview` and `ralplan` skills, six owned roles, and a small read-only code-research surface. It adapts selected OMC v5.4.0 material; it is **not** a full OMC port and does not add downstream execution workflows.
+An OpenCode plugin with session-bound `deep-interview`, `ralplan`, and `ultragoal` skills, eight owned roles, and a small read-only code-research surface. It adapts selected OMC v5.4.0 material; it is **not** a full OMC port; its one execution workflow is `ultragoal`, the port of OMC ralph.
 
 ## Scope and status
 
 - The baseline is OMC v5.4.0, commit `5281b19e0d64f8e6dc6767f2130299a88af2dc71`. OMX is not a current behavior source.
 - The target host is OpenCode v2. This port targets `@opencode/plugin` 2.0.15 against the local `opencode/` reference pinned to `v2.0.15` (`6f3639d82e`); a v1 host can no longer load this plugin (v1 support is dropped — see the deviations table).
 - The package is TS source with no build step: `package.json` `exports["."]` points at `./src/index.ts`, and the root `index.ts` re-exports it. There is no `dist/`.
-- Implemented scope: `deep-interview` and `ralplan`; `open-gajae`, `open-gajae-explore`, and `open-gajae-document-specialist`; the `open-gajae-planner`, `open-gajae-architect`, and `open-gajae-critic` consensus roles; session state; native document output; and eleven directly-callable tools (three state tools plus eight read-only AST/LSP tools). Company context (the v1 advisory MCP hook) is removed entirely.
-- `ralplan` is implemented and ends at a plan marked `pending approval`. Not provided: ultragoal, autopilot, team, ralph, autoresearch, plan execution handoff (the deep-interview → ralplan planning bridge is provided), shared session state, or automatic migration/recovery. No slash commands exist; entry is a skill mention or a keyword (see Entry, below).
+- Implemented scope: `deep-interview`, `ralplan`, and `ultragoal`; `open-gajae`, `open-gajae-explore`, and `open-gajae-document-specialist`; the `open-gajae-planner`, `open-gajae-architect`, and `open-gajae-critic` consensus roles; the `open-gajae-executor` and `open-gajae-cleaner` ultragoal-execution roles; session state; native document output; and twelve directly-callable tools (three state tools, the `ultragoal` tool, and eight read-only AST/LSP tools). Company context (the v1 advisory MCP hook) is removed entirely.
+- `ralplan` is implemented and ends at a plan marked `pending approval`, whose final approval step offers `Refine further`, `Execute via ultragoal`, or `Stop here`. `ultragoal` is implemented as a goal-driven persistence loop (a port of OMC's ralph) with per-goal architect verification, a mandatory read-only cleaner pass, and a final critic review; the deep-interview → ralplan → ultragoal handoff chain is provided. Not provided: autopilot, team, a standalone `ralph` skill, autoresearch, shared session state, or automatic migration/recovery. No slash commands exist; entry is a skill mention or a keyword (see Entry, below).
 - This documentation describes the implemented v2 contract on `feat/opencode-v2-port` as of commit `f4df6e6`. It does not establish Phase 1 completion, and it does not itself assert that the verification layers below (typecheck, unit tests, host probes) currently pass — see the plan and its ledger for that.
 
 See [AGENTS.md](AGENTS.md) for development policy, the [porting guide](docs/analysis/opencode-porting-guide.md) for background analysis (historical; see AGENTS.md on its authority), and [third-party notices](THIRD-PARTY-NOTICES.md) for attribution.
@@ -97,41 +97,54 @@ Continuation re-prompts the session on the durable `session.execution.succeeded`
 
 `[RALPLAN MODE RESTORED]` appears at most once per resume and only within the same session. State is per-session; there is no cross-session resume.
 
-No execution skill exists. The plan stays `pending approval`.
+The plan stays `pending approval` unless the user chooses **Execute via ultragoal**.
 
-Follow-up development note: when ultragoal or autopilot ships, extend the final approval options with `Approve execution via ultragoal`, or OMC's `team`/`ralph`/`compact`/`Request changes`/`Reject`, and call `state_write(mode="ralplan", active=false)` before handing off.
+The real handoff: on **Execute via ultragoal**, ralplan marks the plan `approved`, calls `state_write(mode="ralplan", active=false, current_phase="handoff", plan_path="<absolute plan path>")` instead of `state_clear`, then loads the `ultragoal` skill and calls `create` with `source_plan` set to the plan path (or `resume` when an unfinished goal list already exists). The reverse also exists: `ultragoal handoff(to="ralplan", reason)` pauses the run — goals and progress are kept, not deleted — and re-seeds ralplan state; choosing `Execute via ultragoal` again later calls `resume` and merges the new plan into the kept goals with `add`, `revise`, and `supersede`.
 
 ## Owned roles and settings
 
 - **`open-gajae`** is the primary. It owns edits, decisions, integration, and state write/clear. No rules are added beyond the host defaults.
 - **`open-gajae-explore`** investigates repository facts read-only. It cannot edit, delegate (`subagent`), ask questions (`question`), or write/clear state. It keeps full `shell` access (OMC parity — no `shell`/Bash rule is added for any role).
 - **`open-gajae-document-specialist`** researches documentation and citations. It cannot edit, delegate, ask questions, or write/clear state. Its `chub` protocol is documented as read-only in its prompt; the host permission rules do not restrict `shell` to only `chub` commands.
-- **`open-gajae-planner`**, **`open-gajae-architect`**, and **`open-gajae-critic`** are the ralplan consensus roles. All three run as `mode: subagent` and carry no default model; set one through the settings `agents` map. Architect and critic are read-only: `edit`, `subagent`, `question`, `state_write`, and `state_clear` are denied. The planner, as in OMC, saves plans itself and delegates research: its `edit` permission allows only `.open-gajae/_session-*/plans/*` and `.open-gajae/_session-*/drafts/*`, and an `execute.before` guard (via `ctx.tool.hook`) further restricts those writes to the current root session's own directory — it invalidates a call outside that scope so the host's own decode fails, then `execute.after` rewrites that error (and any denial the static `edit` rules themselves produced) into model-facing guidance. Its `subagent` permission allows only `open-gajae-explore` and `open-gajae-document-specialist`. `question`, `state_write`, `state_clear`, and both Code Mode session tools (`opencode_session_move`, `opencode_session_rename`) stay denied for all five subagent roles. `subagent_depth` is not raised by the plugin; set `experimental.subagent_depth: 2` in host config yourself (see Install).
+- **`open-gajae-planner`**, **`open-gajae-architect`**, and **`open-gajae-critic`** are the ralplan consensus roles. All three run as `mode: subagent` and carry no default model; set one through the settings `agents` map. Architect and critic are read-only: `edit` and `subagent` are denied, as are `question`, `state_write`, and `state_clear`. The planner, as in OMC, saves plans itself and delegates research: its `edit` permission allows only `.open-gajae/_session-*/plans/*` and `.open-gajae/_session-*/drafts/*`, and an `execute.before` guard (via `ctx.tool.hook`) further restricts those writes to the current root session's own directory — it invalidates a call outside that scope so the host's own decode fails, then `execute.after` rewrites that error (and any denial the static `edit` rules themselves produced) into model-facing guidance. Its `subagent` permission allows only `open-gajae-explore` and `open-gajae-document-specialist`. `question`, `state_write`, `state_clear`, and both Code Mode session tools (`opencode_session_move`, `opencode_session_rename`) stay denied for all seven subagent roles. `subagent_depth` is not raised by the plugin; set `experimental.subagent_depth: 2` in host config yourself (see Install).
+- **`open-gajae-executor`** (ported from OMC's `agents/executor.md`) implements the code changes for one `ultragoal` goal at a time. It cannot ask questions (`question` denied) and cannot use the `ultragoal` tool itself; its only delegation is `subagent` to `open-gajae-explore` for codebase lookups and `open-gajae-architect` after repeated failures on the same issue. It keeps `edit` and `shell`.
+- **`open-gajae-cleaner`** (ported from OMC's `ai-slop-cleaner` skill, reworked as a read-only reviewer) is `ultragoal`'s mandatory cleanup review, run once every goal is verified and before the final critic review. It cannot edit, write, patch, delegate, ask questions, write/clear state, or use the `ultragoal` tool; it keeps `shell` for inspection and reports `BLOCKING`/`NON-BLOCKING` findings by file and line without changing anything.
+- Within `ultragoal`, `open-gajae-architect` and `open-gajae-critic` additionally keep the `ultragoal` tool, but restricted to `status` and their own `record_verdict` call — every other owned role has `ultragoal` denied.
 
 Role rules are pushed onto each agent's `permissions` array after the host's own defaults, but **host `agents.<id>` permission rules from your config apply after the plugin's and win** — unlike v1, which reordered rules to keep a mandatory denial in force, a host override can loosen a role's default deny (a recorded deviation: "user config wins"). Settings are read from `~/.open-gajae/open-gajae.jsonc` and `<worktree>/.open-gajae/open-gajae.jsonc`. Fields merge project → user → defaults; unknown keys, invalid JSONC, or invalid values fail with diagnostics.
 
 ```jsonc
 {
   "deepInterview": { "ambiguityThreshold": 0.2, "maxRounds": 20 },
+  "ultragoal": {
+    // 0 = unlimited, default 200
+    "hardMaxIterations": 200
+  },
   "agents": {
     "open-gajae": { "model": "provider/model", "variant": "variant-name" },
     "open-gajae-planner": { "model": "openai/gpt-6-luna" },
     "open-gajae-architect": { "model": "openai/gpt-6-luna", "variant": "high" },
-    "open-gajae-critic": { "model": "openai/gpt-6-luna", "variant": "high" }
+    "open-gajae-critic": { "model": "openai/gpt-6-luna", "variant": "high" },
+    "open-gajae-executor": { "model": "openai/gpt-6-luna", "variant": "medium" },
+    "open-gajae-cleaner": { "model": "openai/gpt-6-luna", "variant": "medium" }
   }
 }
 ```
 
+`ultragoal.hardMaxIterations` is an integer `>= 0`; `0` means unlimited and the default is `200` (a hard ceiling on continuation iterations: when `max_iterations` has been extended up to it, the loop stops and reports; independent of the per-goal and final reviews below).
+
 `variant` requires `model` on the same, already-merged entry: a user-level `model` plus a project-level `variant` is valid, but `variant` alone — in one file or split across both with no `model` anywhere — is rejected with an error naming the agent and asking to add `model "provider/model"`. This is stricter than the v2 host itself, which silently drops such a variant with a diagnostic. There is no provider fallback, tier mapping, or artificial collision rejection. The v1 `companyContext` setting is gone; supplying it now fails as `unknown setting`.
+
+`ultragoal` layers its verification instead of trusting a single completion claim. Each goal is checked against its own acceptance criteria by a fresh `open-gajae-architect` session, which records `approve` or `reject` with `record_verdict`; once every goal is verified, a mandatory read-only `open-gajae-cleaner` pass reviews the run's changed files and any blocking finding is fixed before continuing; and only after that cleanup and a passing regression re-run does a fresh `open-gajae-critic` session review the whole run and record the final verdict. The loop only completes on that final critic approval — a rejection at any layer reopens the goal(s) it names instead of ending the run. `ultragoal cancel(reason)` abandons the run (its state is removed, but `goals.json`/`progress.txt` are kept for a later `resume`), and `ultragoal.hardMaxIterations` is the hard ceiling behind all of it.
 
 ## Read-only code tools
 
-The plugin registers eight read-only code tools (plus the three state tools above, eleven in total):
+The plugin registers eight read-only code tools (plus the three state tools and the `ultragoal` tool above, twelve in total):
 
 - `ast_grep_search` (`@ast-grep/napi` 0.31.1): AST search only; no replace.
 - `lsp_goto_definition`, `lsp_hover`, `lsp_diagnostics`, `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, and `lsp_servers`.
 
-LSP servers are detected and reported, never downloaded. There is no LSP rename, code-action, or replacement suite. The actor set is all six owned roles — `open-gajae`, `open-gajae-explore`, `open-gajae-document-specialist`, `open-gajae-planner`, `open-gajae-architect`, and `open-gajae-critic` — matching OMC, where every agent can use the read-only LSP/AST tools. The project boundary replaces v1's per-call host permission ask: an input path is resolved against the host's current location directory, symlinks are followed, and the real target must stay inside the real project directory; `.env` and `.env.*` files are refused by both the requested and the resolved name, and `ast_grep_search` skips them during traversal too. Neither tool expands the explorer's permissions or grants arbitrary shell execution.
+LSP servers are detected and reported, never downloaded. There is no LSP rename, code-action, or replacement suite. The actor set is all eight owned roles — `open-gajae`, `open-gajae-explore`, `open-gajae-document-specialist`, `open-gajae-planner`, `open-gajae-architect`, `open-gajae-critic`, `open-gajae-executor`, and `open-gajae-cleaner` — matching OMC, where every agent can use the read-only LSP/AST tools. The project boundary replaces v1's per-call host permission ask: an input path is resolved against the host's current location directory, symlinks are followed, and the real target must stay inside the real project directory; `.env` and `.env.*` files are refused by both the requested and the resolved name, and `ast_grep_search` skips them during traversal too. Neither tool expands the explorer's permissions or grants arbitrary shell execution.
 
 The only product environment knobs reached by source are `OPEN_GAJAE_LSP_TIMEOUT_MS`, `OPEN_GAJAE_LSP_IDLE_TIMEOUT_MS`, `OPEN_GAJAE_LSP_IDLE_CHECK_INTERVAL_MS`, `OPEN_GAJAE_LSP_CONTAINER_ID`, and `OPEN_GAJAE_PYTHON_LSP=basedpyright`. They are LSP implementation settings, not general configuration.
 

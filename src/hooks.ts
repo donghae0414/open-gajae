@@ -1,6 +1,7 @@
 // Ralplan host hooks: continuation on durable execution events, keyword/mention/
 // restore on the v2 `prompt` hook, and the `skill` tool call that replaces OMC's
-// awaiting-confirmation timer. The prompt
+// awaiting-confirmation timer. Ultragoal shares this one engine and these hooks
+// through `src/ultragoal-hooks.ts`, one mode at a time (plan §5). The prompt
 // hook also carries the deep-interview keyword and `@deep-interview` mention,
 // which only inject OMC's magic-keyword guide and seed no state at all.
 //
@@ -27,6 +28,7 @@ import { Error as ToolError } from "@opencode/plugin/promise/tool";
 import {
   ARTIFACT_TOOLS,
   artifactPathsOf,
+  isUltragoalOwned,
   projectPrefix,
   projectRelative,
   sessionArtifactOwner,
@@ -46,11 +48,26 @@ import {
   RALPLAN_SKILL_NAME,
   RALPLAN_STOP_BLOCKER_MAX,
   restoreMessage,
-  sanitizeForKeywordDetection,
+  removeCodeBlocks,
   seedState,
   shouldContinue,
+  detectUltragoalKeyword,
+  ULTRAGOAL_SKILL_NAME,
 } from "./ralplan.js";
 import { RALPLAN_MODE, type StateStore } from "./state.js";
+import {
+  CHAIN_GUARD_REFUSAL,
+  isRalplanRunning,
+  isUltragoalRunning,
+  keywordMessage as ultragoalKeywordMessage,
+  mentionMessage as ultragoalMentionMessage,
+  ralplanMentionNotice,
+  ralplanRunningNotice,
+} from "./ultragoal.js";
+import {
+  type CompactionEvent,
+  createUltragoalHooks,
+} from "./ultragoal-hooks.js";
 
 /**
  * The `ctx.session` slice these hooks use, declared structurally so a fake in a
@@ -84,6 +101,7 @@ export type PromptEvent = {
 export type ExecuteBeforeEvent = {
   readonly tool: string;
   readonly sessionID: string;
+  readonly agent?: string;
   readonly id: string;
   input: unknown;
 };
@@ -104,7 +122,11 @@ export type ExecuteAfterEvent = {
 };
 
 export type RalplanHooks = {
+  /** Fail-closed parent lookup, shared with the `ultragoal` tool (plan §2 A1″). */
+  parentSession(sessionID: string): Promise<string | undefined>;
   prompt(event: PromptEvent): Promise<void>;
+  /** The `compaction` session hook: ultragoal context while it runs (plan §7). */
+  compaction(event: CompactionEvent): Promise<void>;
   executeBefore(event: ExecuteBeforeEvent): Promise<void>;
   executeAfter(event: ExecuteAfterEvent): Promise<void>;
   /** One event from `ctx.event.subscribe`: an envelope `{ type, data }`. */
@@ -122,6 +144,8 @@ const ROLE_SUBAGENTS = new Set([
   "open-gajae-planner",
   "open-gajae-architect",
   "open-gajae-critic",
+  "open-gajae-executor",
+  "open-gajae-cleaner",
 ]);
 
 /**
@@ -132,6 +156,7 @@ const ROLE_SUBAGENTS = new Set([
 const STOP_REASONS = new Set(["user", "shutdown"]);
 
 const KEYWORD_NOTICE_MARKER = "[MODE: RALPLAN]";
+const ULTRAGOAL_NOTICE_MARKER = "[MODE: ULTRAGOAL]";
 const DEEP_INTERVIEW_MAGIC_MARKER = "[MAGIC KEYWORD: DEEP-INTERVIEW]";
 
 function log(message: string, error?: unknown) {
@@ -149,7 +174,14 @@ export function createHooks(
   packageRoot: string,
   locationDir: string,
   projectDir: string,
+  { hardMax = 200 }: { hardMax?: number } = {},
 ): RalplanHooks {
+  const ultragoal = createUltragoalHooks(
+    store,
+    (input) => session.synthetic(input),
+    { hardMax },
+  );
+
   // The absolute `Read fallback:` path OMC resolved through `resolveSkillPath`;
   // here it is always this package's own copy, so no existence probe is needed.
   const deepInterviewSkillPath = join(
@@ -215,6 +247,16 @@ export function createHooks(
   /** Running child executions per parent session (Q5). */
   const running = new Map<string, Set<string>>();
 
+  /**
+   * Tool calls per session since its last `started` (R10). Unknown until this
+   * instance has seen one `session.tool.called`, so a host that never
+   * delivers the event cannot make every turn look tool-less (decision 20).
+   */
+  const toolCalls = new Map<string, number>();
+  let toolCalledSeen = false;
+  const toolCallsOf = (sessionID: string) =>
+    toolCalledSeen ? toolCalls.get(sessionID) : undefined;
+
   async function sessionOf(
     sessionID: string,
     created?: Record<string, unknown>,
@@ -273,6 +315,15 @@ export function createHooks(
       // returns undefined and the decision is `skip` at the first clause.
       const state = await readState(sessionID);
       const decision = shouldContinue(state, Date.now());
+
+      // One engine, one mode per turn: ultragoal first (OMC ralph priority,
+      // persistent-mode/index.ts:2471-2477). A turn ultragoal handled still
+      // resets a finished ralplan's breaker, as the skip path does.
+      if (await ultragoal.continueLoop(sessionID, toolCallsOf(sessionID))) {
+        if (decision.kind === "skip" && decision.resetBreaker)
+          await store.patch(sessionID, { breaker_count: 0 }, RALPLAN_MODE);
+        return;
+      }
 
       if (decision.kind === "skip") {
         if (decision.resetBreaker)
@@ -404,6 +455,10 @@ export function createHooks(
   ): Promise<string | undefined> {
     const paths = artifactPathsOf(tool, input);
     for (const path of paths) {
+      if (isUltragoalOwned(locationDir, projectDir, path)) {
+        const shown = projectRelative(locationDir, projectDir, path) ?? path;
+        return `open-gajae: ${shown} is ultragoal-owned; change it only through the ultragoal tool`;
+      }
       const owner = sessionArtifactOwner(locationDir, projectDir, path);
       // Not a session plan or draft: the static permission rules decide.
       if (owner === undefined) continue;
@@ -468,8 +523,14 @@ export function createHooks(
       }
 
       // A real user prompt lifts the stop mark. After G2, so a marker-wrapped
-      // fallback notice can never clear it.
+      // fallback notice can never clear it. It also lifts an ultragoal pause
+      // (plan §5.5).
       interrupted.delete(sessionID);
+      try {
+        await ultragoal.releasePause(sessionID);
+      } catch (error) {
+        log("could not release the ultragoal pause", error);
+      }
 
       // A mention is checked before the keyword and counts as detected, so a
       // stale seed followed by `@ralplan` is confirmed rather than cleared.
@@ -478,12 +539,19 @@ export function createHooks(
       const deepInterviewMention = skills.some(
         (s) => s.id === DEEP_INTERVIEW_SKILL_NAME,
       );
-      // OMC's guard: a mention in prose, a question, a quoted example or a
-      // pasted skill body is not an invocation.
-      const cleaned = sanitizeForKeywordDetection(text);
+      const ultragoalMention = skills.some((s) => s.id === ULTRAGOAL_SKILL_NAME);
+      // OMC's guard (inside the detectors): a mention in prose, a question, a
+      // quoted example or a pasted skill body is not an invocation. The gate
+      // reads the prompt with only code removed, as OMC's bridge.ts:1487
+      // does, so a file path still counts as a concrete anchor.
+      const cleaned = removeCodeBlocks(text);
       const keyword = detectRalplanKeyword(text) !== null;
       const detected = ralplanMention || keyword ? ["ralplan"] : [];
+      const ultragoalKeyword =
+        !ultragoalMention && detectUltragoalKeyword(text) !== null;
+      const ultragoalDetected = ultragoalMention || ultragoalKeyword;
       let state = await readState(sessionID);
+      let ultragoalState = await ultragoal.read(sessionID);
       const notices: Notice[] = [];
 
       // Stale-seed cleanup, the sole replacement for the deleted TTL. A keyword
@@ -501,6 +569,18 @@ export function createHooks(
           log("could not clear stale ralplan seed", error);
         }
         state = undefined;
+      }
+      if (
+        ultragoalState?.active === true &&
+        ultragoalState.awaiting_confirmation === true &&
+        !ultragoalDetected
+      ) {
+        try {
+          await ultragoal.clearStaleSeed(sessionID);
+        } catch (error) {
+          log("could not clear stale ultragoal seed", error);
+        }
+        ultragoalState = undefined;
       }
 
       // Restore, once per resume. The `started_at`-present clause is
@@ -522,11 +602,31 @@ export function createHooks(
           });
         }
       }
+      const restored = await ultragoal.restore(sessionID, ultragoalState);
+      if (restored) notices.push(restored);
+
+      // Gate (decision 3): a vague `ultragoal`, keyword or mention, is
+      // redirected to ralplan unless prefixed with `force:`/`!`. A running
+      // ultragoal is not re-gated.
+      const ultragoalRunning = isUltragoalRunning(ultragoalState);
+      const gate = ultragoalRunning
+        ? { gateApplied: false, gatedKeywords: [] as string[] }
+        : applyRalplanGate(
+            [...detected, ...(ultragoalDetected ? ["ultragoal"] : [])],
+            cleaned,
+          );
 
       // Ralplan seed. The mention already attached the skill, so it seeds
       // confirmed; the keyword seeds awaiting the `skill` call. Both carry a
       // notice so the user sees the insertion (user decision, 2026-09-24).
-      if (ralplanMention) {
+      // While ultragoal runs (plan §5.6), `@ralplan` only gets the handoff
+      // notice (decision 1b) and the keyword gets nothing (Q-3).
+      if (ralplanMention && ultragoalRunning) {
+        notices.push({
+          text: ralplanMentionNotice(),
+          description: "open-gajae: ultragoal handoff notice added",
+        });
+      } else if (ralplanMention) {
         if (state?.active !== true) {
           const patch = seedState(state, new Date().toISOString(), {
             awaiting: false,
@@ -538,7 +638,11 @@ export function createHooks(
           text: mentionMessage(),
           description: "open-gajae: ralplan mention notice added",
         });
-      } else if (keyword && !text.includes(KEYWORD_NOTICE_MARKER)) {
+      } else if (
+        (keyword || gate.gateApplied) &&
+        !ultragoalRunning &&
+        !text.includes(KEYWORD_NOTICE_MARKER)
+      ) {
         const patch = seedState(state, new Date().toISOString());
         if (patch) await store.patch(sessionID, patch, RALPLAN_MODE);
         else log("ralplan state already active; skipped re-seed");
@@ -546,6 +650,30 @@ export function createHooks(
           text: keywordMessage(),
           description: "open-gajae: ralplan keyword notice added",
         });
+      }
+
+      // Ultragoal seed (R16): only when not gated and not paired with a
+      // ralplan request in the same prompt. Ralplan planning in progress keeps
+      // it from starting (Q-1).
+      if (ultragoalDetected && !gate.gateApplied && detected.length === 0) {
+        if (isRalplanRunning(state)) {
+          notices.push({
+            text: ralplanRunningNotice(),
+            description: "open-gajae: ralplan-running notice added",
+          });
+        } else if (ultragoalMention) {
+          await ultragoal.seed(sessionID, { awaiting: false, task: text });
+          notices.push({
+            text: ultragoalMentionMessage(),
+            description: "open-gajae: ultragoal mention notice added",
+          });
+        } else if (!text.includes(ULTRAGOAL_NOTICE_MARKER)) {
+          await ultragoal.seed(sessionID, { awaiting: true, task: text });
+          notices.push({
+            text: ultragoalKeywordMessage(),
+            description: "open-gajae: ultragoal keyword notice added",
+          });
+        }
       }
 
       // Deep-interview. OMC injects its magic-keyword guide and seeds nothing
@@ -564,9 +692,6 @@ export function createHooks(
           description: "open-gajae: deep-interview keyword notice added",
         });
 
-      // Gate. Dormant while EXECUTION_GATE_KEYWORDS is empty; the call site
-      // stays so enabling it is a one-line change.
-      const gate = applyRalplanGate(detected, cleaned);
       if (gate.gateApplied)
         notices.push({
           text: gateMessage(gate.gatedKeywords),
@@ -607,9 +732,24 @@ export function createHooks(
       }
     }
     try {
+      if (event.tool === "subagent") {
+        await ultragoal.attachBrief(event);
+        return;
+      }
       if (event.tool !== "skill" || !isRecord(event.input)) return;
       // v2 `skill` input is `{ id }` (core/src/tool/plugin/skill.ts:12-14).
+      if (event.input.id === ULTRAGOAL_SKILL_NAME) {
+        if (event.agent === "open-gajae")
+          await ultragoal.onSkillLoad(event.sessionID);
+        return;
+      }
       if (event.input.id !== RALPLAN_SKILL_NAME) return;
+      // Chain guard (decision 1a): ralplan only after an explicit handoff.
+      if (isUltragoalRunning(await ultragoal.read(event.sessionID))) {
+        blocked.set(event.id, CHAIN_GUARD_REFUSAL);
+        event.input = {};
+        return;
+      }
       await confirmRalplan(event.sessionID);
     } catch (error) {
       log("execute.before handler failed", error);
@@ -628,7 +768,7 @@ export function createHooks(
       const recorded = blocked.get(event.id);
       if (recorded !== undefined) blocked.delete(event.id);
       if (event.status !== "error") return;
-      if (!ARTIFACT_TOOLS.has(event.tool)) return;
+      if (!ARTIFACT_TOOLS.has(event.tool) && recorded === undefined) return;
       let message = recorded;
       if (
         message === undefined &&
@@ -662,10 +802,18 @@ export function createHooks(
         await sessionOf(sessionID, data);
         return;
       }
+      // Counted before the execution branch, so a child's tool call never
+      // touches its parent's `running` set (AC19).
+      if (type === "session.tool.called") {
+        toolCalledSeen = true;
+        toolCalls.set(sessionID, (toolCalls.get(sessionID) ?? 0) + 1);
+        return;
+      }
       if (typeof type !== "string" || !type.startsWith("session.execution."))
         return;
       const info = await sessionOf(sessionID);
       if (!info.own) return;
+      if (type === "session.execution.started") toolCalls.set(sessionID, 0);
 
       if (info.parentID !== undefined) {
         const children = running.get(info.parentID) ?? new Set<string>();
@@ -685,10 +833,19 @@ export function createHooks(
       // `failed` does not continue.
       if (type === "session.execution.succeeded")
         await continueSession(sessionID);
+      // The next `started` counts afresh; a finished session keeps no entry.
+      if (type !== "session.execution.started") toolCalls.delete(sessionID);
     } catch (error) {
       log("execution event handler failed", error);
     }
   };
 
-  return { prompt, executeBefore, executeAfter, onEvent };
+  return {
+    parentSession,
+    prompt,
+    compaction: ultragoal.compaction,
+    executeBefore,
+    executeAfter,
+    onEvent,
+  };
 }

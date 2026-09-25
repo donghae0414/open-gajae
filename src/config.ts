@@ -10,11 +10,15 @@ export const agentNames = [
   "open-gajae-planner",
   "open-gajae-architect",
   "open-gajae-critic",
+  "open-gajae-executor",
+  "open-gajae-cleaner",
 ] as const;
 type AgentName = (typeof agentNames)[number];
 type ModelSettings = { model?: string; variant?: string };
 export interface Settings {
   deepInterview: { ambiguityThreshold: number; maxRounds: number };
+  /** `hardMaxIterations`: 0 = unlimited, default 200 (decision 19). */
+  ultragoal: { hardMaxIterations: number };
   agents: Partial<Record<AgentName, ModelSettings>>;
 }
 function object(value: unknown, location: string): Record<string, unknown> {
@@ -46,7 +50,7 @@ async function load(path: string): Promise<Partial<Settings>> {
       `${path}:${errors[0].offset}: ${printParseErrorCode(errors[0].error)}`,
     );
   const value = object(parsed, path);
-  keys(value, ["deepInterview", "agents"], path);
+  keys(value, ["deepInterview", "ultragoal", "agents"], path);
   const result: Partial<Settings> = {};
   if ("deepInterview" in value) {
     const config = object(value.deepInterview, `${path}.deepInterview`);
@@ -71,6 +75,20 @@ async function load(path: string): Promise<Partial<Settings>> {
         `${path}.deepInterview.maxRounds: expected positive integer`,
       );
     result.deepInterview = config as Settings["deepInterview"];
+  }
+  if ("ultragoal" in value) {
+    const config = object(value.ultragoal, `${path}.ultragoal`);
+    keys(config, ["hardMaxIterations"], `${path}.ultragoal`);
+    if (
+      "hardMaxIterations" in config &&
+      (typeof config.hardMaxIterations !== "number" ||
+        !Number.isSafeInteger(config.hardMaxIterations) ||
+        config.hardMaxIterations < 0)
+    )
+      throw new Error(
+        `${path}.ultragoal.hardMaxIterations: expected integer >= 0 (0 = unlimited)`,
+      );
+    result.ultragoal = config as Settings["ultragoal"];
   }
   if ("agents" in value) {
     const agents = object(value.agents, `${path}.agents`);
@@ -123,6 +141,11 @@ export async function loadSettings(
       ...user.deepInterview,
       ...project.deepInterview,
     },
+    ultragoal: {
+      hardMaxIterations: 200,
+      ...user.ultragoal,
+      ...project.ultragoal,
+    },
     agents,
   };
 }
@@ -159,6 +182,10 @@ const descriptions: Record<AgentName, string> = {
     "Read-only architectural review with steelman antithesis and tradeoff tension.",
   "open-gajae-critic":
     "Read-only final quality gate for plans with severity-rated findings.",
+  "open-gajae-executor":
+    "Implement scoped code changes with verification; used by ultragoal.",
+  "open-gajae-cleaner":
+    "Read-only AI-slop and cleanup review of changed files; reports blocking issues.",
 };
 
 const deny = (action: string): Rule => ({
@@ -188,6 +215,21 @@ const readonlyDenies = [
  */
 export function roleRules(id: string, plannerPrefix: string): Rule[] {
   if (id === "open-gajae") return [];
+  // Ultragoal reviewers keep the `ultragoal` tool for `status` and their own
+  // `record_verdict`; every other owned role is denied it (plan §4).
+  if (id === "open-gajae-architect" || id === "open-gajae-critic")
+    return [deny("edit"), deny("subagent"), ...readonlyDenies];
+  // OMC executor: writes code, delegates only to explore and architect, and
+  // never asks the user (decision 24).
+  if (id === "open-gajae-executor")
+    return [
+      deny("subagent"),
+      ...["open-gajae-explore", "open-gajae-architect"].map(
+        (resource): Rule => ({ action: "subagent", resource, effect: "allow" }),
+      ),
+      ...readonlyDenies,
+      deny("ultragoal"),
+    ];
   if (id === "open-gajae-planner")
     return [
       deny("edit"),
@@ -201,8 +243,11 @@ export function roleRules(id: string, plannerPrefix: string): Rule[] {
         (resource): Rule => ({ action: "subagent", resource, effect: "allow" }),
       ),
       ...readonlyDenies,
+      deny("ultragoal"),
     ];
-  return [deny("edit"), deny("subagent"), ...readonlyDenies];
+  // explore, document-specialist and the cleaner. The cleaner keeps `shell`
+  // for read-only inspection; its prompt forbids changing files (decision 23).
+  return [deny("edit"), deny("subagent"), ...readonlyDenies, deny("ultragoal")];
 }
 
 export async function loadPrompts(
@@ -277,13 +322,13 @@ export interface SkillHost {
   ): Promise<unknown>;
 }
 
-export const skillNames = ["deep-interview", "ralplan"] as const;
+export const skillNames = ["deep-interview", "ralplan", "ultragoal"] as const;
 
 /**
  * Mirrors the host's SKILL.md reading (`core/src/config/plugin/skill-file.ts:34-58`):
  * the id is the directory name, `name`/`description` come from the frontmatter,
  * and `content` is the body after it. Only plain `key: value` lines are read,
- * which is all these two files use.
+ * which is all these files use.
  */
 export async function loadSkills(packageRoot: string): Promise<SkillInfo[]> {
   return Promise.all(

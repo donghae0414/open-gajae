@@ -277,12 +277,218 @@ async function backgroundChildPending(report: Report, host: Host) {
   );
 }
 
+// ---------------------------------------------------------------- ultragoal
+// Plan Step 6 probes ①–⑦. Prompts carry a file path so the execution gate
+// (decision 3) lets `@ultragoal` through.
+
+const UG_GOAL = { title: "flag", description: "parse the flag", priority: 1, acceptanceCriteria: ["flag parsed"] };
+const ug = (args: Record<string, unknown>) => ({ tool: "ultragoal", args });
+const lastUserText = (entry: ProviderEntry | undefined) =>
+  [...(entry?.messages ?? [])].reverse().find((m) => m.role === "user")?.text ?? "";
+const resultOf = (host: Host, tag: string, step: number) =>
+  host.provider.thread(tag).find((e) => e.kind === "directive" && e.step === step)?.toolResults.at(-1) ?? "";
+
+async function ultragoalNoPrd(report: Report, host: Host) {
+  // ② `@ultragoal` seeds confirmed; the first continuation asks for `create`.
+  const s = await host.createSession({ agent: "open-gajae" });
+  await host.prompt(s, `@ultragoal add a --dry-run flag to scripts/x.ts\n${directive({ tag: "ug-noprd", steps: [] })}`, mention("ultragoal"));
+  await waitFor("ug-noprd continuation", () => continuations(host, "ug-noprd").some((e) => e.step >= 1), 60_000);
+  await host.settle(s);
+  const text = lastUserText(continuations(host, "ug-noprd")[0]);
+  report.check(
+    "② @ultragoal: no_prd continuation (ITERATION 2/100) asks for create",
+    text.includes("[ULTRAGOAL - ITERATION 2/100]") && text.includes("op `create`"),
+    text.slice(0, 600),
+  );
+  report.check("② @ultragoal: cancel removed the state", host.ultragoalState(s) === undefined, host.ultragoalState(s));
+}
+
+async function ultragoalVerification(report: Report, host: Host) {
+  // ③ create → complete → a new architect child: its first message carries the
+  // plugin brief, and its record_verdict approves. The primary's is refused.
+  const s = await host.createSession({ agent: "open-gajae" });
+  const verdict = {
+    op: "record_verdict",
+    request_id: "{{request_id}}",
+    goal_id: "G001",
+    verdict: "approve",
+    evidence: "checked the parser against flag parsed",
+    issues: [],
+  };
+  await host.prompt(
+    s,
+    `@ultragoal add a flag to scripts/x.ts\n${directive({
+      tag: "ug-verify",
+      steps: [
+        ug({ op: "create", description: "probe task", goals: [UG_GOAL] }),
+        ug({ op: "complete", goal_id: "G001", implementation: ["parsed it"], files_changed: ["sample.ts"], learnings: ["none"] }),
+        ug({ ...verdict, request_id: "not-a-request" }),
+        {
+          tool: "subagent",
+          args: {
+            agent: "open-gajae-architect",
+            description: "verify G001",
+            prompt: `Verify G001.\n${directive({ tag: "ug-arch", steps: [ug(verdict)] })}`,
+          },
+        },
+      ],
+    })}`,
+    mention("ultragoal"),
+  );
+  await waitFor("ug-verify continuation", () => continuations(host, "ug-verify").some((e) => e.step >= 1), 90_000);
+  await host.settle(s);
+  const child = host.provider.thread("ug-arch").find((e) => e.step === 0);
+  const brief = lastUserText(child);
+  report.check(
+    "③ brief: the architect child's first message carries <ultragoal-verification-brief> and the request_id",
+    brief.includes("Verify G001.") && brief.includes("<ultragoal-verification-brief>") && /request_id "[0-9a-f-]{36}"/.test(brief),
+    brief.slice(0, 400),
+  );
+  const recorded = host.provider.thread("ug-arch").find((e) => e.step === 1)?.toolResults.at(-1) ?? "";
+  report.check("③ the architect child's record_verdict approves G001", recorded.includes("Verdict recorded: approve for G001"), recorded);
+  report.check(
+    "③ the primary's record_verdict is refused",
+    resultOf(host, "ug-verify", 3).startsWith("Error: record_verdict is for the reviewer subagent"),
+    resultOf(host, "ug-verify", 3),
+  );
+  const goals = parse(host.sessionFile(s, "ultragoal/goals.json"));
+  report.check("③ goals.json: G001 verified", goals?.goals?.[0]?.verified === true, goals?.goals?.[0]);
+  const next = lastUserText(continuations(host, "ug-verify")[0]);
+  report.check("③ the next continuation moves to the cleaner pass", next.includes("open-gajae-cleaner"), next.slice(0, 600));
+}
+
+async function ultragoalIdleAndCompaction(report: Report, host: Host) {
+  // ① tool.called reaches subscribers; ④ three tool-less turns pause the loop
+  // (only if the plugin receives tool.called); ⑤ compaction carries context.
+  const s = await host.createSession({ agent: "open-gajae" });
+  await host.prompt(
+    s,
+    `@ultragoal add a flag to scripts/x.ts\n${directive({ tag: "ug-idle", clearAfter: 10, steps: [ug({ op: "status" })] })}`,
+    mention("ultragoal"),
+  );
+  const paused = await waitFor(
+    "ug-idle paused or cancelled",
+    () => {
+      const state = host.ultragoalState(s);
+      return state?.paused_reason ?? (continuations(host, "ug-idle").some((e) => (e.count ?? 0) >= 10) ? "none" : undefined);
+    },
+    120_000,
+  ).catch(() => undefined);
+  await host.settle(s);
+  report.check(
+    "① session.tool.called is published with the session ID",
+    host.sessionEvents(s).some((e) => e.type === "session.tool.called"),
+    [...new Set(host.sessionEvents(s).map((e) => e.type))],
+  );
+  const iterations = continuations(host, "ug-idle").map((e) => e.count);
+  report.check("④ three tool-less turns pause the loop (no_tool_progress)", paused === "no_tool_progress", { paused, iterations });
+  if (paused === "no_tool_progress") {
+    const since = Date.now();
+    const response = await host.api("POST", `/api/session/${s}/compact`, {});
+    const compaction = await waitFor(
+      "compaction request",
+      () =>
+        host.provider
+          .entries()
+          .filter((e) => e.t >= since)
+          .find((e) => JSON.stringify(e.body?.messages ?? []).includes("ultragoal-compaction-context")),
+      60_000,
+    ).catch(() => undefined);
+    report.check("⑤ the compaction request carries <ultragoal-compaction-context>", !!compaction, { status: response.status });
+    await host.settle(s);
+  }
+  await host.turn(s, `stop\n${directive({ tag: "ug-idle-stop", steps: [ug({ op: "cancel", reason: "probe done" })] })}`);
+  await host.settle(s);
+}
+
+async function ultragoalHandoff(report: Report, host: Host) {
+  // ⑥ chain guard → handoff → ralplan → Execute via ultragoal → resume.
+  const s = await host.createSession({ agent: "open-gajae" });
+  await host.prompt(
+    s,
+    `@ultragoal add a flag to scripts/x.ts\n${directive({
+      tag: "ug-handoff",
+      steps: [
+        ug({ op: "create", description: "probe task", goals: [UG_GOAL] }),
+        { tool: "skill", args: { id: "ralplan" } },
+        ug({ op: "handoff", to: "ralplan", reason: "user asked to replan" }),
+        { tool: "skill", args: { id: "ralplan" } },
+        { tool: "state_write", args: { mode: "ralplan", active: false, current_phase: "handoff", plan_path: "plan.md" } },
+        { tool: "skill", args: { id: "ultragoal" } },
+        ug({ op: "resume", reason: "plan approved" }),
+        ug({ op: "status" }),
+      ],
+    })}`,
+    mention("ultragoal"),
+  );
+  await waitFor("ug-handoff continuation", () => continuations(host, "ug-handoff").some((e) => e.step >= 1), 90_000);
+  await host.settle(s);
+  report.check(
+    "⑥ skill ralplan is refused while ultragoal runs, naming handoff",
+    // The refusal arrives JSON-encoded inside the tool result.
+    resultOf(host, "ug-handoff", 2).includes("ultragoal is running in this session; call ultragoal handoff(") &&
+      resultOf(host, "ug-handoff", 2).includes("before loading ralplan"),
+    resultOf(host, "ug-handoff", 2).slice(0, 300),
+  );
+  report.check("⑥ handoff activates ralplan", resultOf(host, "ug-handoff", 3).includes("Handed off to ralplan"), resultOf(host, "ug-handoff", 3));
+  report.check(
+    "⑥ skill ralplan loads after the handoff",
+    !/"error"|Invalid arguments/.test(resultOf(host, "ug-handoff", 4)) && resultOf(host, "ug-handoff", 4).includes('<skill_content name="ralplan">'),
+    resultOf(host, "ug-handoff", 4).slice(0, 300),
+  );
+  report.check("⑥ resume keeps G001", resultOf(host, "ug-handoff", 7).includes("Resumed") && resultOf(host, "ug-handoff", 7).includes("G001"), resultOf(host, "ug-handoff", 7));
+  report.check("⑥ the ralplan handoff is consumed", host.ralplanState(s)?.current_phase === "handoff-consumed", host.ralplanState(s));
+  const progress = host.sessionFile(s, "ultragoal/progress.txt") ?? "";
+  report.check("⑥ progress records HANDOFF and RESUME with reasons", ["- HANDOFF", "user asked to replan", "- RESUME", "plan approved"].every((p) => progress.includes(p)), progress.slice(-600));
+}
+
+async function ultragoalBackgroundShell(report: Report, host: Host) {
+  // ⑦ observation: a background shell's completion notice and the loop.
+  const s = await host.createSession({ agent: "open-gajae" });
+  const since = Date.now();
+  await host.prompt(
+    s,
+    `@ultragoal add a flag to scripts/x.ts\n${directive({
+      tag: "ug-bg",
+      clearAfter: 3,
+      steps: [
+        ug({ op: "create", description: "probe task", goals: [UG_GOAL] }),
+        { tool: "shell", args: { command: "sleep 4; echo bg-done", background: true, description: "background probe" } },
+      ],
+    })}`,
+    mention("ultragoal"),
+  );
+  await waitFor("ug-bg cancelled", () => host.ultragoalState(s) === undefined && continuations(host, "ug-bg").length > 0, 90_000).catch(() => undefined);
+  await host.settle(s, 6_000);
+  const iterations = continuations(host, "ug-bg").filter((e) => e.step === 0).map((e) => e.count);
+  const notified = host.provider.thread("ug-bg").some((e) => e.messages.some((m) => m.text.includes("bg-done")));
+  const starts = host.sessionEvents(s, since).filter((e) => e.type === "session.execution.started").length;
+  report.check(
+    "⑦ background shell: no duplicate continuation iteration and the loop ended",
+    new Set(iterations).size === iterations.length && host.ultragoalState(s) === undefined,
+    { iterations, notified, starts },
+  );
+  console.log(`     ⑦ observation: iterations=${JSON.stringify(iterations)} completion-notice-seen=${notified} executions=${starts}`);
+}
+
 await runProbe("open-gajae-host-session-probe", async (report, scratch) => {
   await withHost(report, join(scratch, "host"), { plugins: [REPO] }, async (host) => {
     // Plugin setup runs on the first prompt in a location (Phase 0 P5).
     await host.turn(await host.createSession({ agent: "open-gajae" }), directive({ tag: "warmup", steps: [] }));
     await sleep(500);
-    for (const scenario of [keywordEntry, ralplanMention, deepInterviewEntries, bridge, interruptDuringBackground, backgroundChildPending]) {
+    for (const scenario of [
+      keywordEntry,
+      ralplanMention,
+      deepInterviewEntries,
+      bridge,
+      interruptDuringBackground,
+      backgroundChildPending,
+      ultragoalNoPrd,
+      ultragoalVerification,
+      ultragoalIdleAndCompaction,
+      ultragoalHandoff,
+      ultragoalBackgroundShell,
+    ]) {
       try {
         await scenario(report, host);
       } catch (error) {

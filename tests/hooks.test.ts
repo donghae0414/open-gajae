@@ -1280,3 +1280,253 @@ test("each notice carries a one-line TUI description naming its skill", async ()
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Ultragoal (plan §5, §6). Added cases only; the ralplan cases above are
+// unchanged.
+// ---------------------------------------------------------------------------
+
+import { createTools } from "../src/tools";
+import {
+  CHAIN_GUARD_REFUSAL,
+  ralplanMentionNotice,
+  ralplanRunningNotice,
+  seedUltragoalState,
+} from "../src/ultragoal";
+
+const UG = "ultragoal" as const;
+const ugState = (store: StateStore, id: string) => store.read(id, UG);
+const ugSeed = (store: StateStore, id: string, extra: ExplicitStatePatch = {}) =>
+  store.patch(id, { ...seedUltragoalState(undefined, new Date().toISOString(), { awaiting: false })!, ...extra }, UG);
+
+/** Primary-side ultragoal tool calls against the fixture's store. */
+function ultragoalTool(store: StateStore, root: string, parents: Record<string, string> = {}) {
+  const tool = createTools(store, { locationDir: root, projectDir: root }, {
+    async parentSession(id) {
+      return parents[id];
+    },
+  }).find((t) => t.name === "ultragoal")!;
+  return async (sessionID: string, args: Record<string, unknown>, agent = "open-gajae") =>
+    (await tool.execute(tool.input.parse(args) as never, { agent, sessionID, signal: new AbortController().signal })).content;
+}
+
+test("ultragoal keyword seeds awaiting, the skill load confirms, the mention seeds confirmed; ralph does not", async () => {
+  await fixture(async (context) => {
+    const { store, hooks } = context;
+    const a = nextSession("ug-kw");
+    const [notice] = await notices(context, a, "force: ultragoal add auth");
+    expect(notice).toContain("[MODE: ULTRAGOAL]");
+    expect(await ugState(store, a)).toMatchObject({ active: true, awaiting_confirmation: true, iteration: 1, max_iterations: 100 });
+    await hooks.executeBefore({ tool: "skill", sessionID: a, agent: "open-gajae", id: nextCall(), input: { id: "ultragoal" } });
+    expect((await ugState(store, a))?.awaiting_confirmation).toBe(false);
+    const b = nextSession("ug-mention");
+    await notices(context, b, "fix the flag in src/cli.ts", { skills: ["ultragoal"] });
+    expect(await ugState(store, b)).toMatchObject({ active: true, awaiting_confirmation: false });
+    const c = nextSession("ug-ralph");
+    for (const text of ["ralph fix src/a.ts", "랄프 해줘", "ulw fix src/a.ts"])
+      await notices(context, c, text);
+    expect(await missing(store, c, UG)).toBe(true);
+  });
+});
+
+test("a vague ultragoal, keyword or mention, is gated to ralplan; force and ralplan-first prompts are not", async () => {
+  await fixture(async (context) => {
+    const { store, hooks } = context;
+    for (const options of [{}, { skills: ["ultragoal"] }]) {
+      const id = nextSession("gate");
+      const texts = await notices(context, id, "ultragoal add auth", options);
+      expect(texts).toHaveLength(2);
+      expect(texts[0]).toContain("[MODE: RALPLAN]");
+      expect(texts[1]).toContain("[RALPLAN GATE] Redirecting ultragoal → ralplan");
+      expect(await missing(store, id, UG)).toBe(true);
+      expect((await store.read(id, RALPLAN_MODE))?.active).toBe(true);
+      // AC25: loading the ultragoal skill on the gated turn seeds nothing.
+      await hooks.executeBefore({ tool: "skill", sessionID: id, agent: "open-gajae", id: nextCall(), input: { id: "ultragoal" } });
+      expect(await missing(store, id, UG)).toBe(true);
+    }
+    const both = nextSession("both");
+    await notices(context, both, "ralplan then ultragoal add auth");
+    expect(await missing(store, both, UG)).toBe(true);
+    expect((await store.read(both, RALPLAN_MODE))?.active).toBe(true);
+  });
+});
+
+test("ralplan's Execute via ultragoal handoff seeds once and is consumed", async () => {
+  await fixture(async (context) => {
+    const { store, hooks } = context;
+    const id = nextSession("r17");
+    await seed(store, id, { active: false, current_phase: "handoff", plan_path: "p.md" });
+    const load = () => hooks.executeBefore({ tool: "skill", sessionID: id, agent: "open-gajae", id: nextCall(), input: { id: "ultragoal" } });
+    await load();
+    expect(await ugState(store, id)).toMatchObject({ active: true, awaiting_confirmation: false });
+    expect(await store.read(id, RALPLAN_MODE)).toMatchObject({ current_phase: "handoff-consumed", plan_path: "p.md" });
+    await store.clear(id, UG);
+    await load();
+    expect(await missing(store, id, UG)).toBe(true);
+  });
+});
+
+test("the ultragoal loop continues, extends, stops at the hard max and stays quiet when not running", async () => {
+  await fixture(async (context) => {
+    const { store, hooks, synthetics } = context;
+    const id = nextSession("loop");
+    await ugSeed(store, id);
+    await succeeded(hooks, id);
+    let last = synthetics.at(-1)!;
+    expect(last).toMatchObject({ resume: true, description: "open-gajae: ultragoal continuation 2/100" });
+    expect(last.text).toContain("[ULTRAGOAL - ITERATION 2/100]");
+    expect(last.text).toContain("call `ultragoal` with op `create`");
+    await store.patch(id, { iteration: 100 }, UG);
+    await succeeded(hooks, id);
+    last = synthetics.at(-1)!;
+    expect(last.resume).toBe(true);
+    expect(last.text).toContain("[ULTRAGOAL LOOP - EXTENDED] Max iterations reached; extending to 110");
+    await store.patch(id, { iteration: 200, max_iterations: 200 }, UG);
+    await succeeded(hooks, id);
+    last = synthetics.at(-1)!;
+    expect(last.resume).toBe(true);
+    expect(last.text).toContain("[ULTRAGOAL LOOP - HARD LIMIT] Reached hard max iterations (200)");
+    expect(await ugState(store, id)).toMatchObject({ active: false, deactivated_reason: "hard_limit" });
+    const count = synthetics.length;
+    await succeeded(hooks, id);
+    for (const extra of [{ awaiting_confirmation: true }, { active: false, current_phase: "handoff" }, { active: false, current_phase: "complete" }]) {
+      const other = nextSession("quiet");
+      await ugSeed(store, other, extra);
+      await succeeded(hooks, other);
+    }
+    const stopped = nextSession("stopped");
+    await ugSeed(store, stopped);
+    await emit(hooks, "session.execution.interrupted", stopped, { reason: "user" });
+    await succeeded(hooks, stopped);
+    expect(synthetics.length).toBe(count);
+  });
+});
+
+test("three tool-less turns pause the loop and a user prompt resumes it; a child's tool call keeps the parent waiting", async () => {
+  await fixture(
+    async (context) => {
+      const { store, hooks, synthetics } = context;
+      const id = "sess-parent";
+      await ugSeed(store, id);
+      await emit(hooks, "session.tool.called", "elsewhere");
+      for (let turn = 0; turn < 3; turn += 1) {
+        await emit(hooks, "session.execution.started", id);
+        await succeeded(hooks, id);
+      }
+      const pause = synthetics.at(-1)!;
+      expect(pause).toMatchObject({ resume: false, description: "open-gajae: ultragoal paused (no_tool_progress)" });
+      expect(pause.text).toContain("[ULTRAGOAL PAUSED - NO TOOL PROGRESS]");
+      const count = synthetics.length;
+      await succeeded(hooks, id);
+      expect(synthetics.length).toBe(count);
+      await notices(context, id, "keep going");
+      expect(await ugState(store, id)).toMatchObject({ tool_less_turns: 0 });
+      expect((await ugState(store, id))?.paused_reason).toBeUndefined();
+      await emit(hooks, "session.execution.started", id);
+      await emit(hooks, "session.tool.called", id);
+      await succeeded(hooks, id);
+      expect(synthetics.at(-1)?.resume).toBe(true);
+
+      // AC19: the child's tool call does not release the parent's wait.
+      await emit(hooks, "session.execution.started", "child-1");
+      await emit(hooks, "session.tool.called", "child-1");
+      const before = synthetics.length;
+      await succeeded(hooks, id);
+      expect(synthetics.length).toBe(before);
+    },
+    { parents: { "child-1": "sess-parent" } },
+  );
+});
+
+test("reject ceiling pauses, a user prompt resets the target; an ultragoal turn still resets a finished ralplan's breaker", async () => {
+  await fixture(async (context) => {
+    const { store, hooks, synthetics } = context;
+    const id = nextSession("ceiling");
+    await ugSeed(store, id, { reject_counts: { G001: 3 } });
+    await seed(store, id, { active: true, current_phase: "handoff", breaker_count: 5 });
+    await succeeded(hooks, id);
+    expect(synthetics.at(-1)!.text).toContain("Goal G001 was rejected 3 times in a row");
+    expect((await store.read(id, RALPLAN_MODE))?.breaker_count).toBe(0);
+    await notices(context, id, "try again");
+    const state = await ugState(store, id);
+    expect(state?.reject_counts).toBeUndefined();
+    expect(state?.paused_reason).toBeUndefined();
+  });
+});
+
+test("one mode at a time: chain guard, @ralplan notice, silent ralplan keyword, and Q-1 while ralplan runs", async () => {
+  await fixture(async (context) => {
+    const { store, hooks } = context;
+    const id = nextSession("modes");
+    await ugSeed(store, id);
+    const call = { tool: "skill", sessionID: id, id: nextCall(), input: { id: "ralplan" } as unknown };
+    await hooks.executeBefore(call);
+    expect(call.input).toEqual({});
+    const after = await failed(hooks, call);
+    expect(String((after.error as Error).message)).toBe(CHAIN_GUARD_REFUSAL);
+    expect(await notices(context, id, "rethink this", { skills: ["ralplan"] })).toEqual([ralplanMentionNotice()]);
+    expect(await notices(context, id, "ralplan this again")).toEqual([]);
+    expect(await missing(store, id, RALPLAN_MODE)).toBe(true);
+    // After a handoff the skill loads normally.
+    await store.patch(id, { active: false, current_phase: "handoff" }, UG);
+    const allowed = { tool: "skill", sessionID: id, id: nextCall(), input: { id: "ralplan" } as unknown };
+    await hooks.executeBefore(allowed);
+    expect(allowed.input).toEqual({ id: "ralplan" });
+
+    const planning = nextSession("q1");
+    await seed(store, planning, { active: true, current_phase: "ralplan", awaiting_confirmation: false });
+    expect(await notices(context, planning, "force: ultragoal fix it")).toEqual([ralplanRunningNotice()]);
+    expect(await missing(store, planning, UG)).toBe(true);
+    // A stale awaiting ralplan seed is cleared first, so it does not block.
+    const stale = nextSession("q1-stale");
+    await seed(store, stale, { active: true, current_phase: "ralplan", awaiting_confirmation: true });
+    await notices(context, stale, "force: ultragoal fix it");
+    expect((await ugState(store, stale))?.active).toBe(true);
+  });
+});
+
+test("the reviewer brief is appended only to the pending reviewer's call from the ultragoal session", async () => {
+  await fixture(async (context) => {
+    const { store, hooks, root } = context;
+    const id = nextSession("brief");
+    const call = ultragoalTool(store, root);
+    await ugSeed(store, id);
+    await call(id, { op: "create", description: "task", goals: [{ title: "g", description: "d", priority: 1, acceptanceCriteria: ["works"] }] });
+    const subagent = (agent: string, sessionID = id) => ({ tool: "subagent", sessionID, id: nextCall(), input: { agent, description: "review", prompt: "please approve" } as Record<string, unknown> });
+    const early = subagent("open-gajae-architect");
+    await hooks.executeBefore(early);
+    expect(early.input.prompt).toBe("please approve");
+    await call(id, { op: "complete", goal_id: "G001", implementation: ["x"], files_changed: ["y"], learnings: ["z"] });
+    const review = subagent("open-gajae-architect");
+    await hooks.executeBefore(review);
+    const prompt = String(review.input.prompt);
+    expect(prompt).toStartWith("please approve\n\n<ultragoal-verification-brief>");
+    for (const part of ["1. works", 'goal_id "G001"', "Use a new subagent session for each review.", "verify independently and skeptically"])
+      expect(prompt).toContain(part);
+    for (const other of [subagent("open-gajae-critic"), subagent("open-gajae-architect", "some-child")]) {
+      await hooks.executeBefore(other);
+      expect(other.input.prompt).toBe("please approve");
+    }
+  });
+});
+
+test("ultragoal files are blocked for write tools and compaction carries the running loop", async () => {
+  await fixture(async (context) => {
+    const { store, hooks } = context;
+    const id = nextSession("owned");
+    const folder = await folderOf(store, id);
+    for (const path of [`.open-gajae/${folder}/ultragoal/goals.json`, `.open-gajae/${folder}/state/ultragoal-state.json`]) {
+      const call = await writeCall(hooks, id, path);
+      expect(call.input).toEqual({});
+      const after = await failed(hooks, call);
+      expect(String((after.error as Error).message)).toContain("is ultragoal-owned; change it only through the ultragoal tool");
+    }
+    const event = { sessionID: id, system: [] as { type: "text"; text: string }[] };
+    await hooks.compaction(event);
+    expect(event.system).toHaveLength(0);
+    await ugSeed(store, id);
+    await hooks.compaction(event);
+    expect(event.system).toHaveLength(1);
+    expect(event.system[0].text).toStartWith("<ultragoal-compaction-context>");
+  });
+});

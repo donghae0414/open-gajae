@@ -2,15 +2,15 @@
 
 # open-gajae
 
-세션에 묶인 `deep-interview`/`ralplan` skill, 여섯 개의 자체 역할, 작은 읽기 전용 코드 조사 도구를 제공하는 OpenCode 플러그인입니다. OMC v5.4.0의 일부 자료를 이식했지만 OMC 전체 이식이나 후속 실행 워크플로는 아닙니다.
+세션에 묶인 `deep-interview`/`ralplan`/`ultragoal` skill, 여덟 개의 자체 역할, 작은 읽기 전용 코드 조사 도구를 제공하는 OpenCode 플러그인입니다. OMC v5.4.0의 일부 자료를 이식했지만 OMC 전체 이식은 아니며, 실행 워크플로는 OMC ralph를 이식한 `ultragoal` 하나뿐입니다.
 
 ## 범위와 상태
 
 - 기준은 OMC v5.4.0 커밋 `5281b19e0d64f8e6dc6767f2130299a88af2dc71`입니다. OMX는 현재 동작의 원천이 아닙니다.
 - 대상 호스트는 OpenCode v2입니다. 이번 이식은 `@opencode/plugin` 2.0.15를 대상으로 하며, 로컬 `opencode/` 참조는 `v2.0.15`(`6f3639d82e`)에 고정되어 있습니다. v1 호스트는 더 이상 이 플러그인을 로드할 수 없습니다(v1 지원 중단 — deviations 표 참고).
 - 패키지는 빌드 단계가 없는 TS 소스입니다. `package.json`의 `exports["."]`는 `./src/index.ts`를 가리키고, 루트 `index.ts`가 이를 re-export합니다. `dist/`는 없습니다.
-- 구현 범위는 `deep-interview`와 `ralplan`, `open-gajae`/`open-gajae-explore`/`open-gajae-document-specialist`, `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic` 합의 역할, 세션 상태, native 문서 출력, 그리고 바로 호출 가능한 도구 11개(상태 도구 3개 + 읽기 전용 AST/LSP 도구 8개)입니다. company context(v1의 advisory MCP hook)는 완전히 제거되었습니다.
-- `ralplan`은 제공하며 `pending approval` 상태의 plan에서 끝납니다. ultragoal, autopilot, team, ralph, autoresearch, 계획 실행 핸드오프(deep-interview → ralplan 계획 bridge는 제공), 공유 세션 상태, 자동 migration/recovery는 제공하지 않습니다. 슬래시 커맨드는 없으며 진입은 skill mention 또는 키워드입니다(아래 "진입" 참고).
+- 구현 범위는 `deep-interview`·`ralplan`·`ultragoal`, `open-gajae`/`open-gajae-explore`/`open-gajae-document-specialist`, `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic` 합의 역할, `open-gajae-executor`/`open-gajae-cleaner` ultragoal 실행 역할, 세션 상태, native 문서 출력, 그리고 바로 호출 가능한 도구 12개(상태 도구 3개 + `ultragoal` 도구 1개 + 읽기 전용 AST/LSP 도구 8개)입니다. company context(v1의 advisory MCP hook)는 완전히 제거되었습니다.
+- `ralplan`은 제공하며 `pending approval` 상태의 plan에서 끝나고, 최종 승인 질문은 `Refine further`/`Execute via ultragoal`/`Stop here`를 제공합니다. `ultragoal`은 OMC ralph를 이식한 목표 기반 지속 실행 loop로, goal별 architect 검증·필수 읽기 전용 cleaner pass·최종 critic 리뷰를 제공합니다. deep-interview → ralplan → ultragoal 핸드오프 체인도 제공합니다. autopilot, team, 독립된 ralph skill, autoresearch, 공유 세션 상태, 자동 migration/recovery는 제공하지 않습니다. 슬래시 커맨드는 없으며 진입은 skill mention 또는 키워드입니다(아래 "진입" 참고).
 - 이 문서는 `feat/opencode-v2-port` 브랜치 커밋 `f4df6e6` 기준으로 구현된 v2 계약을 설명합니다. Phase 1 완료를 입증하지 않으며, 아래 검증 계층(typecheck, unit test, host probe)이 현재 통과하는지도 이 문서 자체가 주장하지 않습니다. 그 상태는 plan과 ledger에서 관리합니다.
 
 개발 정책은 [AGENTS.md](AGENTS.md), 배경 분석은 [이식 가이드](docs/analysis/opencode-porting-guide.md)(역사적 자료이며 권위는 AGENTS.md를 따름), 출처는 [third-party notices](THIRD-PARTY-NOTICES.md)를 확인하세요.
@@ -97,41 +97,54 @@ continuation은 ralplan state가 active인 동안 durable `session.execution.suc
 
 `[RALPLAN MODE RESTORED]`는 같은 세션 안에서 재개당 최대 한 번만 나타납니다. state는 세션별이므로 세션 간 복원은 없습니다.
 
-실행 skill은 없습니다. plan은 `pending approval` 상태로 남습니다.
+사용자가 **Execute via ultragoal**을 고르지 않으면 plan은 `pending approval` 상태로 남습니다.
 
-후속 개발 노트: ultragoal 또는 autopilot을 구현하면 최종 승인 선택지에 `Approve execution via ultragoal`(또는 OMC 원본의 `team`/`ralph`/`compact`/`Request changes`/`Reject`)을 추가하고, 핸드오프 전에 `state_write(mode="ralplan", active=false)`를 호출해야 합니다.
+실제 핸드오프: **Execute via ultragoal**을 선택하면 ralplan은 plan을 `approved`로 표시하고 `state_clear` 대신 `state_write(mode="ralplan", active=false, current_phase="handoff", plan_path="<plan 절대 경로>")`를 호출한 뒤 `ultragoal` skill을 불러와 plan 경로를 `source_plan`으로 넣어 `create`를 호출합니다(미완료 goal list가 이미 있으면 `resume`). 반대 방향도 있습니다: `ultragoal handoff(to="ralplan", reason)`은 실행을 멈추고(goal과 progress는 삭제되지 않고 유지) ralplan state를 다시 시딩합니다. 이후 다시 **Execute via ultragoal**을 선택하면 `resume`을 호출해 새 plan을 `add`/`revise`/`supersede`로 기존 goal에 병합합니다.
 
 ## 자체 역할과 설정
 
 - **`open-gajae`**: primary입니다. 수정, 결정, 통합, state write/clear를 소유합니다. host 기본값 외에 추가 rule은 없습니다.
 - **`open-gajae-explore`**: repository 사실을 읽기 전용으로 조사합니다. edit, delegation(`subagent`), question, state write/clear를 할 수 없습니다. `shell`은 전체 허용됩니다(OMC parity — 어떤 역할에도 `shell`/Bash rule을 추가하지 않습니다).
 - **`open-gajae-document-specialist`**: 문서와 인용 근거를 조사합니다. edit, delegation, question, state write/clear를 할 수 없습니다. `chub` 절차는 프롬프트에서 읽기 전용으로 문서화되어 있으며, host permission rule이 `shell`을 `chub` 명령으로 제한하지는 않습니다.
-- **`open-gajae-planner`**, **`open-gajae-architect`**, **`open-gajae-critic`**: ralplan 합의 역할입니다. 세 역할 모두 `mode: subagent`이고 기본 모델은 없으며 설정의 `agents` 맵으로만 지정합니다. architect와 critic은 읽기 전용으로 `edit`, `subagent`, `question`, `state_write`, `state_clear`가 거부됩니다. planner는 OMC와 같이 plan을 직접 저장하고 조사를 위임합니다. `edit` 권한은 `.open-gajae/_session-*/plans/*`와 `.open-gajae/_session-*/drafts/*`만 허용하고, `execute.before`(`ctx.tool.hook` 경유) guard가 그 쓰기를 현재 루트 세션의 디렉터리로 다시 한정합니다 — 범위 밖 호출은 input을 무효화해 host의 decode 자체를 실패시키고, `execute.after`가 그 오류(그리고 정적 `edit` rule이 만든 다른 거부)를 모델이 이해할 안내로 다시 씁니다. `subagent` 권한은 `open-gajae-explore`와 `open-gajae-document-specialist`만 허용합니다. `question`, `state_write`, `state_clear`, 그리고 Code Mode의 두 세션 도구(`opencode_session_move`, `opencode_session_rename`)는 다섯 subagent 역할 모두에서 거부됩니다. `subagent_depth`는 플러그인이 올리지 않습니다. host 설정에 `experimental.subagent_depth: 2`를 직접 넣으세요(설치 참고).
+- **`open-gajae-planner`**, **`open-gajae-architect`**, **`open-gajae-critic`**: ralplan 합의 역할입니다. 세 역할 모두 `mode: subagent`이고 기본 모델은 없으며 설정의 `agents` 맵으로만 지정합니다. architect와 critic은 읽기 전용으로 `edit`, `subagent`가 거부되고, `question`, `state_write`, `state_clear`도 거부됩니다. planner는 OMC와 같이 plan을 직접 저장하고 조사를 위임합니다. `edit` 권한은 `.open-gajae/_session-*/plans/*`와 `.open-gajae/_session-*/drafts/*`만 허용하고, `execute.before`(`ctx.tool.hook` 경유) guard가 그 쓰기를 현재 루트 세션의 디렉터리로 다시 한정합니다 — 범위 밖 호출은 input을 무효화해 host의 decode 자체를 실패시키고, `execute.after`가 그 오류(그리고 정적 `edit` rule이 만든 다른 거부)를 모델이 이해할 안내로 다시 씁니다. `subagent` 권한은 `open-gajae-explore`와 `open-gajae-document-specialist`만 허용합니다. `question`, `state_write`, `state_clear`, 그리고 Code Mode의 두 세션 도구(`opencode_session_move`, `opencode_session_rename`)는 일곱 subagent 역할 모두에서 거부됩니다. `subagent_depth`는 플러그인이 올리지 않습니다. host 설정에 `experimental.subagent_depth: 2`를 직접 넣으세요(설치 참고).
+- **`open-gajae-executor`**(OMC `agents/executor.md` 이식): `ultragoal`의 goal 하나씩을 구현합니다. `question`이 거부되어 사용자에게 물을 수 없고 `ultragoal` 도구도 쓸 수 없습니다. delegation은 코드베이스 조사용 `open-gajae-explore`와, 같은 문제를 반복 실패했을 때의 `open-gajae-architect`로만 제한됩니다. `edit`과 `shell`은 유지합니다.
+- **`open-gajae-cleaner`**(OMC `ai-slop-cleaner` skill을 읽기 전용 리뷰어로 재구성): `ultragoal`의 필수 정리 검토로, 모든 goal이 검증된 뒤 최종 critic 리뷰 전에 한 번 실행됩니다. edit·write·patch·delegation·question·state write/clear·`ultragoal` 도구가 모두 거부됩니다. `shell`은 점검용으로 유지하며 파일과 줄 번호를 붙여 `BLOCKING`/`NON-BLOCKING` 항목을 보고할 뿐 아무것도 바꾸지 않습니다.
+- `ultragoal` 안에서는 `open-gajae-architect`와 `open-gajae-critic`만 `ultragoal` 도구를 추가로 가지며, `status`와 자기 자신의 `record_verdict` 호출로 제한됩니다 — 그 외 모든 자체 역할은 `ultragoal`이 거부됩니다.
 
 역할 rule은 각 agent의 `permissions` 배열에 host 기본값 뒤에 추가되지만, **여러분의 host `agents.<id>` permission rule은 플러그인 것보다 뒤에 적용되어 우선합니다** — v1이 순서를 바꿔 mandatory deny를 지켰던 것과 달리, host override가 역할의 기본 deny를 완화할 수 있습니다(기록된 deviation: "user config wins"). 설정은 `~/.open-gajae/open-gajae.jsonc`와 `<worktree>/.open-gajae/open-gajae.jsonc`에서 읽습니다. field는 project → user → defaults 순으로 병합됩니다. 알 수 없는 key, 잘못된 JSONC, 잘못된 값은 진단과 함께 실패합니다.
 
 ```jsonc
 {
   "deepInterview": { "ambiguityThreshold": 0.2, "maxRounds": 20 },
+  "ultragoal": {
+    // 0이면 무제한, 기본 200
+    "hardMaxIterations": 200
+  },
   "agents": {
     "open-gajae": { "model": "provider/model", "variant": "variant-name" },
     "open-gajae-planner": { "model": "openai/gpt-6-luna" },
     "open-gajae-architect": { "model": "openai/gpt-6-luna", "variant": "high" },
-    "open-gajae-critic": { "model": "openai/gpt-6-luna", "variant": "high" }
+    "open-gajae-critic": { "model": "openai/gpt-6-luna", "variant": "high" },
+    "open-gajae-executor": { "model": "openai/gpt-6-luna", "variant": "medium" },
+    "open-gajae-cleaner": { "model": "openai/gpt-6-luna", "variant": "medium" }
   }
 }
 ```
 
+`ultragoal.hardMaxIterations`는 `0` 이상의 정수입니다. `0`이면 무제한이고 기본값은 `200`입니다(continuation iteration의 hard ceiling입니다. `max_iterations`가 이 값까지 연장되면 loop가 멈추고 보고합니다. 아래 goal별·최종 리뷰와는 별개입니다).
+
 `variant`는 같은(이미 병합된) entry에 `model`이 있어야 합니다: user 레벨 `model` + project 레벨 `variant`는 유효하지만, `variant`만 있거나(한 파일에서든 양쪽에 나뉘어서든) 어디에도 `model`이 없으면 agent 이름과 `model "provider/model"` 추가 요청을 담은 오류로 거부됩니다. 이는 그런 variant를 진단만 남기고 조용히 버리는 v2 host보다 더 엄격합니다. provider fallback, tier mapping, 인위적 collision 거부는 없습니다. v1의 `companyContext` 설정은 사라졌습니다 — 지금 넣으면 `unknown setting`으로 실패합니다.
+
+`ultragoal`은 완료 주장 하나를 그대로 믿지 않고 검증을 여러 층으로 쌓습니다. 각 goal은 새 `open-gajae-architect` 세션이 그 goal의 acceptance criteria만 보고 검증해 `record_verdict`로 `approve`/`reject`를 기록합니다. 모든 goal이 검증되면 필수 읽기 전용 `open-gajae-cleaner` pass가 이번 실행에서 바뀐 파일을 검토하고, blocking finding은 계속 진행하기 전에 고칩니다. 그 정리와 회귀 재검증이 끝난 뒤에야 새 `open-gajae-critic` 세션이 전체 실행을 검토하고 최종 verdict를 기록합니다. loop는 그 최종 critic 승인에서만 끝나며, 어느 층에서든 거부되면 실행을 끝내는 대신 해당 goal을 다시 엽니다. `ultragoal cancel(reason)`은 실행을 포기합니다(state는 삭제되지만 `goals.json`/`progress.txt`는 남아 나중에 `resume`할 수 있습니다). `ultragoal.hardMaxIterations`는 이 전체를 떠받치는 hard ceiling입니다.
 
 ## 읽기 전용 코드 도구
 
-플러그인은 읽기 전용 코드 도구 8개를 등록합니다(위의 상태 도구 3개를 더하면 총 11개).
+플러그인은 읽기 전용 코드 도구 8개를 등록합니다(위의 상태 도구 3개와 `ultragoal` 도구를 더하면 총 12개).
 
 - `ast_grep_search` (`@ast-grep/napi` 0.31.1): AST 검색만 하며 replace는 없습니다.
 - `lsp_goto_definition`, `lsp_hover`, `lsp_diagnostics`, `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`.
 
-LSP server는 감지·보고만 하며 자동 다운로드하지 않습니다. LSP rename, code action, replacement suite는 없습니다. 사용 가능한 actor는 여섯 개 자체 역할 전체입니다 — `open-gajae`, `open-gajae-explore`, `open-gajae-document-specialist`, `open-gajae-planner`, `open-gajae-architect`, `open-gajae-critic` — OMC와 동일하게 모든 agent가 읽기 전용 LSP/AST 도구를 사용할 수 있습니다. project 경계는 v1의 call마다 host permission을 묻던 방식을 대체합니다: input 경로를 host의 현재 location 디렉터리 기준으로 해석하고, symlink를 따라가며, 실제 대상이 실제 project 디렉터리 안에 있어야 합니다. `.env`와 `.env.*` 파일은 요청한 이름과 해석된 이름 양쪽에서 거부되며, `ast_grep_search`는 traversal 중에도 건너뜁니다. 두 도구 모두 explorer 권한을 넓히거나 arbitrary shell 실행을 허용하지 않습니다.
+LSP server는 감지·보고만 하며 자동 다운로드하지 않습니다. LSP rename, code action, replacement suite는 없습니다. 사용 가능한 actor는 여덟 개 자체 역할 전체입니다 — `open-gajae`, `open-gajae-explore`, `open-gajae-document-specialist`, `open-gajae-planner`, `open-gajae-architect`, `open-gajae-critic`, `open-gajae-executor`, `open-gajae-cleaner` — OMC와 동일하게 모든 agent가 읽기 전용 LSP/AST 도구를 사용할 수 있습니다. project 경계는 v1의 call마다 host permission을 묻던 방식을 대체합니다: input 경로를 host의 현재 location 디렉터리 기준으로 해석하고, symlink를 따라가며, 실제 대상이 실제 project 디렉터리 안에 있어야 합니다. `.env`와 `.env.*` 파일은 요청한 이름과 해석된 이름 양쪽에서 거부되며, `ast_grep_search`는 traversal 중에도 건너뜁니다. 두 도구 모두 explorer 권한을 넓히거나 arbitrary shell 실행을 허용하지 않습니다.
 
 source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT_MS`, `OPEN_GAJAE_LSP_IDLE_TIMEOUT_MS`, `OPEN_GAJAE_LSP_IDLE_CHECK_INTERVAL_MS`, `OPEN_GAJAE_LSP_CONTAINER_ID`, `OPEN_GAJAE_PYTHON_LSP=basedpyright`뿐입니다. 일반 설정이 아니라 LSP 구현 설정입니다.
 

@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import { join } from "node:path";
 import {
   artifactPathsOf,
+  isUltragoalOwned,
   projectRelative,
   sessionArtifactOwner,
 } from "../src/artifact-guard";
@@ -131,4 +132,22 @@ test("sessionArtifactOwner leaves every other path to the static rules", () => {
       `.open-gajae/other/../${OWNER}/plans/plan.md`,
     ),
   ).toBe(OWNER);
+});
+
+test("ultragoal files and state are owned by the ultragoal tool from any location", () => {
+  const table: [string, string, boolean][] = [
+    [PROJECT, `.open-gajae/${OWNER}/ultragoal/goals.json`, true],
+    [PROJECT, `.open-gajae/${OWNER}/ultragoal/progress.txt`, true],
+    [PROJECT, `.open-gajae/${OWNER}/ultragoal`, true],
+    [PROJECT, `.open-gajae/${OWNER}/state/ultragoal-state.json`, true],
+    [SUB, `../.open-gajae/${OWNER}/ultragoal/goals.json`, true],
+    [PROJECT, join(PROJECT, `.open-gajae/${OWNER}/state/ultragoal-state.json`), true],
+    [PROJECT, `.open-gajae/${OWNER}/state/ralplan-state.json`, false],
+    [PROJECT, `.open-gajae/${OWNER}/plans/ultragoal.md`, false],
+    [PROJECT, "src/ultragoal.ts", false],
+  ];
+  for (const [location, path, owned] of table)
+    expect(`${path}: ${isUltragoalOwned(location, PROJECT, path)}`).toBe(
+      `${path}: ${owned}`,
+    );
 });

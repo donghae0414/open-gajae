@@ -84,15 +84,16 @@ Ralplan triggers iterative planning with Planner, Architect, and Critic agents u
 8. **Post-consensus check** (always). After the loop ends, use native `question` for assumptions or conflicts that surfaced during the Architect and Critic reviews and are still unsettled. One at a time; if there are none, ask nothing.
 9. Mark the plan `pending approval` and save it to `{plansDir}/<slug>.md`. Then, always and via native `question` (never plain text), ask exactly one question:
 
-   **Question:** "The consensus plan is ready and marked `pending approval`. Refine it further, or stop here?"
+   **Question:** "The consensus plan is ready and marked `pending approval`. Refine it further, execute it via ultragoal, or stop here?"
 
    **Options:**
    - **Refine further** — Return to step 1 with your feedback and run the consensus loop again.
+   - **Execute via ultragoal** — Explicit opt-in to proceed via ultragoal persistence with per-goal architect verification and a final critic review.
    - **Stop here** — Keep the plan as a `pending approval` artifact. This is not approval to implement.
 
-   A free-form answer is honored; treat anything that is not a clear stop as `Refine further`. On **Refine further**, call `state_write(mode="ralplan", current_phase="ralplan", awaiting_confirmation=false, breaker_count=0)` before re-entering step 1 — resetting the breaker is required, or a second pass inherits the first pass's reinforcement count. On **Stop here**, report the plan path and call `state_clear(mode="ralplan")`.
+   A free-form answer is honored; treat anything that is not a clear stop or a clear request to execute as `Refine further`. On **Refine further**, call `state_write(mode="ralplan", current_phase="ralplan", awaiting_confirmation=false, breaker_count=0)` before re-entering step 1 — resetting the breaker is required, or a second pass inherits the first pass's reinforcement count. On **Stop here**, report the plan path and call `state_clear(mode="ralplan")`.
 
-> **Follow-up development note.** When an execution skill (ultragoal, autopilot, team, or ralph) ships in this plugin, extend the step-9 options with `Approve execution via ultragoal` — or restore OMC's original set (team / ralph / compact / Request changes / Reject). On approval, call `state_write(mode="ralplan", active=false)` and **not** `state_clear`, then invoke the execution skill, so the new mode's own enforcement starts from a clean but still-present state file. Until then this skill has no execution path and must never invoke one.
+   On **Execute via ultragoal**: mark the plan `approved` in the plan file, then call `state_write(mode="ralplan", active=false, current_phase="handoff", plan_path="<absolute plan path>")` — **not** `state_clear` — **before** loading the execution skill, so the handoff is visible to the plugin. Then load `skill` `ultragoal` and call `ultragoal status`. If a valid unfinished `goals.json` exists (for example after an ultragoal `handoff` to ralplan), call `resume(reason)` and merge the new plan into it with `add`, `revise`, and `supersede`, keeping completed and verified goals; otherwise call `create` with `source_plan` set to the plan path. Do NOT implement directly from this skill; ultragoal owns persistent execution and verification.
 
 ### Plan Output Format
 
@@ -124,7 +125,7 @@ Plans are saved to `{plansDir}`. Drafts go to `{draftsDir}`.
 - Use native `question` — never plain text — for the intent check (step 2), the post-consensus check (step 8), and the final approval (step 9); all three run with or without `--interactive`. With `--interactive`, also use it for the draft review (step 3).
 - Before explicit execution approval, planning mode MUST NOT run mutation-oriented shell commands, edit files, commit, push, open PRs, invoke execution skills, or delegate implementation tasks; it may only inspect context and draft/update plan/spec/proposal artifacts.
 - Record the saved plan path with `state_write(mode="ralplan", plan_path="<absolute path>")` on first save.
-- **CRITICAL — state lifecycle**: on entry, before step 1, call `state_read(mode="ralplan")` first (you already do this to resolve `{plansDir}`/`{draftsDir}`), then `state_write(mode="ralplan", active=true, current_phase="ralplan", awaiting_confirmation=false)`. **If that read returned no ralplan state, the entry write must also stamp `started_at="<current ISO-8601 timestamp>"` and `restored_at` equal to it. If state already exists, do not re-stamp either field** — carry the stored values through unchanged. `started_at` is written exactly once per activation and is the origin the session-restore check reads; re-stamping it would raise a spurious `[RALPLAN MODE RESTORED]` banner. Do **not** write `awaiting_confirmation` around questions; it is not a question flag. On the `Stop here` choice, on rejection, and on any error or abort, call `state_clear(mode="ralplan")`. There is no execution handoff in this version, so `state_write(active=false)` is not used; see the ultragoal follow-up note. Unlike OMC, `state_clear` here only unlinks this session's one state file — it writes no global cancel signal, so OMC's warning about a 30-second enforcement gap does not apply and is removed.
+- **CRITICAL — state lifecycle**: on entry, before step 1, call `state_read(mode="ralplan")` first (you already do this to resolve `{plansDir}`/`{draftsDir}`), then `state_write(mode="ralplan", active=true, current_phase="ralplan", awaiting_confirmation=false)`. **If that read returned no ralplan state, the entry write must also stamp `started_at="<current ISO-8601 timestamp>"` and `restored_at` equal to it. If state already exists, do not re-stamp either field** — carry the stored values through unchanged. `started_at` is written exactly once per activation and is the origin the session-restore check reads; re-stamping it would raise a spurious `[RALPLAN MODE RESTORED]` banner. Do **not** write `awaiting_confirmation` around questions; it is not a question flag. On the `Stop here` choice, on rejection, and on any error or abort, call `state_clear(mode="ralplan")`. On **Execute via ultragoal**, call `state_write(mode="ralplan", active=false, current_phase="handoff", plan_path=<plan>)` instead of `state_clear`, as step 9 describes. If an ultragoal run is active in this session, the entry `state_write(active=true)` is refused; follow the refusal and call `ultragoal handoff(to="ralplan", reason)` first. Unlike OMC, `state_clear` here only unlinks this session's one state file — it writes no global cancel signal, so OMC's warning about a 30-second enforcement gap does not apply and is removed.
 
 The skill's entry write — `state_write(mode="ralplan", active=true, current_phase="ralplan", awaiting_confirmation=false)` — is the **only** place this skill touches `awaiting_confirmation`. The flag means "the keyword hook seeded this state and the model has not yet loaded this skill", exactly as in OMC; by the time you are reading this document the host has already cleared it, and the explicit `false` on entry is belt-and-braces. Never write `awaiting_confirmation` with a true value. Do **not** set or clear it around native `question` calls. Every `state_write` must still carry the full prior snapshot, because the state store replaces rather than merges; never re-send a stale `awaiting_confirmation: true` from an earlier snapshot.
   </Tool_Usage>
@@ -184,7 +185,7 @@ Why bad: Decision fatigue. Present one option with trade-offs, get reaction, the
 - Stop asking intent-check questions when requirements are clear enough to plan -- do not over-ask
 - Stop after 5 Planner/Architect/Critic iterations and present the best version. Do NOT clear ralplan state here — the user may still select **Refine further** at step 9. State is cleared only on the user's final choice at step 9, or on rejection, error, or abort.
 - The workflow always ends at a plan marked `pending approval`, and step 9 runs with or without `--interactive`. On **Stop here**, **always** call `state_clear(mode="ralplan")` before stopping.
-- If the user says "just do it" or "skip planning" without explicitly naming an execution path, treat it as a request to end planning: output the current plan/spec/proposal as `pending approval` and stop at the step 9 question. Do NOT mutate files, delegate implementation, commit, push, or open a PR from the planning module. This version has no execution path at all.
+- If the user says "just do it" or "skip planning" without explicitly naming an execution path, treat it as a request to end planning: output the current plan/spec/proposal as `pending approval` and stop at the step 9 question. Do NOT mutate files, delegate implementation, commit, push, or open a PR from the planning module. The only execution path is **Execute via ultragoal** at step 9.
 - Escalate to the user when there are irreconcilable trade-offs that require a business decision
   </Escalation_And_Stop_Conditions>
 
@@ -204,11 +205,11 @@ Why bad: Decision fatigue. Present one option with trade-offs, get reaction, the
 
 ## Pre-Execution Gate
 
-The gate is registered but dormant here because `EXECUTION_GATE_KEYWORDS` is empty until an execution skill ships.
+The gate applies to the `ultragoal` keyword and the `@ultragoal` mention.
 
 ### Why the Gate Exists
 
-Execution modes (ralph, autopilot, team, ultrapilot) spin up heavy multi-agent orchestration. When launched on a vague request like "ralph improve the app", agents have no clear target — they waste cycles on scope discovery that should happen during planning, often delivering partial or misaligned work that requires rework.
+Execution modes (ultragoal, autopilot, team, ultrapilot) spin up heavy multi-agent orchestration. When launched on a vague request like "ultragoal improve the app", agents have no clear target — they waste cycles on scope discovery that should happen during planning, often delivering partial or misaligned work that requires rework.
 
 The ralplan-first gate intercepts underspecified execution requests and redirects them through the ralplan consensus planning workflow. This ensures:
 - **Explicit scope**: A PRD defines exactly what will be built
@@ -219,19 +220,19 @@ The ralplan-first gate intercepts underspecified execution requests and redirect
 ### Good vs Bad Prompts
 
 **Passes the gate** (specific enough for direct execution):
-- `ralph fix the null check in src/hooks/bridge.ts:326`
+- `ultragoal fix the null check in src/hooks/bridge.ts:326`
 - `autopilot implement issue #42`
 - `team add validation to function processKeywordDetector`
-- `ralph do:\n1. Add input validation\n2. Write tests\n3. Update README`
+- `ultragoal do:\n1. Add input validation\n2. Write tests\n3. Update README`
 
 **Gated — redirected to ralplan** (needs scoping first):
-- `ralph fix this`
+- `ultragoal fix this`
 - `autopilot build the app`
 - `team improve performance`
-- `ralph add authentication`
+- `ultragoal add authentication`
 
 **Bypass the gate** (when you know what you want):
-- `force: ralph refactor the auth module`
+- `force: ultragoal refactor the auth module`
 - `! autopilot optimize everything`
 
 ### When the Gate Does NOT Trigger
@@ -240,42 +241,42 @@ The gate auto-passes when it detects **any** concrete signal. You do not need al
 
 | Signal Type | Example prompt | Why it passes |
 |---|---|---|
-| File path | `ralph fix src/hooks/bridge.ts` | References a specific file |
-| Issue/PR number | `ralph implement #42` | Has a concrete work item |
-| camelCase symbol | `ralph fix processKeywordDetector` | Names a specific function |
-| PascalCase symbol | `ralph update UserModel` | Names a specific class |
+| File path | `ultragoal fix src/hooks/bridge.ts` | References a specific file |
+| Issue/PR number | `ultragoal implement #42` | Has a concrete work item |
+| camelCase symbol | `ultragoal fix processKeywordDetector` | Names a specific function |
+| PascalCase symbol | `ultragoal update UserModel` | Names a specific class |
 | snake_case symbol | `team fix user_model` | Names a specific identifier |
-| Test runner | `ralph npm test && fix failures` | Has an explicit test target |
-| Numbered steps | `ralph do:\n1. Add X\n2. Test Y` | Structured deliverables |
-| Acceptance criteria | `ralph add login - acceptance criteria: ...` | Explicit success definition |
-| Error reference | `ralph fix TypeError in auth` | Specific error to address |
-| Code block | `ralph add: \`\`\`ts ... \`\`\`` | Concrete code provided |
-| Escape prefix | `force: ralph do it` or `! ralph do it` | Explicit user override |
+| Test runner | `ultragoal npm test && fix failures` | Has an explicit test target |
+| Numbered steps | `ultragoal do:\n1. Add X\n2. Test Y` | Structured deliverables |
+| Acceptance criteria | `ultragoal add login - acceptance criteria: ...` | Explicit success definition |
+| Error reference | `ultragoal fix TypeError in auth` | Specific error to address |
+| Code block | `ultragoal add: \`\`\`ts ... \`\`\`` | Concrete code provided |
+| Escape prefix | `force: ultragoal do it` or `! ultragoal do it` | Explicit user override |
 
 ### End-to-End Flow Example
 
-1. User types: `ralph add user authentication`
-2. Gate detects: execution keyword (`ralph`) + underspecified prompt (no files, functions, or test spec)
+1. User types: `ultragoal add user authentication`
+2. Gate detects: execution keyword (`ultragoal`) + underspecified prompt (no files, functions, or test spec)
 3. Gate redirects to **ralplan** with message explaining the redirect
 4. Ralplan consensus runs:
    - **Planner** creates initial plan (which files, what auth method, what tests)
    - **Architect** reviews for soundness
    - **Critic** validates quality and testability
-5. On consensus approval, the plan is saved and marked `pending approval`; the final question offers `Refine further` or `Stop here`.
-6. No execution skill exists in this plugin yet; see the follow-up development note.
+5. On consensus approval, the plan is saved and marked `pending approval`; the final question offers `Refine further`, `Execute via ultragoal`, or `Stop here`.
+6. On `Execute via ultragoal`, ultragoal starts from the approved plan (`create` with `source_plan`).
 
 ### Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
 | Gate fires on a well-specified prompt | Add a file reference, function name, or issue number to anchor the request |
-| Want to bypass the gate | Prefix with `force:` or `!` (e.g., `force: ralph fix it`) |
+| Want to bypass the gate | Prefix with `force:` or `!` (e.g., `force: ultragoal fix it`) |
 | Gate does not fire on a vague prompt | The gate only catches prompts with <=15 effective words and no concrete anchors; add more detail or use `@ralplan` explicitly |
-| Redirected to ralplan but want execution | This plugin has no execution skill yet. Ralplan always ends at a `pending approval` plan; run the implementation yourself, or see the ultragoal follow-up note below. |
+| Redirected to ralplan but want execution | Finish ralplan and choose `Execute via ultragoal` at step 9, or prefix the request with `force:` or `!`. |
 
 ## Source and host substitutions
 
-Adapted from OMC v5.4.0 `skills/plan/SKILL.md` and `skills/ralplan/SKILL.md` (MIT). Retained material is the RALPLAN-DR consensus workflow (Planner draft and summary, draft review, Architect review, Critic evaluation, the independent-sequential-review blockquote, the re-review loop, improvement merge and ADR), the planning/execution boundary, the plan output format, the tool-usage and escalation rules, the final checklist, and the entire pre-execution gate section. The consensus steps are renumbered 1–9 to make room for three unconditional native `question` gates: the intent check (step 2), the post-consensus check (step 8), and the final approval (step 9). Host substitutions are OpenCode native `question`, `subagent`, and `state_read`/`state_write`/`state_clear`; `open-gajae-architect`, `open-gajae-critic`, `open-gajae-planner`, and `open-gajae-explore` in place of the OMC subagents; resolved Open-gajae runtime settings in place of configuration-file reads; the `{plansDir}` and `{draftsDir}` placeholders in place of OMC state paths; the `@ralplan` mention in place of the OMC command path; continuation on `session.execution.succeeded` in place of the persistent-mode Stop hook; and a `state_clear` that unlinks only this session's state file, so OMC's 30-second cancel-signal warning is removed. `companyContext` is removed entirely; this is a recorded OMC deviation. Removed are the mode-selection table and the interview, direct, and plan-critique modes; the separate requirements-analysis role; the external-CLI reviewer substitutions and the advisor command they invoked; the merged-skill deprecation note; every host session selector; and all execution handoffs, leaving no execution path in this version.
+Adapted from OMC v5.4.0 `skills/plan/SKILL.md` and `skills/ralplan/SKILL.md` (MIT). Retained material is the RALPLAN-DR consensus workflow (Planner draft and summary, draft review, Architect review, Critic evaluation, the independent-sequential-review blockquote, the re-review loop, improvement merge and ADR), the planning/execution boundary, the plan output format, the tool-usage and escalation rules, the final checklist, and the entire pre-execution gate section. The consensus steps are renumbered 1–9 to make room for three unconditional native `question` gates: the intent check (step 2), the post-consensus check (step 8), and the final approval (step 9). Host substitutions are OpenCode native `question`, `subagent`, and `state_read`/`state_write`/`state_clear`; `open-gajae-architect`, `open-gajae-critic`, `open-gajae-planner`, and `open-gajae-explore` in place of the OMC subagents; resolved Open-gajae runtime settings in place of configuration-file reads; the `{plansDir}` and `{draftsDir}` placeholders in place of OMC state paths; the `@ralplan` mention in place of the OMC command path; continuation on `session.execution.succeeded` in place of the persistent-mode Stop hook; and a `state_clear` that unlinks only this session's state file, so OMC's 30-second cancel-signal warning is removed. `companyContext` is removed entirely; this is a recorded OMC deviation. Removed are the mode-selection table and the interview, direct, and plan-critique modes; the separate requirements-analysis role; the external-CLI reviewer substitutions and the advisor command they invoked; the merged-skill deprecation note; every host session selector; and OMC's other execution options, leaving **Execute via ultragoal** (the port of OMC's persistence-loop handoff, with `current_phase="handoff"` and a resume-and-merge path for an unfinished goal list) as the only execution path.
 
 **Why there is no question flag.** The `question` tool awaits inside its own tool execution instead of returning immediately (`core/src/tool/plugin/question.ts`): `execute` calls `forms.ask(...)` and does not resolve until the user answers or dismisses the form, so the session's turn never reaches a terminal execution state while a question is open. Continuation here listens for `session.execution.succeeded` (Step 5), and the Phase 0 host probe P2 confirmed that no `succeeded` is published while a `question` is pending — only `created`/`started` events, with `succeeded` following the form's answer. Question-wait versus a genuinely completed turn is therefore distinguished by the host's own durable execution-event stream, and the plugin needs no flag of its own.
 

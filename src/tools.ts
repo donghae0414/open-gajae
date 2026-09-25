@@ -7,7 +7,10 @@ import {
   RALPLAN_MODE,
   type StateMode,
   StateStore,
+  ULTRAGOAL_MODE,
 } from "./state.js";
+import { isUltragoalRunning, RALPLAN_ACTIVATION_REFUSAL } from "./ultragoal.js";
+import { ultragoalTool, type UltragoalToolDeps } from "./ultragoal-tool.js";
 import { astGrepSearchTool } from "./tools/ast-tools.js";
 import { defineTool, type ToolCallContext } from "./tools/define.js";
 import { lspTools } from "./tools/lsp-tools.js";
@@ -20,6 +23,8 @@ const readActors = new Set([
   "open-gajae-planner",
   "open-gajae-architect",
   "open-gajae-critic",
+  "open-gajae-executor",
+  "open-gajae-cleaner",
 ]);
 
 function scope(
@@ -61,12 +66,15 @@ const explicitShape = {
   restored_at: z.string().max(100).optional(),
 };
 
+// Ultragoal state is reached only through the `ultragoal` tool (decision 21).
 const modeArg = z
   .enum([DEEP_INTERVIEW_MODE, RALPLAN_MODE])
   .default(DEEP_INTERVIEW_MODE);
 
+type ToolMode = typeof DEEP_INTERVIEW_MODE | typeof RALPLAN_MODE;
+
 /** Direct callers may omit `mode`; only host-parsed args carry the schema default. */
-function resolveMode(mode: StateMode | undefined): StateMode {
+function resolveMode(mode: ToolMode | undefined): ToolMode {
   return mode ?? DEEP_INTERVIEW_MODE;
 }
 
@@ -80,14 +88,26 @@ async function pathResult(
   return { statePath, specsDir, plansDir, draftsDir };
 }
 
+/** Without a host, no reviewer's parent can be resolved: fail closed. */
+const noHost: UltragoalToolDeps = {
+  async parentSession() {
+    throw new Error("no host session lookup is available");
+  },
+};
+
 /**
  * Every tool this plugin adds, in v2 shape, for one `ctx.tool.transform`. State
  * operations use the current trusted session; failures come back as content.
  */
-export function createTools(store: StateStore, paths: CodeToolPaths) {
+export function createTools(
+  store: StateStore,
+  paths: CodeToolPaths,
+  deps: UltragoalToolDeps = noHost,
+) {
   return [
     astGrepSearchTool(paths),
     ...lspTools(paths),
+    ultragoalTool(store, deps),
     defineTool({
       name: "state_read",
       permission: "state_read",
@@ -126,6 +146,16 @@ export function createTools(store: StateStore, paths: CodeToolPaths) {
       async execute(args, context) {
         scope(store, context, args.workingDirectory, "state_write");
         const mode = resolveMode(args.mode);
+        // Q-2: one mode at a time. Only a running ultragoal refuses it; a
+        // handed-off, completed, awaiting or missing one leaves this as before.
+        if (
+          mode === RALPLAN_MODE &&
+          (args.active === true || args.state?.active === true) &&
+          isUltragoalRunning(
+            await store.read(context.sessionID, ULTRAGOAL_MODE).catch(() => undefined),
+          )
+        )
+          throw new Error(RALPLAN_ACTIVATION_REFUSAL);
         const paths = await pathResult(store, context.sessionID, mode);
         const {
           mode: _mode,

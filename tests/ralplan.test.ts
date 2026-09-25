@@ -10,6 +10,7 @@ import {
   deepInterviewMessage,
   detectDeepInterviewKeyword,
   detectRalplanKeyword,
+  detectUltragoalKeyword,
   EXECUTION_GATE_KEYWORDS,
   gateMessage,
   INJECTION_MARKERS,
@@ -61,27 +62,44 @@ test("well-specified execution prompts pass the gate and vague ones do not", () 
   );
 });
 
-test("the execution gate is wired but dormant", () => {
-  // Spec c6: the keyword set is intentionally empty, so the gate never fires.
-  expect(EXECUTION_GATE_KEYWORDS.size).toBe(0);
-
-  // Reachability, per 4a: nothing detected returns at the `length === 0` clause.
-  expect(applyRalplanGate([], "fix this")).toEqual({
-    keywords: [],
-    gateApplied: false,
-    gatedKeywords: [],
-  });
-
-  // A detected `ralplan` returns at the `includes("ralplan")` clause.
-  expect(applyRalplanGate(["ralplan"], "fix this")).toEqual({
+test("the execution gate redirects a vague ultragoal (keyword or mention) to ralplan", () => {
+  expect([...EXECUTION_GATE_KEYWORDS]).toEqual(["ultragoal"]);
+  const table: [string[], string, boolean][] = [
+    [["ultragoal"], "ultragoal add auth", true],
+    [["ultragoal"], "@ultragoal add auth", true],
+    [["ultragoal"], "force: ultragoal add auth", false],
+    [["ultragoal"], "! ultragoal add auth", false],
+    [["ultragoal"], "ultragoal fix the bug in src/auth.ts", false],
+    [["ralplan", "ultragoal"], "ralplan then ultragoal add auth", false],
+    [[], "fix this", false],
+    [["cancel", "ultragoal"], "ultragoal add auth", false],
+  ];
+  for (const [keywords, text, gated] of table)
+    expect(`${text}: ${applyRalplanGate(keywords, text).gateApplied}`).toBe(
+      `${text}: ${gated}`,
+    );
+  expect(applyRalplanGate(["ultragoal"], "ultragoal add auth")).toEqual({
     keywords: ["ralplan"],
-    gateApplied: false,
-    gatedKeywords: [],
+    gateApplied: true,
+    gatedKeywords: ["ultragoal"],
   });
+  // The mode keyword itself does not count toward the 15 effective words.
+  expect(isUnderspecifiedForExecution("ultragoal ".repeat(20) + "go")).toBe(true);
+});
 
-  // Anything else falls through the empty execution-keyword filter.
-  expect(applyRalplanGate(["ralph"], "fix this").gateApplied).toBe(false);
-  expect(applyRalplanGate(["cancel"], "fix this").gateApplied).toBe(false);
+test("ultragoal is detected only on an explicit invocation, and ralph is not ultragoal", () => {
+  const table: [string, boolean][] = [
+    ["ultragoal add auth", true],
+    ["force: ultragoal improve the app", true],
+    ["please ultragoal this refactor", true],
+    ["what is ultragoal?", false],
+    ["`ultragoal` in code", false],
+    ["ralph fix this", false],
+  ];
+  for (const [text, detected] of table)
+    expect(`${text}: ${detectUltragoalKeyword(text) !== null}`).toBe(
+      `${text}: ${detected}`,
+    );
 });
 
 test("phase normalization collapses every handoff variant", () => {

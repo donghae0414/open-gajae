@@ -5,14 +5,25 @@ import path from "node:path";
 // State and payload-boundary behavior draws on OMC MIT sources; project notices carry attribution.
 export const DEEP_INTERVIEW_MODE = "deep-interview" as const;
 export const RALPLAN_MODE = "ralplan" as const;
+/** Plugin-owned: no `state_*` tool accepts it (plan §7, decision 21). */
+export const ULTRAGOAL_MODE = "ultragoal" as const;
 
-export type StateMode = typeof DEEP_INTERVIEW_MODE | typeof RALPLAN_MODE;
+export type StateMode =
+  | typeof DEEP_INTERVIEW_MODE
+  | typeof RALPLAN_MODE
+  | typeof ULTRAGOAL_MODE;
+
+export type StateWriter =
+  | "state_write_tool"
+  | "ralplan_hook"
+  | "ultragoal_hook"
+  | "ultragoal_tool";
 
 export type StateMeta = {
   mode: StateMode;
   sessionId: string;
   updatedAt: string;
-  updatedBy: "state_write_tool" | "ralplan_hook";
+  updatedBy: StateWriter;
 };
 
 /** Model-owned fields are open-ended. `_meta` is regenerated on every write. */
@@ -33,6 +44,37 @@ export type ExplicitStatePatch = {
   breaker_updated_at?: string;
   deactivated_reason?: string;
   restored_at?: string;
+  // Ultragoal fields (plan §3.4). An `undefined` value removes the field.
+  prd_created_at?: string;
+  paused_reason?: string;
+  paused_target?: string;
+  tool_less_turns?: number;
+  verification_request?: Record<string, unknown>;
+  reject_counts?: Record<string, number>;
+  last_rejections?: Record<string, Record<string, unknown>>;
+  handoff_to?: string;
+  handoff_at?: string;
+};
+
+export type UltragoalFile = "goals.json" | "progress.txt";
+
+/** The operations `ultragoalTransaction` hands its body; none of them queue. */
+export type UltragoalTx = {
+  readonly paths: {
+    dir: string;
+    statePath: string;
+    goalsPath: string;
+    progressPath: string;
+  };
+  readState(): Promise<InterviewState | undefined>;
+  /** Replaces the whole state (not a merge); `_meta` is regenerated. */
+  writeState(
+    state: ExplicitStatePatch & Record<string, unknown>,
+    updatedBy: StateWriter,
+  ): Promise<InterviewState>;
+  deleteState(): Promise<"deleted" | "missing">;
+  readFile(name: UltragoalFile): Promise<string | undefined>;
+  writeFile(name: UltragoalFile, text: string): Promise<void>;
 };
 
 export type SessionPaths = {
@@ -109,6 +151,11 @@ function validateExplicitPatch(patch: ExplicitStatePatch) {
     ["breaker_updated_at", 100],
     ["restored_at", 100],
     ["deactivated_reason", 200],
+    ["prd_created_at", 100],
+    ["paused_reason", 200],
+    ["paused_target", 200],
+    ["handoff_to", 200],
+    ["handoff_at", 100],
   ] as const) {
     const value = patch[key];
     if (
@@ -124,13 +171,49 @@ function validateExplicitPatch(patch: ExplicitStatePatch) {
     if (value !== undefined && typeof value !== "boolean")
       throw new Error(`${key} must be a boolean`);
   }
-  for (const key of ["iteration", "max_iterations", "breaker_count"] as const) {
+  for (const key of [
+    "iteration",
+    "max_iterations",
+    "breaker_count",
+    "tool_less_turns",
+  ] as const) {
     const value = patch[key];
     if (
       value !== undefined &&
       (typeof value !== "number" || !Number.isFinite(value))
     )
       throw new Error(`${key} must be a finite number`);
+  }
+  const request = patch.verification_request;
+  if (request !== undefined) {
+    if (!isRecord(request))
+      throw new Error("verification_request must be an object");
+    for (const key of [
+      "request_id",
+      "goal_id",
+      "reviewer",
+      "criteria_revision",
+      "created_at",
+    ])
+      if (typeof request[key] !== "string" || request[key] === "")
+        throw new Error(`verification_request.${key} must be a non-empty string`);
+    if (typeof request.attempt !== "number" || !Number.isFinite(request.attempt))
+      throw new Error("verification_request.attempt must be a finite number");
+  }
+  const counts = patch.reject_counts;
+  if (counts !== undefined) {
+    if (!isRecord(counts)) throw new Error("reject_counts must be an object");
+    for (const value of Object.values(counts))
+      if (typeof value !== "number" || !Number.isFinite(value))
+        throw new Error("reject_counts values must be finite numbers");
+  }
+  const rejections = patch.last_rejections;
+  if (rejections !== undefined) {
+    if (!isRecord(rejections))
+      throw new Error("last_rejections must be an object");
+    for (const value of Object.values(rejections))
+      if (!isRecord(value))
+        throw new Error("last_rejections values must be objects");
   }
 }
 
@@ -388,7 +471,10 @@ export class StateStore {
   }
 
   private async atomicWrite(file: string, state: InterviewState) {
-    const serialized = JSON.stringify(state, null, 2) + "\n";
+    await this.atomicWriteText(file, JSON.stringify(state, null, 2) + "\n");
+  }
+
+  private async atomicWriteText(file: string, serialized: string) {
     await this.inspectParent(file, true);
     const existing = await fs
       .lstat(file)
@@ -398,7 +484,7 @@ export class StateStore {
       });
     if (existing && (existing.isSymbolicLink() || !existing.isFile()))
       throw new Error(
-        "refusing to replace a symlink or non-regular state file",
+        "refusing to replace a symlink or non-regular file",
       );
 
     const temp = path.join(
@@ -424,7 +510,10 @@ export class StateStore {
    * part of the key, so two stores on one worktree share the queue.
    */
   private queueKey(sessionID: string, mode: StateMode): string {
-    return `${this.root}\u0000${sessionID}\u0000${mode}`;
+    // Every ultragoal state access and every ultragoal op share one queue, so
+    // an op's goals/progress/state writes never interleave (plan §3.5).
+    const target = mode === ULTRAGOAL_MODE ? "ultragoal-op" : mode;
+    return `${this.root}\u0000${sessionID}\u0000${target}`;
   }
 
   async read(
@@ -476,28 +565,94 @@ export class StateStore {
     sessionID: string,
     explicit: ExplicitStatePatch,
     mode: StateMode = DEEP_INTERVIEW_MODE,
+    updatedBy: StateWriter = "ralplan_hook",
   ): Promise<InterviewState> {
+    // Shallow on purpose: a key set to `undefined` removes that field.
     const explicitSnapshot = { ...explicit };
     validateExplicitPatch(explicitSnapshot);
 
     return enqueue(this.queueKey(sessionID, mode), async () => {
       const target = await this.statePath(sessionID, mode);
       const current = (await this.readFile(target, sessionID)) ?? {};
-      const next: InterviewState = {
+      return this.writeMerged(target, sessionID, mode, updatedBy, {
         ...current,
         ...explicitSnapshot,
-        _meta: {
-          mode,
-          sessionId: sessionID,
-          updatedAt: now(),
-          updatedBy: "ralplan_hook",
-        },
-      };
-      const error = payloadError(next, true);
-      if (error) throw new Error(error);
-      await this.atomicWrite(target, next);
-      return next;
+      });
     });
+  }
+
+  private async writeMerged(
+    target: string,
+    sessionID: string,
+    mode: StateMode,
+    updatedBy: StateWriter,
+    merged: Record<string, unknown>,
+  ): Promise<InterviewState> {
+    const next: InterviewState = {
+      ...merged,
+      _meta: { mode, sessionId: sessionID, updatedAt: now(), updatedBy },
+    };
+    const error = payloadError(next, true);
+    if (error) throw new Error(error);
+    await this.atomicWrite(target, next);
+    return next;
+  }
+
+  /**
+   * Run `fn` holding the session's ultragoal queue (plan §3.5). `fn` must only
+   * use `tx`: calling a queued StateStore method for ultragoal inside it would
+   * wait on its own queue forever. Host calls belong outside the transaction.
+   */
+  async ultragoalTransaction<T>(
+    sessionID: string,
+    fn: (tx: UltragoalTx) => Promise<T>,
+  ): Promise<T> {
+    return enqueue(this.queueKey(sessionID, ULTRAGOAL_MODE), async () => {
+      const sessionDir = await this.resolveSessionDir(sessionID);
+      const statePath = await this.statePath(sessionID, ULTRAGOAL_MODE);
+      const dir = path.join(sessionDir, "ultragoal");
+      const filePath = (name: UltragoalFile) => path.join(dir, name);
+      const tx: UltragoalTx = {
+        paths: {
+          dir,
+          statePath,
+          goalsPath: filePath("goals.json"),
+          progressPath: filePath("progress.txt"),
+        },
+        readState: () => this.readFile(statePath, sessionID),
+        writeState: (state, updatedBy) => {
+          const snapshot = snapshotState(state) as ExplicitStatePatch;
+          validateExplicitPatch(snapshot);
+          return this.writeMerged(
+            statePath,
+            sessionID,
+            ULTRAGOAL_MODE,
+            updatedBy,
+            snapshot,
+          );
+        },
+        deleteState: async () => {
+          if (!(await this.readFile(statePath, sessionID))) return "missing";
+          await fs.unlink(statePath);
+          return "deleted";
+        },
+        readFile: (name) => this.readText(filePath(name)),
+        writeFile: (name, text) => this.atomicWriteText(filePath(name), text),
+      };
+      return fn(tx);
+    });
+  }
+
+  private async readText(file: string): Promise<string | undefined> {
+    if (!(await this.inspectParent(file, false))) return undefined;
+    const stat = await fs.lstat(file).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (!stat) return undefined;
+    if (stat.isSymbolicLink() || !stat.isFile())
+      throw new Error(`${path.basename(file)} is not a regular file`);
+    return fs.readFile(file, "utf8");
   }
 
   async clear(

@@ -20,9 +20,24 @@ export const INJECTION_MARKERS = [
   // Host addition: wraps OMC's `[MAGIC KEYWORD: DEEP-INTERVIEW]` guide, which
   // OMC emitted bare as `additionalContext` (scripts/keyword-detector.mjs:1544).
   "<deep-interview-notice>",
+  // Host additions for ultragoal (plan §5.3): the loop message OMC's
+  // `<ralph-continuation>` carried, the plugin notices, the reviewer brief the
+  // plugin appends to a `subagent` prompt, and the compaction system part.
+  "<ultragoal-continuation>",
+  "<ultragoal-notice>",
+  "<ultragoal-verification-brief>",
+  "<ultragoal-compaction-context>",
 ] as const;
 
 export type InjectionMarker = (typeof INJECTION_MARKERS)[number];
+
+/** The markers `src/ultragoal.ts` may wrap its messages in. */
+export type UltragoalMarker =
+  | "<ultragoal-continuation>"
+  | "<ultragoal-notice>"
+  | "<ultragoal-verification-brief>"
+  | "<ultragoal-compaction-context>"
+  | "<session-restore>";
 
 /** A ralplan state snapshot as read from disk; every field is untrusted. */
 export type RalplanStateSnapshot = Record<string, unknown> | null | undefined;
@@ -31,6 +46,9 @@ export const RALPLAN_KEYWORD = /\b(ralplan)\b|(랄플랜)|(ラルプラン)/i; /
 export const RALPLAN_STOP_BLOCKER_MAX = 30; // OMC persistent-mode/index.ts:1876
 export const RALPLAN_STOP_BLOCKER_TTL_MS = 45 * 60 * 1000; // OMC persistent-mode/index.ts:1877
 export const RALPLAN_SKILL_NAME = "ralplan"; // skill/command name the host confirms
+/** R16: only the product name; `ralph`/`랄프` do not start ultragoal (D-R16). */
+export const ULTRAGOAL_KEYWORD = /\b(ultragoal)\b/i;
+export const ULTRAGOAL_SKILL_NAME = "ultragoal";
 
 export const DEEP_INTERVIEW_KEYWORD =
   /\b(deep[\s-]interview|ouroboros)\b|(딥인터뷰)|(ディープインタビュー)/i; // OMC keyword-detector/index.ts:58
@@ -45,11 +63,10 @@ export const DEEP_INTERVIEW_SKILL_NAME = "deep-interview";
 const SKILL_INVOCATION_USER_REQUEST_MAX = 1200;
 
 /**
- * Dormant by design (spec c6). OMC seeds this with `ralph`, `autopilot` and
- * `team`; this port registers none of those workflows, so the gate is wired but
- * never fires. Populating this set is the one-line change that enables it.
+ * OMC seeds this with `ralph`, `autopilot` and `team`; this port registers only
+ * `ultragoal`, the port of ralph (plan §6.7).
  */
-export const EXECUTION_GATE_KEYWORDS = new Set<string>();
+export const EXECUTION_GATE_KEYWORDS = new Set<string>(["ultragoal"]);
 
 /** OMC keyword-detector/index.ts:1002. */
 export const GATE_BYPASS_PREFIXES = ["force:", "!"];
@@ -120,6 +137,11 @@ function wrapInjected(tag: InjectionMarker, body: string): string {
   return `<${name}>\n\n${body}\n\n</${name}>\n\n---\n\n`;
 }
 
+/** The one wrapper `src/ultragoal.ts` builds its messages with. */
+export function wrapUltragoalInjected(tag: UltragoalMarker, body: string) {
+  return wrapInjected(tag, body);
+}
+
 /**
  * Check if a prompt is underspecified for direct execution.
  * Returns true if the prompt lacks enough specificity for heavy execution modes.
@@ -138,7 +160,9 @@ export function isUnderspecifiedForExecution(text: string): boolean {
   if (WELL_SPECIFIED_SIGNALS.some((p) => p.test(trimmed))) return false;
 
   // Strip mode keywords for effective word counting
-  const stripped = trimmed.replace(/\b(?:ralph|autopilot|team)\b/gi, "").trim();
+  const stripped = trimmed
+    .replace(/\b(?:ralph|autopilot|team|ultragoal)\b/gi, "")
+    .trim();
   const effectiveWords = stripped
     .split(/\s+/)
     .filter((w) => w.length > 0).length;
@@ -154,9 +178,8 @@ export function isUnderspecifiedForExecution(text: string): boolean {
  * prompt is underspecified, redirect to ralplan. Verbatim from OMC
  * keyword-detector/index.ts:1078-1114, typed on plain string keywords.
  *
- * Reachability: with `EXECUTION_GATE_KEYWORDS` empty the executable-keyword
- * check is never reached. Nothing detected returns at the `length === 0`
- * clause; a detected `ralplan` returns at the `includes("ralplan")` clause.
+ * Callers pass `"ultragoal"` for both the keyword and the `@ultragoal`
+ * mention: OMC gates an explicit invocation too (decision 3).
  */
 export function applyRalplanGate(
   keywords: string[],
@@ -287,17 +310,16 @@ Treat this as prior-session context only. Prioritize the user's newest request, 
   );
 }
 
-// OMC bridge.ts:1597-1606. Dormant while the execution-gate keyword set is
-// empty (spec c6); present so enabling the gate is a one-line change.
+// OMC bridge.ts:1597-1606, with the examples' `ralph` read as `ultragoal`.
 export function gateMessage(gatedKeywords: readonly string[]): string {
   const gated = gatedKeywords.join(", ");
   return wrapInjected(
     "<ralplan-notice>",
     `[RALPLAN GATE] Redirecting ${gated} → ralplan for scoping.
 Tip: add a concrete anchor to run directly next time:
-  • "ralph fix the bug in src/auth.ts"  (file path)
-  • "ralph implement #42"               (issue number)
-  • "ralph fix processKeyword"           (symbol name)
+  • "ultragoal fix the bug in src/auth.ts"  (file path)
+  • "ultragoal implement #42"               (issue number)
+  • "ultragoal fix processKeyword"           (symbol name)
 Or prefix with \`force:\` / \`!\` to bypass.`,
   );
 }
@@ -972,6 +994,18 @@ export function detectRalplanKeyword(
   return findActionableRalplanMatch(
     sanitizeForKeywordDetection(text),
     RALPLAN_KEYWORD,
+  );
+}
+
+/**
+ * `ultragoal` uses the same explicit-invocation guard as `ralplan` (plan §6.1).
+ */
+export function detectUltragoalKeyword(
+  text: string,
+): { keyword: string; position: number } | null {
+  return findActionableRalplanMatch(
+    sanitizeForKeywordDetection(text),
+    ULTRAGOAL_KEYWORD,
   );
 }
 

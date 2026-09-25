@@ -56,13 +56,19 @@ bun test
 // ~/.open-gajae/open-gajae.jsonc
 {
   "deepInterview": { "ambiguityThreshold": 0.2, "maxRounds": 20 },
+  "ultragoal": {
+    // 0이면 무제한, 기본 200
+    "hardMaxIterations": 200
+  },
   "agents": {
     "open-gajae": { "model": "openai/gpt-6-luna", "variant": "none" },
     "open-gajae-explore": { "model": "openai/gpt-6-luna", "variant": "low" },
     "open-gajae-document-specialist": { "model": "openai/gpt-6-luna", "variant": "low" },
     "open-gajae-planner": { "model": "openai/gpt-6-luna", "variant": "medium" },
     "open-gajae-architect": { "model": "openai/gpt-6-luna", "variant": "high" },
-    "open-gajae-critic": { "model": "openai/gpt-6-luna", "variant": "high" }
+    "open-gajae-critic": { "model": "openai/gpt-6-luna", "variant": "high" },
+    "open-gajae-executor": { "model": "openai/gpt-6-luna", "variant": "medium" },
+    "open-gajae-cleaner": { "model": "openai/gpt-6-luna", "variant": "medium" }
   }
 }
 ```
@@ -71,17 +77,18 @@ bun test
 |---|---|---|
 | `deepInterview.ambiguityThreshold` | `0.2` | spec을 저장할 모호도 임계값 |
 | `deepInterview.maxRounds` | `20` | 최대 인터뷰 라운드 |
+| `ultragoal.hardMaxIterations` | `200` | `ultragoal` continuation iteration의 hard ceiling. `0` 이상 정수, `0`이면 무제한 |
 | `agents.<이름>` | 없음 | 역할별 `model`/`variant`. `variant`는 같은(병합된) entry에 `model`이 있어야 하며, 없으면 해당 agent 이름과 함께 오류로 거부됩니다. |
 
-`open-gajae-executor`/`open-gajae-qa-tester` 같은 ultragoal WIP용 key는 이 6개 agent 이름에 없으므로 넣으면 설정 로드가 거부됩니다(`docs/local-install-v1.md`의 정정 참고). 프로젝트 설정에서는 필요한 역할만 덮어쓰면 됩니다.
+`open-gajae-executor`와 `open-gajae-cleaner`는 이제 이 8개 agent 이름에 포함되어 있으므로 위 예시처럼 `agents`에 넣을 수 있습니다. 이 두 이름을 뺀 `open-gajae-qa-tester` 같은 다른 ultragoal WIP용 key는 여전히 agent 이름에 없으므로 넣으면 설정 로드가 거부됩니다. 프로젝트 설정에서는 필요한 역할만 덮어쓰면 됩니다.
 
 ## 3. 플러그인이 로드되면 등록하는 것
 
 파일을 고치지 않고, 첫 프롬프트에서 `setup`이 실행될 때 host의 메모리 상태에 등록합니다(v1의 `config` 훅과 달리 v2는 `ctx.agent`/`ctx.skill`/`ctx.tool.transform`과 hook 등록입니다). 사용자가 host 설정의 `agents.<id>`로 같은 이름을 override하면 플러그인보다 우선합니다.
 
-- **에이전트 6개**: `open-gajae`(primary), `open-gajae-explore`, `open-gajae-document-specialist`, `open-gajae-planner`, `open-gajae-architect`, `open-gajae-critic`. 프롬프트는 `prompts/<이름>.md`입니다.
-- **skill 2개**: `deep-interview`, `ralplan` (`skills/<이름>/SKILL.md`에서 읽음). **명령은 없습니다** — v1의 `/ralplan`, `/deep-interview` 명령 등록은 v2에서 완전히 제거되었고, 진입은 `@<이름>` mention이나 키워드뿐입니다.
-- **도구 11개**: `state_read`, `state_write`, `state_clear`, `ast_grep_search`, `lsp_goto_definition`, `lsp_hover`, `lsp_diagnostics`, `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`.
+- **에이전트 8개**: `open-gajae`(primary), `open-gajae-explore`, `open-gajae-document-specialist`, `open-gajae-planner`, `open-gajae-architect`, `open-gajae-critic`, `open-gajae-executor`, `open-gajae-cleaner`. 프롬프트는 `prompts/<이름>.md`입니다.
+- **skill 3개**: `deep-interview`, `ralplan`, `ultragoal` (`skills/<이름>/SKILL.md`에서 읽음). **명령은 없습니다** — v1의 `/ralplan`, `/deep-interview` 명령 등록은 v2에서 완전히 제거되었고, 진입은 `@<이름>` mention이나 키워드뿐입니다.
+- **도구 12개**: `state_read`, `state_write`, `state_clear`, `ultragoal`, `ast_grep_search`, `lsp_goto_definition`, `lsp_hover`, `lsp_diagnostics`, `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`.
 - **hook**: `session.hook("prompt")`(키워드/mention 감지, 안내 주입), `tool.hook("execute.before"|"execute.after")`(artifact guard, skill 확인), `event.subscribe()`(durable execution 이벤트로 continuation). v1의 `event`/`chat.message`/`command.execute.before` 훅은 모두 사라졌습니다.
 - **권한**: 역할별 rule을 각 agent의 `permissions`에 host 기본값 뒤로 추가합니다. `subagent_depth`는 올리지 않습니다(1절 참고) — v1과 다른 부분입니다.
 

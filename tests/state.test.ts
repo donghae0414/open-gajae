@@ -460,3 +460,44 @@ test("a v2 session creation time is read as a number or a DateTime", () => {
   expect(epochMillis(new Date(ms))).toBe(ms);
   expect(epochMillis("2026-09-18")).toBeNaN();
 });
+
+test("ultragoal transactions serialize with ultragoal patches and validate state fields", async () => {
+  await fixture(async (root) => {
+    const store = storeAt(root);
+    const order: string[] = [];
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const tx = store.ultragoalTransaction("ses_u", async (t) => {
+      order.push("tx start");
+      await t.writeFile("goals.json", '{"version":1}\n');
+      await held;
+      await t.writeState({ active: true, iteration: 1 }, "ultragoal_tool");
+      order.push("tx end");
+    });
+    // Queued behind the transaction: same queue key for every ultragoal access.
+    const patch = store
+      .patch("ses_u", { iteration: 2 }, "ultragoal", "ultragoal_hook")
+      .then(() => order.push("patch"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(order).toEqual(["tx start"]);
+    release();
+    await Promise.all([tx, patch]);
+    expect(order).toEqual(["tx start", "tx end", "patch"]);
+    const state = await store.read("ses_u", "ultragoal");
+    expect(state).toMatchObject({ active: true, iteration: 2 });
+    expect(state?._meta?.updatedBy).toBe("ultragoal_hook");
+    const { sessionDir } = await store.resolveSessionPaths("ses_u");
+    expect(
+      await readFile(join(sessionDir, "ultragoal/goals.json"), "utf8"),
+    ).toBe('{"version":1}\n');
+    // `undefined` removes a field; malformed ultragoal fields are refused.
+    await store.patch("ses_u", { iteration: undefined }, "ultragoal");
+    expect((await store.read("ses_u", "ultragoal"))?.iteration).toBeUndefined();
+    await expect(
+      store.patch("ses_u", { verification_request: { goal_id: "G001" } }, "ultragoal"),
+    ).rejects.toThrow("verification_request");
+    await expect(
+      store.patch("ses_u", { reject_counts: { G001: "x" as never } }, "ultragoal"),
+    ).rejects.toThrow("reject_counts");
+  });
+});

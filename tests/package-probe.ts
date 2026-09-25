@@ -6,7 +6,7 @@
 //   3. Name the tarball as a package spec (`open-gajae@file:<tgz>`), so the
 //      host installs it with its own installer into the disposable cache.
 // Each case must load id `open-gajae` from the installed TS source and
-// register the six agents and eleven tools. npm runs with a disposable HOME
+// register the eight agents and twelve tools. npm runs with a disposable HOME
 // and cache; the install needs registry access for the dependencies.
 // Run: `bun ./tests/package-probe.ts`.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -31,9 +31,9 @@ async function loads(report: Report, host: Host, label: string, expectedEntry: (
   report.check(`${label}: plugin open-gajae is active`, plugin?.state?.status === "active", plugin);
   report.check(`${label}: loaded from the installed TS entry`, await expectedEntry(String(plugin?.source?.path ?? "")), plugin?.source);
   const agents = (await host.list("/api/agent")).map((a) => a.id ?? a.name).filter((id) => AGENTS.includes(id));
-  report.check(`${label}: six agents registered`, agents.length === 6, agents);
+  report.check(`${label}: eight agents registered`, agents.length === 8, agents);
   const tools = host.provider.thread(label)[0]?.tools ?? [];
-  report.check(`${label}: eleven plugin tools offered`, OUR_TOOLS.every((t) => tools.includes(t)), tools);
+  report.check(`${label}: twelve plugin tools offered`, OUR_TOOLS.every((t) => tools.includes(t)), tools);
 }
 
 await runProbe("open-gajae-package-probe", async (report, scratch) => {
@@ -59,7 +59,7 @@ await runProbe("open-gajae-package-probe", async (report, scratch) => {
   report.check("tarball has no dist/", !files.some((f) => f.startsWith("dist/")), files.filter((f) => f.startsWith("dist/")));
   report.check(
     "tarball carries the TS entry, sources, skills and prompts",
-    ["index.ts", "src/index.ts", "skills/ralplan/SKILL.md", "skills/deep-interview/SKILL.md", "prompts/open-gajae.md", "package.json"].every((f) =>
+    ["index.ts", "src/index.ts", "src/ultragoal.ts", "skills/ralplan/SKILL.md", "skills/deep-interview/SKILL.md", "skills/ultragoal/SKILL.md", "prompts/open-gajae.md", "prompts/open-gajae-executor.md", "prompts/open-gajae-cleaner.md", "package.json"].every((f) =>
       files.includes(f),
     ),
     files,

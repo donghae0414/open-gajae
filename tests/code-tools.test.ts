@@ -81,7 +81,7 @@ describe("OMC read-only AST search inside the project boundary", () => {
         "parent.ts",
       );
     }));
-  test("all six owned roles may search; a non-owned agent gets refusal content", async () =>
+  test("all eight owned roles may search; a non-owned agent gets refusal content", async () =>
     fixture(async (root) => {
       await writeFile(join(root, "input.ts"), "console.log(1);");
       for (const agent of [
@@ -91,6 +91,8 @@ describe("OMC read-only AST search inside the project boundary", () => {
         "open-gajae-critic",
         "open-gajae-planner",
         "open-gajae-document-specialist",
+        "open-gajae-executor",
+        "open-gajae-cleaner",
       ])
         expect(await search(at(root), TS, context(agent))).toContain(
           "Found 1 match",

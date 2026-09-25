@@ -45,19 +45,27 @@ export default Plugin.define({
       plannerPrefix,
     });
     await registerSkills(ctx.skill, skills);
-    const tools = createTools(store, { locationDir, projectDir });
-    await ctx.tool.transform((editor) => {
-      for (const tool of tools) editor.add(tool);
-    });
-    // 5. Prompt and tool hooks.
+    // The hooks come first: the `ultragoal` tool resolves a reviewer's parent
+    // through the hooks' fail-closed `parentSession` (plan §2 A1″).
     const hooks = createHooks(
       store,
       ctx.session,
       packageRoot,
       locationDir,
       projectDir,
+      { hardMax: settings.ultragoal.hardMaxIterations },
     );
+    const tools = createTools(
+      store,
+      { locationDir, projectDir },
+      { parentSession: hooks.parentSession },
+    );
+    await ctx.tool.transform((editor) => {
+      for (const tool of tools) editor.add(tool);
+    });
+    // 5. Prompt and tool hooks.
     await ctx.session.hook("prompt", hooks.prompt);
+    await ctx.session.hook("compaction", hooks.compaction);
     await ctx.tool.hook("execute.before", hooks.executeBefore);
     await ctx.tool.hook("execute.after", hooks.executeAfter);
     // 6. Event loop. Events are handled one at a time, in order, so a child's

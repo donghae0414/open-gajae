@@ -13,7 +13,11 @@
 // on the k-th request after that message (a tool call, a text, a delayed text,
 // or an HTTP error). A `<ralplan-continuation>` message is answered with
 // `state_clear(mode="ralplan")` once its reinforcement count reaches the
-// thread's `clearAfter` (default 1), so a continuation loop always ends.
+// thread's `clearAfter` (default 1), so a continuation loop always ends. An
+// `<ultragoal-continuation>` is answered the same way with `ultragoal cancel`
+// once `iteration - 1` reaches `clearAfter`. A `{{request_id}}` inside scripted
+// tool arguments is replaced with the `request_id "…"` found in the thread's
+// messages, which is how a scripted reviewer answers the plugin's brief.
 // Title requests (no tools) and every other message get a plain text.
 // Grown from the Phase 0 spike driver (removed; see commit b08883d).
 import {
@@ -47,17 +51,22 @@ export const OUR_TOOLS = [
   "state_clear",
   "state_read",
   "state_write",
+  "ultragoal",
 ];
 export const AGENTS = [
   "open-gajae",
   "open-gajae-architect",
+  "open-gajae-cleaner",
   "open-gajae-critic",
   "open-gajae-document-specialist",
+  "open-gajae-executor",
   "open-gajae-explore",
   "open-gajae-planner",
 ];
-export const READ_ONLY_AGENTS = AGENTS.filter((id) => id !== "open-gajae");
-export const SKILLS = ["deep-interview", "ralplan"];
+export const READ_ONLY_AGENTS = AGENTS.filter(
+  (id) => id !== "open-gajae" && id !== "open-gajae-executor",
+);
+export const SKILLS = ["deep-interview", "ralplan", "ultragoal"];
 
 /** The user's real directories this suite must never write. */
 const REAL_DIRS = [
@@ -165,6 +174,7 @@ export const directive = (value: Directive) =>
 
 const DIRECTIVE_LINE = /#ACTION (\{.*\})\s*$/m;
 const CONTINUATION = /<ralplan-continuation>[\s\S]*?REINFORCEMENT (\d+)\//;
+const ULTRAGOAL_CONTINUATION = /<ultragoal-continuation>[\s\S]*?ITERATION (\d+)\//;
 
 export type ProviderEntry = {
   t: number;
@@ -237,6 +247,16 @@ function classify(messages: any[]) {
     thread = parseDirective(contentText(m.content)) ?? thread;
   }
   const last = lastUser >= 0 ? contentText(messages[lastUser].content) : "";
+  // Checked first: its `Original task:` line can quote the user's directive.
+  const ultragoal = last.match(ULTRAGOAL_CONTINUATION);
+  if (ultragoal) {
+    const count = Number(ultragoal[1]) - 1;
+    const clear = count >= (thread?.clearAfter ?? 1);
+    const steps: Action[] = clear
+      ? [{ tool: "ultragoal", args: { op: "cancel", reason: "probe clear" } }, { text: "cancelled" }]
+      : [{ text: `continuing ${count}` }];
+    return { kind: "continuation" as const, step, thread, steps, count };
+  }
   const own = parseDirective(last);
   if (own) return { kind: "directive" as const, step, thread: own, steps: own.steps };
   const continuation = last.match(CONTINUATION);
@@ -298,8 +318,15 @@ export class FakeProvider {
           }
           return textResponse(action.text);
         }
-        if ("tool" in action)
-          return toolResponse(action.tool, action.rawArgs ?? JSON.stringify(action.args ?? {}));
+        if ("tool" in action) {
+          let args = action.rawArgs ?? JSON.stringify(action.args ?? {});
+          if (args.includes("{{request_id}}")) {
+            const id = [...entry.messages].reverse().map((m) => m.text.match(/request_id "([^"]+)"/)?.[1]).find(Boolean);
+            // Left in place when absent, so a parent passes it to its child.
+            if (id) args = args.replaceAll("{{request_id}}", id);
+          }
+          return toolResponse(action.tool, args);
+        }
         return textResponse(action.text);
       },
     });
@@ -540,15 +567,27 @@ export class Host {
     return await this.terminal(sessionID, since, timeout);
   }
 
-  /** The ralplan state file of a session, or undefined. */
-  ralplanState(sessionID: string): Record<string, unknown> | undefined {
+  /** A file under the session's `_session-*` folder, or undefined. */
+  sessionFile(sessionID: string, relative: string): string | undefined {
     const root = join(this.project, ".open-gajae");
     if (!existsSync(root)) return undefined;
     const folder = spawnSync("ls", [root], { encoding: "utf8" })
       .stdout.split("\n")
       .find((name) => name.endsWith(`-${sessionID}`));
-    const file = folder && join(root, folder, "state/ralplan-state.json");
-    return file && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined;
+    const file = folder && join(root, folder, relative);
+    return file && existsSync(file) ? readFileSync(file, "utf8") : undefined;
+  }
+
+  /** The ralplan state file of a session, or undefined. */
+  ralplanState(sessionID: string): Record<string, unknown> | undefined {
+    const text = this.sessionFile(sessionID, "state/ralplan-state.json");
+    return text === undefined ? undefined : JSON.parse(text);
+  }
+
+  /** The ultragoal state file of a session, or undefined. */
+  ultragoalState(sessionID: string): Record<string, unknown> | undefined {
+    const text = this.sessionFile(sessionID, "state/ultragoal-state.json");
+    return text === undefined ? undefined : JSON.parse(text);
   }
 
   async stop() {
