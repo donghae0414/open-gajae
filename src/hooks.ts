@@ -34,21 +34,18 @@ import {
   sessionArtifactOwner,
 } from "./artifact-guard.js";
 import {
-  applyRalplanGate,
   breakerMessage,
   continuationMessage,
   DEEP_INTERVIEW_SKILL_NAME,
   deepInterviewMessage,
   detectDeepInterviewKeyword,
   detectRalplanKeyword,
-  gateMessage,
   INJECTION_MARKERS,
   keywordMessage,
   mentionMessage,
   RALPLAN_SKILL_NAME,
   RALPLAN_STOP_BLOCKER_MAX,
   restoreMessage,
-  removeCodeBlocks,
   seedState,
   shouldContinue,
   detectUltragoalKeyword,
@@ -541,10 +538,7 @@ export function createHooks(
       );
       const ultragoalMention = skills.some((s) => s.id === ULTRAGOAL_SKILL_NAME);
       // OMC's guard (inside the detectors): a mention in prose, a question, a
-      // quoted example or a pasted skill body is not an invocation. The gate
-      // reads the prompt with only code removed, as OMC's bridge.ts:1487
-      // does, so a file path still counts as a concrete anchor.
-      const cleaned = removeCodeBlocks(text);
+      // quoted example or a pasted skill body is not an invocation.
       const keyword = detectRalplanKeyword(text) !== null;
       const detected = ralplanMention || keyword ? ["ralplan"] : [];
       const ultragoalKeyword =
@@ -605,16 +599,10 @@ export function createHooks(
       const restored = await ultragoal.restore(sessionID, ultragoalState);
       if (restored) notices.push(restored);
 
-      // Gate (decision 3): a vague `ultragoal`, keyword or mention, is
-      // redirected to ralplan unless prefixed with `force:`/`!`. A running
-      // ultragoal is not re-gated.
+      // No ralplan-first gate (decision P-8, as gajae-code): an `ultragoal`
+      // request always starts ultragoal; ultragoal's no_prd phase scopes a
+      // vague one into goals.
       const ultragoalRunning = isUltragoalRunning(ultragoalState);
-      const gate = ultragoalRunning
-        ? { gateApplied: false, gatedKeywords: [] as string[] }
-        : applyRalplanGate(
-            [...detected, ...(ultragoalDetected ? ["ultragoal"] : [])],
-            cleaned,
-          );
 
       // Ralplan seed. The mention already attached the skill, so it seeds
       // confirmed; the keyword seeds awaiting the `skill` call. Both carry a
@@ -639,7 +627,7 @@ export function createHooks(
           description: "open-gajae: ralplan mention notice added",
         });
       } else if (
-        (keyword || gate.gateApplied) &&
+        keyword &&
         !ultragoalRunning &&
         !text.includes(KEYWORD_NOTICE_MARKER)
       ) {
@@ -652,10 +640,9 @@ export function createHooks(
         });
       }
 
-      // Ultragoal seed (R16): only when not gated and not paired with a
-      // ralplan request in the same prompt. Ralplan planning in progress keeps
-      // it from starting (Q-1).
-      if (ultragoalDetected && !gate.gateApplied && detected.length === 0) {
+      // Ultragoal seed (R16), unless the same prompt asks for ralplan. Ralplan
+      // planning in progress keeps it from starting (Q-1).
+      if (ultragoalDetected && detected.length === 0) {
         if (isRalplanRunning(state)) {
           notices.push({
             text: ralplanRunningNotice(),
@@ -690,12 +677,6 @@ export function createHooks(
             originalPrompt: text,
           }),
           description: "open-gajae: deep-interview keyword notice added",
-        });
-
-      if (gate.gateApplied)
-        notices.push({
-          text: gateMessage(gate.gatedKeywords),
-          description: "open-gajae: ralplan execution-gate notice added",
         });
 
       // State first, then the notices (Q3, OMC/v1 order).

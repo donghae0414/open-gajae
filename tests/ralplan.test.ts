@@ -3,7 +3,6 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import * as ralplan from "../src/ralplan";
 import {
-  applyRalplanGate,
   breakerMessage,
   compactHookText,
   continuationMessage,
@@ -11,10 +10,7 @@ import {
   detectDeepInterviewKeyword,
   detectRalplanKeyword,
   detectUltragoalKeyword,
-  EXECUTION_GATE_KEYWORDS,
-  gateMessage,
   INJECTION_MARKERS,
-  isUnderspecifiedForExecution,
   keywordMessage,
   mentionMessage,
   normalizeRalplanPhase,
@@ -41,50 +37,6 @@ test("the ralplan keyword matches the three spellings and not a longer word", ()
   expect(RALPLAN_KEYWORD.test("RALPLAN this")).toBe(true);
   expect(RALPLAN_KEYWORD.test("RALPLAN this")).toBe(true);
   expect(RALPLAN_KEYWORD.test("ralph fix this")).toBe(false);
-});
-
-test("well-specified execution prompts pass the gate and vague ones do not", () => {
-  const passes = [
-    "ralph fix the null check in src/hooks/bridge.ts:326",
-    "autopilot implement issue #42",
-    "ralph fix processKeywordDetector",
-    "ralph do:\n1. Add input validation\n2. Write tests",
-    "force: ralph refactor the auth module",
-  ];
-  for (const text of passes) expect(isUnderspecifiedForExecution(text)).toBe(false);
-
-  for (const text of ["fix this", "build the app"])
-    expect(isUnderspecifiedForExecution(text)).toBe(true);
-
-  expect(isUnderspecifiedForExecution("   ")).toBe(true);
-  expect(isUnderspecifiedForExecution("! ralph refactor the auth module")).toBe(
-    false,
-  );
-});
-
-test("the execution gate redirects a vague ultragoal (keyword or mention) to ralplan", () => {
-  expect([...EXECUTION_GATE_KEYWORDS]).toEqual(["ultragoal"]);
-  const table: [string[], string, boolean][] = [
-    [["ultragoal"], "ultragoal add auth", true],
-    [["ultragoal"], "@ultragoal add auth", true],
-    [["ultragoal"], "force: ultragoal add auth", false],
-    [["ultragoal"], "! ultragoal add auth", false],
-    [["ultragoal"], "ultragoal fix the bug in src/auth.ts", false],
-    [["ralplan", "ultragoal"], "ralplan then ultragoal add auth", false],
-    [[], "fix this", false],
-    [["cancel", "ultragoal"], "ultragoal add auth", false],
-  ];
-  for (const [keywords, text, gated] of table)
-    expect(`${text}: ${applyRalplanGate(keywords, text).gateApplied}`).toBe(
-      `${text}: ${gated}`,
-    );
-  expect(applyRalplanGate(["ultragoal"], "ultragoal add auth")).toEqual({
-    keywords: ["ralplan"],
-    gateApplied: true,
-    gatedKeywords: ["ultragoal"],
-  });
-  // The mode keyword itself does not count toward the 15 effective words.
-  expect(isUnderspecifiedForExecution("ultragoal ".repeat(20) + "go")).toBe(true);
 });
 
 test("ultragoal is detected only on an explicit invocation, and ralph is not ultragoal", () => {
@@ -209,7 +161,6 @@ const BUILDERS: Record<string, () => string> = {
   keywordMessage: () => keywordMessage(),
   mentionMessage: () => mentionMessage(),
   restoreMessage: () => restoreMessage({ active: true, started_at: iso(0) }),
-  gateMessage: () => gateMessage(["ralph"]),
   deepInterviewMessage: () =>
     deepInterviewMessage({
       skillPath: "/x/skills/deep-interview/SKILL.md",
@@ -233,7 +184,6 @@ test("every exported message builder emits a marked block", () => {
   expect(keywordMessage()).toContain("[MODE: RALPLAN]");
   expect(mentionMessage()).toContain("[MODE: RALPLAN]");
   expect(restoreMessage({ active: true })).toContain("[RALPLAN MODE RESTORED]");
-  expect(gateMessage(["ralph", "team"])).toContain("Redirecting ralph, team");
   expect(BUILDERS.deepInterviewMessage!()).toContain(
     "[MAGIC KEYWORD: DEEP-INTERVIEW]",
   );

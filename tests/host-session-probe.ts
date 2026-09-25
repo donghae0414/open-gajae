@@ -305,7 +305,8 @@ async function ultragoalNoPrd(report: Report, host: Host) {
 
 async function ultragoalVerification(report: Report, host: Host) {
   // ③ create → complete → a new architect child: its first message carries the
-  // plugin brief, and its record_verdict approves. The primary's is refused.
+  // plugin brief; the child cannot record (status only) and returns its
+  // verdict; the leader records it with record_verdict (decision P-5).
   const s = await host.createSession({ agent: "open-gajae" });
   const verdict = {
     op: "record_verdict",
@@ -322,15 +323,18 @@ async function ultragoalVerification(report: Report, host: Host) {
       steps: [
         ug({ op: "create", description: "probe task", goals: [UG_GOAL] }),
         ug({ op: "complete", goal_id: "G001", implementation: ["parsed it"], files_changed: ["sample.ts"], learnings: ["none"] }),
-        ug({ ...verdict, request_id: "not-a-request" }),
         {
           tool: "subagent",
           args: {
             agent: "open-gajae-architect",
             description: "verify G001",
-            prompt: `Verify G001.\n${directive({ tag: "ug-arch", steps: [ug(verdict)] })}`,
+            prompt: `Verify G001.\n${directive({
+              tag: "ug-arch",
+              steps: [ug(verdict), { text: "VERDICT: approve\nEVIDENCE: checked the parser\nISSUES: none" }],
+            })}`,
           },
         },
+        ug(verdict),
       ],
     })}`,
     mention("ultragoal"),
@@ -340,21 +344,51 @@ async function ultragoalVerification(report: Report, host: Host) {
   const child = host.provider.thread("ug-arch").find((e) => e.step === 0);
   const brief = lastUserText(child);
   report.check(
-    "③ brief: the architect child's first message carries <ultragoal-verification-brief> and the request_id",
-    brief.includes("Verify G001.") && brief.includes("<ultragoal-verification-brief>") && /request_id "[0-9a-f-]{36}"/.test(brief),
+    "③ brief: the architect child's first message carries <ultragoal-verification-brief>, the request_id and the VERDICT format",
+    brief.includes("Verify G001.") &&
+      brief.includes("<ultragoal-verification-brief>") &&
+      /request_id "[0-9a-f-]{36}"/.test(brief) &&
+      brief.includes("VERDICT: approve | reject"),
     brief.slice(0, 400),
   );
-  const recorded = host.provider.thread("ug-arch").find((e) => e.step === 1)?.toolResults.at(-1) ?? "";
-  report.check("③ the architect child's record_verdict approves G001", recorded.includes("Verdict recorded: approve for G001"), recorded);
+  const refused = host.provider.thread("ug-arch").find((e) => e.step === 1)?.toolResults.at(-1) ?? "";
+  report.check("③ the architect child cannot record a verdict (status only)", refused.includes("may only use status"), refused);
   report.check(
-    "③ the primary's record_verdict is refused",
-    resultOf(host, "ug-verify", 3).startsWith("Error: record_verdict is for the reviewer subagent"),
-    resultOf(host, "ug-verify", 3),
+    "③ the leader's record_verdict approves G001",
+    resultOf(host, "ug-verify", 4).includes("Verdict recorded: approve for G001"),
+    resultOf(host, "ug-verify", 4),
   );
   const goals = parse(host.sessionFile(s, "ultragoal/goals.json"));
   report.check("③ goals.json: G001 verified", goals?.goals?.[0]?.verified === true, goals?.goals?.[0]);
   const next = lastUserText(continuations(host, "ug-verify")[0]);
   report.check("③ the next continuation moves to the cleaner pass", next.includes("open-gajae-cleaner"), next.slice(0, 600));
+}
+
+async function ultragoalStartWithoutGate(report: Report, host: Host) {
+  // P-6/P-8: a vague ultragoal request starts ultragoal (no gate), and start
+  // brings a handed-off run back up.
+  const s = await host.createSession({ agent: "open-gajae" });
+  await host.prompt(
+    s,
+    `ultragoal로 계획대로 진행\n${directive({
+      tag: "ug-start",
+      steps: [
+        { tool: "skill", args: { id: "ultragoal" } },
+        ug({ op: "handoff", to: "ralplan", reason: "probe" }),
+        { tool: "state_write", args: { mode: "ralplan", active: false, current_phase: "complete" } },
+        ug({ op: "start", reason: "probe restart" }),
+      ],
+    })}`,
+  );
+  await waitFor("ug-start continuation", () => continuations(host, "ug-start").some((e) => e.step >= 1), 90_000);
+  await host.settle(s);
+  const first = host.provider.thread("ug-start").find((e) => e.kind === "directive" && e.step === 0);
+  report.check(
+    "P-8: a vague ultragoal prompt gets the ultragoal notice and no ralplan gate",
+    occurrences(first, "[MODE: ULTRAGOAL]") === 1 && occurrences(first, "[RALPLAN GATE]") === 0,
+    { ultragoal: occurrences(first, "[MODE: ULTRAGOAL]"), gate: occurrences(first, "[RALPLAN GATE]") },
+  );
+  report.check("P-6: start brings a handed-off run back up", resultOf(host, "ug-start", 4).includes("Ultragoal started"), resultOf(host, "ug-start", 4));
 }
 
 async function ultragoalIdleAndCompaction(report: Report, host: Host) {
@@ -485,6 +519,7 @@ await runProbe("open-gajae-host-session-probe", async (report, scratch) => {
       backgroundChildPending,
       ultragoalNoPrd,
       ultragoalVerification,
+      ultragoalStartWithoutGate,
       ultragoalIdleAndCompaction,
       ultragoalHandoff,
       ultragoalBackgroundShell,

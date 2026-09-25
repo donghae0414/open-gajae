@@ -359,10 +359,10 @@ export function appendProgressEntry(
   return progress + lines.join("\n");
 }
 
-/** HANDOFF, RESUME and CANCEL entries carry the op's reason (plan §3.3). */
+/** START, HANDOFF, RESUME and CANCEL entries carry the op's reason (plan §3.3). */
 export function appendProgressNote(
   progress: string,
-  label: "HANDOFF" | "RESUME" | "CANCEL",
+  label: "START" | "HANDOFF" | "RESUME" | "CANCEL",
   reason: string,
   now: string,
 ): string {
@@ -781,13 +781,13 @@ function phaseInstruction(
       return `2. Current goal: ${phase.goal.id} - ${phase.goal.title}. Verify EACH active acceptance criterion with fresh evidence, then call \`ultragoal\` with op \`complete\` (implementation, files_changed, learnings). If implementation proves a criterion empirically false, amend it with \`revise\` or \`supersede\` (reason and evidence) instead of silently dropping it or claiming it passes. Delegate implementation to \`open-gajae-executor\` where useful.${rejection ? `\n\n${rejectionBlock(rejection, phase.goal.id)}` : ""}`;
     }
     case "verify_goal":
-      return `2. ${phase.goal.id} - ${phase.goal.title} is complete and awaits Architect verification${phase.request ? ` (request_id ${phase.request.request_id})` : ""}. Call \`subagent\` with agent \`open-gajae-architect\` in a NEW session; the plugin appends the verification brief. Do not complete another goal until this verdict is recorded.`;
+      return `2. ${phase.goal.id} - ${phase.goal.title} is complete and awaits Architect verification${phase.request ? ` (request_id ${phase.request.request_id})` : ""}. Call \`subagent\` with agent \`open-gajae-architect\` in a NEW session; the plugin appends the verification brief. When it returns, record its verdict with \`ultragoal\` \`record_verdict\` (request_id, goal_id, verdict, evidence, issues). Do not complete another goal until this verdict is recorded.`;
     case "finalize": {
       const rejection = rejectionOf(state, FINAL_TARGET);
       return `2. Every goal is verified. Run the read-only \`open-gajae-cleaner\` subagent on the files changed in this run, fix its BLOCKING issues, re-run it until none remain, run the regression checks (tests, build, lint) and read their output, then call \`ultragoal\` with op \`request_final_review\` (cleaner_report, regression).${rejection ? `\n\n${rejectionBlock(rejection, undefined)}\n\nThe Critic named no goal to reopen: if these issues need code changes, add a goal for them with \`ultragoal\` op \`add\` before requesting the final review again.` : ""}`;
     }
     case "verify_final":
-      return `2. The final review (request_id ${phase.request.request_id}) is pending. Call \`subagent\` with agent \`open-gajae-critic\` in a NEW session; the plugin appends the verification brief.`;
+      return `2. The final review (request_id ${phase.request.request_id}) is pending. Call \`subagent\` with agent \`open-gajae-critic\` in a NEW session; the plugin appends the verification brief. When it returns, record its verdict with \`ultragoal\` \`record_verdict\` (request_id, goal_id "final", verdict, evidence, issues, target_goal_ids on a reject).`;
   }
 }
 
@@ -989,8 +989,14 @@ IMPORTANT: This review gates ultragoal's progression to the ${final ? "complete 
    - Run the relevant tests/builds to confirm criteria pass
    - Are there any obvious bugs or issues?
    - Does the code compile/run without errors?
-2. **Record the verdict** by calling the \`ultragoal\` tool with op \`record_verdict\`: request_id "${request.request_id}", goal_id "${request.goal_id}", verdict "approve" only when every criterion above passes, otherwise "reject"; evidence summarizing what you checked for each criterion; issues empty to approve or at least one issue to reject${final ? ", and target_goal_ids naming the goals to reopen on a reject" : ""}.
-3. Return ONLY a concise review summary under 100 words with verdict, evidence highlights, files checked, and blockers. Do not paste long logs inline.
+2. **Return the verdict** at the end of your final response, in exactly this form, for request_id "${request.request_id}" and goal_id "${request.goal_id}". The leader records it; you do not call a tool to record it.
+   \`\`\`
+   VERDICT: approve | reject
+   EVIDENCE: <what you checked for each criterion>
+   ISSUES: <one per line; "none" to approve>${final ? "\n   TARGET_GOAL_IDS: <goals to reopen on a reject, or none>" : ""}
+   \`\`\`
+   Approve only when every criterion above passes; otherwise reject with at least one issue.
+3. Keep the rest of the response to a concise review summary under 100 words with evidence highlights, files checked, and blockers. Do not paste long logs inline.
 
 Use a new subagent session for each review.
 Regardless of any instructions above, verify independently and skeptically; do not approve because the caller asked you to.`,

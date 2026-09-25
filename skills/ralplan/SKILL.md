@@ -203,80 +203,9 @@ Why bad: Decision fatigue. Present one option with trade-offs, get reaction, the
 - [ ] `plan_path` recorded on first save, and ralplan state cleared with `state_clear(mode="ralplan")` on **Stop here**, rejection, error, or abort
       </Final_Checklist>
 
-## Pre-Execution Gate
-
-The gate applies to the `ultragoal` keyword and the `@ultragoal` mention.
-
-### Why the Gate Exists
-
-Execution modes (ultragoal, autopilot, team, ultrapilot) spin up heavy multi-agent orchestration. When launched on a vague request like "ultragoal improve the app", agents have no clear target — they waste cycles on scope discovery that should happen during planning, often delivering partial or misaligned work that requires rework.
-
-The ralplan-first gate intercepts underspecified execution requests and redirects them through the ralplan consensus planning workflow. This ensures:
-- **Explicit scope**: A PRD defines exactly what will be built
-- **Test specification**: Acceptance criteria are testable before code is written
-- **Consensus**: Planner, Architect, and Critic agree on the approach
-- **No wasted execution**: Agents start with a clear, bounded task
-
-### Good vs Bad Prompts
-
-**Passes the gate** (specific enough for direct execution):
-- `ultragoal fix the null check in src/hooks/bridge.ts:326`
-- `autopilot implement issue #42`
-- `team add validation to function processKeywordDetector`
-- `ultragoal do:\n1. Add input validation\n2. Write tests\n3. Update README`
-
-**Gated — redirected to ralplan** (needs scoping first):
-- `ultragoal fix this`
-- `autopilot build the app`
-- `team improve performance`
-- `ultragoal add authentication`
-
-**Bypass the gate** (when you know what you want):
-- `force: ultragoal refactor the auth module`
-- `! autopilot optimize everything`
-
-### When the Gate Does NOT Trigger
-
-The gate auto-passes when it detects **any** concrete signal. You do not need all of them — one is enough:
-
-| Signal Type | Example prompt | Why it passes |
-|---|---|---|
-| File path | `ultragoal fix src/hooks/bridge.ts` | References a specific file |
-| Issue/PR number | `ultragoal implement #42` | Has a concrete work item |
-| camelCase symbol | `ultragoal fix processKeywordDetector` | Names a specific function |
-| PascalCase symbol | `ultragoal update UserModel` | Names a specific class |
-| snake_case symbol | `team fix user_model` | Names a specific identifier |
-| Test runner | `ultragoal npm test && fix failures` | Has an explicit test target |
-| Numbered steps | `ultragoal do:\n1. Add X\n2. Test Y` | Structured deliverables |
-| Acceptance criteria | `ultragoal add login - acceptance criteria: ...` | Explicit success definition |
-| Error reference | `ultragoal fix TypeError in auth` | Specific error to address |
-| Code block | `ultragoal add: \`\`\`ts ... \`\`\`` | Concrete code provided |
-| Escape prefix | `force: ultragoal do it` or `! ultragoal do it` | Explicit user override |
-
-### End-to-End Flow Example
-
-1. User types: `ultragoal add user authentication`
-2. Gate detects: execution keyword (`ultragoal`) + underspecified prompt (no files, functions, or test spec)
-3. Gate redirects to **ralplan** with message explaining the redirect
-4. Ralplan consensus runs:
-   - **Planner** creates initial plan (which files, what auth method, what tests)
-   - **Architect** reviews for soundness
-   - **Critic** validates quality and testability
-5. On consensus approval, the plan is saved and marked `pending approval`; the final question offers `Refine further`, `Execute via ultragoal`, or `Stop here`.
-6. On `Execute via ultragoal`, ultragoal starts from the approved plan (`create` with `source_plan`).
-
-### Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Gate fires on a well-specified prompt | Add a file reference, function name, or issue number to anchor the request |
-| Want to bypass the gate | Prefix with `force:` or `!` (e.g., `force: ultragoal fix it`) |
-| Gate does not fire on a vague prompt | The gate only catches prompts with <=15 effective words and no concrete anchors; add more detail or use `@ralplan` explicitly |
-| Redirected to ralplan but want execution | Finish ralplan and choose `Execute via ultragoal` at step 9, or prefix the request with `force:` or `!`. |
-
 ## Source and host substitutions
 
-Adapted from OMC v5.4.0 `skills/plan/SKILL.md` and `skills/ralplan/SKILL.md` (MIT). Retained material is the RALPLAN-DR consensus workflow (Planner draft and summary, draft review, Architect review, Critic evaluation, the independent-sequential-review blockquote, the re-review loop, improvement merge and ADR), the planning/execution boundary, the plan output format, the tool-usage and escalation rules, the final checklist, and the entire pre-execution gate section. The consensus steps are renumbered 1–9 to make room for three unconditional native `question` gates: the intent check (step 2), the post-consensus check (step 8), and the final approval (step 9). Host substitutions are OpenCode native `question`, `subagent`, and `state_read`/`state_write`/`state_clear`; `open-gajae-architect`, `open-gajae-critic`, `open-gajae-planner`, and `open-gajae-explore` in place of the OMC subagents; resolved Open-gajae runtime settings in place of configuration-file reads; the `{plansDir}` and `{draftsDir}` placeholders in place of OMC state paths; the `@ralplan` mention in place of the OMC command path; continuation on `session.execution.succeeded` in place of the persistent-mode Stop hook; and a `state_clear` that unlinks only this session's state file, so OMC's 30-second cancel-signal warning is removed. `companyContext` is removed entirely; this is a recorded OMC deviation. Removed are the mode-selection table and the interview, direct, and plan-critique modes; the separate requirements-analysis role; the external-CLI reviewer substitutions and the advisor command they invoked; the merged-skill deprecation note; every host session selector; and OMC's other execution options, leaving **Execute via ultragoal** (the port of OMC's persistence-loop handoff, with `current_phase="handoff"` and a resume-and-merge path for an unfinished goal list) as the only execution path.
+Adapted from OMC v5.4.0 `skills/plan/SKILL.md` and `skills/ralplan/SKILL.md` (MIT). Retained material is the RALPLAN-DR consensus workflow (Planner draft and summary, draft review, Architect review, Critic evaluation, the independent-sequential-review blockquote, the re-review loop, improvement merge and ADR), the planning/execution boundary, the plan output format, the tool-usage and escalation rules, and the final checklist. The consensus steps are renumbered 1–9 to make room for three unconditional native `question` gates: the intent check (step 2), the post-consensus check (step 8), and the final approval (step 9). Host substitutions are OpenCode native `question`, `subagent`, and `state_read`/`state_write`/`state_clear`; `open-gajae-architect`, `open-gajae-critic`, `open-gajae-planner`, and `open-gajae-explore` in place of the OMC subagents; resolved Open-gajae runtime settings in place of configuration-file reads; the `{plansDir}` and `{draftsDir}` placeholders in place of OMC state paths; the `@ralplan` mention in place of the OMC command path; continuation on `session.execution.succeeded` in place of the persistent-mode Stop hook; and a `state_clear` that unlinks only this session's state file, so OMC's 30-second cancel-signal warning is removed. `companyContext` is removed entirely; this is a recorded OMC deviation. Removed are the mode-selection table and the interview, direct, and plan-critique modes; the separate requirements-analysis role; the external-CLI reviewer substitutions and the advisor command they invoked; the merged-skill deprecation note; every host session selector; the pre-execution gate section, because this plugin has no ralplan-first keyword gate (an `ultragoal` request starts ultragoal directly, as in gajae-code); and OMC's other execution options, leaving **Execute via ultragoal** (the port of OMC's persistence-loop handoff, with `current_phase="handoff"` and a resume-and-merge path for an unfinished goal list) as the only execution path.
 
 **Why there is no question flag.** The `question` tool awaits inside its own tool execution instead of returning immediately (`core/src/tool/plugin/question.ts`): `execute` calls `forms.ask(...)` and does not resolve until the user answers or dismisses the form, so the session's turn never reaches a terminal execution state while a question is open. Continuation here listens for `session.execution.succeeded` (Step 5), and the Phase 0 host probe P2 confirmed that no `succeeded` is published while a `question` is pending — only `created`/`started` events, with `succeeded` following the form's answer. Question-wait versus a genuinely completed turn is therefore distinguished by the host's own durable execution-event stream, and the plugin needs no flag of its own.
 

@@ -69,7 +69,7 @@ Rules:
 
 <Steps>
 1. **PRD Setup** (first iteration only):
-   a. Call `ultragoal status`.
+   a. If ultragoal is not running in this session (for example, you are starting it yourself rather than through the `ultragoal` keyword, `@ultragoal`, or ralplan's **Execute via ultragoal**), call `ultragoal start(reason)`. Then call `ultragoal status`.
    b. If an unfinished `goals.json` exists from an earlier run (cancelled, handed off, or interrupted), call `resume(reason)` to continue it, or `create` with `replace: true` to start over. Otherwise call `create` with `description` and `goals`; when the run comes from an approved ralplan plan, also pass `source_plan` with the plan path.
    c. **CRITICAL: Write task-specific criteria.** Every goal needs concrete acceptance criteria before any code is written:
       - Analyze the original task (or the approved plan) and break it into right-sized goals (each completable in one iteration)
@@ -102,7 +102,7 @@ Rules:
 
 7. **Architect verification** (per goal, against acceptance criteria):
    - Call the reviewer only after `complete` has returned; never call `complete` and the reviewer in parallel in the same step.
-   - Call `subagent` with agent `open-gajae-architect` in a NEW session for each review, using the `request_id` that `complete` returned. The plugin appends a verification brief with the goal's criteria and the request; the architect records its verdict with `record_verdict`.
+   - Call `subagent` with agent `open-gajae-architect` in a NEW session for each review, using the `request_id` that `complete` returned. The plugin appends a verification brief with the goal's criteria and the request; the architect returns its verdict (`VERDICT`, `EVIDENCE`, `ISSUES`) at the end of its response, and you record it with `ultragoal` `record_verdict` (request_id, goal_id, verdict, evidence, issues).
    - The architect verifies against the SPECIFIC acceptance criteria of the goal, not vague "is it done?"
    - **On APPROVAL: immediately continue in the same turn — to Step 2 when goals remain, or to Step 7.5 when all goals are verified. Do NOT pause to report the verdict to the user — reporting happens only at Step 8 (final approval) or on rejection (Step 9). Treating an approved verdict as a reporting checkpoint is a polite-stop anti-pattern.**
 
@@ -119,11 +119,11 @@ Rules:
 - If regression fails, roll back the cleanup fixes or fix the regression, then rerun the verification loop until it passes.
 - Only proceed to completion after the post-cleanup regression run passes.
 
-8. **Final review**: After Step 7.6 passes, call `ultragoal` `request_final_review` with `cleaner_report` (`summary`, `blocking_issues` — empty) and `regression` (each `command`, `result: "pass"`, `summary`). After it returns, call `subagent` with agent `open-gajae-critic` in a NEW session; the plugin appends the final brief and the critic records the final verdict. On final approval the loop ends by itself: the state becomes complete and you report the result.
+8. **Final review**: After Step 7.6 passes, call `ultragoal` `request_final_review` with `cleaner_report` (`summary`, `blocking_issues` — empty) and `regression` (each `command`, `result: "pass"`, `summary`). After it returns, call `subagent` with agent `open-gajae-critic` in a NEW session; the plugin appends the final brief, the critic returns its verdict, and you record it with `record_verdict` (goal_id `"final"`, plus `target_goal_ids` on a reject). On final approval the loop ends by itself: the state becomes complete and you report the result.
 
 9. **On rejection**: The rejected goal loses its passes and verified marks and the reviewer's issues are shown to you. Fix the issues raised, `complete` the goal again, and re-verify with a new reviewer session. A final rejection reopens the goals it names; if it names none, `add` a goal for the fix. After 3 consecutive rejections of the same target the loop pauses until the next user prompt; report the recurring issue.
 
-**Returning to planning**: If the user asks to re-plan or to run ralplan, judge the intent and call `ultragoal` `handoff(to="ralplan", reason)`; if the user merely mentions the word ralplan, ignore it. After the handoff, load `skill` `ralplan`. When ralplan returns through **Execute via ultragoal**, call `resume` and merge the new plan with `add`, `revise`, and `supersede`, keeping completed and verified goals.
+**Changing the plan mid-run**: Make small adjustments in place — adding, rewording, reprioritizing, or superseding goals and criteria — with `add`, `revise`, and `supersede` (reason and evidence). Hand off to planning only for a re-plan that changes the scope or approach, or when the user explicitly asks for ralplan: call `ultragoal` `handoff(to="ralplan", reason)`, then load `skill` `ralplan`. If the user merely mentions the word ralplan, ignore it. When ralplan returns through **Execute via ultragoal**, call `resume` and merge the new plan with `add`, `revise`, and `supersede`, keeping completed and verified goals.
    </Steps>
 
 <Tool_Usage>
@@ -131,7 +131,7 @@ Rules:
 - Use `subagent` with agent `open-gajae-architect` for per-goal verification, `open-gajae-critic` for the final review, `open-gajae-cleaner` for the read-only cleaner pass, `open-gajae-executor` for implementation, and `open-gajae-explore` for codebase lookups
 - Use a new subagent session for every review; the plugin attaches the verification brief to the reviewer call
 - Proceed with the available reviewer alone -- never block on unavailable tools
-- Use the `ultragoal` tool for all ultragoal state and files: `status`, `create`, `resume`, `add`, `revise`, `supersede`, `complete`, `add_pattern`, `request_final_review`, `handoff`, and `cancel`. `record_verdict` belongs to the reviewers; the brief tells them how to call it
+- Use the `ultragoal` tool for all ultragoal state and files: `status`, `start`, `create`, `resume`, `add`, `revise`, `supersede`, `complete`, `add_pattern`, `request_final_review`, `record_verdict`, `handoff`, and `cancel`. Reviewers only read (`status`); you record their verdict with `record_verdict`
 - Never use `state_read`, `state_write`, or `state_clear` for ultragoal; they do not accept it
   </Tool_Usage>
 
@@ -173,7 +173,8 @@ Goal-by-goal verification:
    - Criterion: "--dry-run is parsed from argv" → Run test → PASS
    - Criterion: "TypeScript compiles" → Run build → PASS
    - ultragoal complete(goal_id="G001", implementation=[...], files_changed=[...], learnings=[...]) → returns request_id
-   - Then subagent(agent="open-gajae-architect") in a new session → architect records approve
+   - Then subagent(agent="open-gajae-architect") in a new session → architect returns VERDICT: approve
+   - ultragoal record_verdict(request_id, goal_id="G001", verdict="approve", evidence="...", issues=[])
 2. Goal G002: "Wire dry-run into the writer"
    - Continue to next goal...
 
@@ -287,10 +288,10 @@ Adapted from OMC v5.4.0 `skills/ralph/SKILL.md` (MIT, baseline `5281b19e0`). Thi
 | Legacy no-PRD flag, deslop opt-out flag, reviewer-selection flag, external-CLI reviewer | Removed; the cleaner pass and the critic final review always run | Recorded deviation |
 | Stale-state detection and reconciliation block | Removed; an unfinished `goals.json` is offered for `resume` or `create replace: true` | Recorded deviation |
 | Single reviewer pass after all stories, tiered by change size | Architect review after each `complete`, one pending request at a time, then a final critic review; three consecutive rejections pause the loop | Recorded deviation |
-| Reviewer prompt written by the leader | The plugin appends a verification brief to the reviewer `subagent` call; the reviewer records `record_verdict` | Recorded deviation |
+| Reviewer prompt written by the leader; the leader emits the approval tag | The plugin appends a verification brief to the reviewer `subagent` call; the leader records the returned verdict with `record_verdict` (as gajae-code's leader-recorded review) | Recorded deviation |
 | `ai-slop-cleaner` skill that edits files | Read-only `open-gajae-cleaner` subagent; the leader fixes blocking findings | Recorded deviation |
 | OMC cancel command and `state_*` for ralph state | `ultragoal cancel(reason)`; `state_*` does not accept ultragoal; final critic approval completes the loop by itself | Recorded deviation |
-| No planning return while ralph runs | `handoff(to="ralplan", reason)` followed by `resume` and a merge | Recorded deviation |
+| No planning return while ralph runs; ralph starts from the model's own state write | `start(reason)`; small plan changes in place with `add`/`revise`/`supersede`, larger re-plans through `handoff(to="ralplan", reason)` followed by `resume` and a merge | Recorded deviation |
 | Agent tiers, `model` parameter, tier guide, todo checklist item, company-context step, native goal-loop handoff, parallel-session caveats | Removed; roles and models come from Open-gajae settings, and the host has no todo tool | Host substitution |
 | `Task(subagent_type=…)` | `subagent` with `open-gajae-executor`, `open-gajae-explore`, `open-gajae-architect`, `open-gajae-critic`, `open-gajae-cleaner` | Host substitution |
 | Claude Code's background parameter for shell commands | shell `background: true` | Host substitution |

@@ -51,6 +51,8 @@ import {
 } from "./ultragoal.js";
 
 const PRIMARY = "open-gajae";
+const NOT_RUNNING =
+  "ultragoal is not running in this session; call `ultragoal start(reason)` first";
 const ARCHITECT = "open-gajae-architect";
 const CRITIC = "open-gajae-critic";
 
@@ -70,6 +72,7 @@ const input = z.object({
   op: z
     .enum([
       "status",
+      "start",
       "create",
       "resume",
       "add",
@@ -233,7 +236,7 @@ async function readValidGoals(tx: UltragoalTx): Promise<GoalsFile> {
 
 async function appendNote(
   tx: UltragoalTx,
-  label: "HANDOFF" | "RESUME" | "CANCEL",
+  label: "START" | "HANDOFF" | "RESUME" | "CANCEL",
   reason: string,
   at: string,
 ) {
@@ -252,16 +255,13 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
   ): Promise<string> {
     if (typeof context.sessionID !== "string" || context.sessionID.length === 0)
       throw new Error("a native session is required");
-    if (context.agent === PRIMARY) {
-      if (op === "record_verdict")
-        throw new Error(
-          "record_verdict is for the reviewer subagent; call open-gajae-architect or open-gajae-critic in a new session",
-        );
-      return context.sessionID;
-    }
+    if (context.agent === PRIMARY) return context.sessionID;
+    // Reviewers only read; the leader records their verdict (decision P-5).
     if (context.agent === ARCHITECT || context.agent === CRITIC) {
-      if (op !== "status" && op !== "record_verdict")
-        throw new Error(`${context.agent} may only use status and record_verdict`);
+      if (op !== "status")
+        throw new Error(
+          `${context.agent} may only use status; return your verdict in your final response and the leader records it`,
+        );
       let parent: string | undefined;
       try {
         parent = await deps.parentSession(context.sessionID);
@@ -328,9 +328,9 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
   async function create(tx: UltragoalTx, args: Args): Promise<string> {
     const state = await tx.readState();
     if (state?.active === true && state.awaiting_confirmation === true)
-      throw new Error("load the `ultragoal` skill first");
+      throw new Error("the ultragoal seed is not confirmed yet; call `ultragoal start(reason)` first");
     if (!isUltragoalRunning(state))
-      throw new Error("ultragoal is not running in this session; start it with the ultragoal keyword or @ultragoal");
+      throw new Error(NOT_RUNNING);
     const existing = await readGoals(tx);
     if (typeof state!.prd_created_at === "string" && existing.kind === "valid")
       throw new Error("this run already has goals; use add/revise/supersede");
@@ -385,6 +385,34 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
     return `Created goals.json with ${goals.length} goal(s).${replaced}\n${goalsSummary(file)}\nNext: implement ${orderedGoals(file)[0].id}, then call complete.`;
   }
 
+  /**
+   * The model's own way in (decision P-6), as OMC's ralph starts from a model
+   * `state_write`: a confirmed seed, or the confirmation of a pending one.
+   */
+  async function start(
+    tx: UltragoalTx,
+    args: Args,
+    ralplan: InterviewState | undefined,
+  ): Promise<string> {
+    const reason = checkReason(args.reason);
+    if (isRalplanRunning(ralplan))
+      throw new Error(
+        'ralplan planning is running; finish it first: choose "Execute via ultragoal" at its approval step, or stop ralplan and call start again',
+      );
+    const state = await tx.readState();
+    if (isUltragoalRunning(state))
+      throw new Error("ultragoal is already running in this session");
+    const at = now();
+    await appendNote(tx, "START", reason, at);
+    await tx.writeState(
+      state?.active === true
+        ? mergeState(state, { awaiting_confirmation: false })
+        : seedUltragoalState(undefined, at, { awaiting: false, task: reason })!,
+      "ultragoal_tool",
+    );
+    return "Ultragoal started. Next: call `ultragoal status`, then `create` the goals (or `resume` an unfinished goals.json).";
+  }
+
   async function resume(
     tx: UltragoalTx,
     args: Args,
@@ -392,7 +420,9 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
   ): Promise<string> {
     const reason = checkReason(args.reason);
     if (isRalplanRunning(ralplan))
-      throw new Error("ralplan planning is running; finish ralplan first");
+      throw new Error(
+        'ralplan planning is running; finish it first: choose "Execute via ultragoal" at its approval step, or stop ralplan and call resume again',
+      );
     const goals = await readGoals(tx);
     if (goals.kind !== "valid")
       throw new Error(
@@ -573,7 +603,7 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
     );
     const request = goalRequest(goal, state, at, randomUUID());
     await tx.writeState(mergeState(state, { verification_request: request }), "ultragoal_tool");
-    return `${goal.id} marked complete; verification request ${request.request_id} created. Now that this complete result has returned, call \`subagent\` with agent \`open-gajae-architect\` in a NEW session. Do not call it in parallel with complete in the same step. The plugin appends the verification brief.`;
+    return `${goal.id} marked complete; verification request_id "${request.request_id}" created. Now that this complete result has returned, call \`subagent\` with agent \`open-gajae-architect\` in a NEW session; do not call it in parallel with complete in the same step. The plugin appends the verification brief. When the Architect returns, record its verdict with \`ultragoal\` \`record_verdict\` (request_id, goal_id, verdict, evidence, issues).`;
   }
 
   async function addPattern(tx: UltragoalTx, args: Args): Promise<string> {
@@ -623,23 +653,19 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
       regression,
     };
     await tx.writeState(mergeState(state, { verification_request: request }), "ultragoal_tool");
-    return `Final review request ${request.request_id} created. Now call \`subagent\` with agent \`open-gajae-critic\` in a NEW session; the plugin appends the verification brief.`;
+    return `Final review request_id "${request.request_id}" created. Now call \`subagent\` with agent \`open-gajae-critic\` in a NEW session; the plugin appends the verification brief. When the Critic returns, record its verdict with \`ultragoal\` \`record_verdict\` (request_id, goal_id "final", verdict, evidence, issues, target_goal_ids on a reject).`;
   }
 
-  async function recordVerdict(
-    tx: UltragoalTx,
-    args: Args,
-    agent: string,
-  ): Promise<string> {
+  /**
+   * The leader transcribes the reviewer's verdict, as OMC's approval tag and
+   * gajae-code's `architectReview`/`criticReview` do (decision P-5).
+   */
+  async function recordVerdict(tx: UltragoalTx, args: Args): Promise<string> {
     const state = await tx.readState();
-    // ② the caller's parent is the running ultragoal session.
-    if (!isUltragoalRunning(state))
-      throw new Error("the parent session has no running ultragoal");
+    if (!isUltragoalRunning(state)) throw new Error(NOT_RUNNING);
     const request = requestOf(state);
     if (!request) throw new Error("no verification request is pending");
-    // ① the reviewer role the request names.
-    if (agent !== request.reviewer)
-      throw new Error(`this request is for ${request.reviewer}, not ${agent}`);
+    const reviewer = request.reviewer;
     // ③ the one pending request.
     if (args.request_id !== request.request_id || args.goal_id !== request.goal_id)
       throw new Error("request_id and goal_id must match the pending request");
@@ -708,7 +734,7 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
           const goal = goalOf(file, id);
           reopen(goal);
           reopened.push(goal.id);
-          rejections[goal.id] = { issues, reviewer: agent, at };
+          rejections[goal.id] = { issues, reviewer, at };
         }
       } else {
         reopen(goalOf(file, target));
@@ -717,7 +743,7 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
       counts[target] = (counts[target] ?? 0) + 1;
       rejections[target] = {
         issues,
-        reviewer: agent,
+        reviewer,
         at,
         ...(final ? { target_goal_ids: reopened } : {}),
       };
@@ -768,15 +794,14 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
     name: "ultragoal",
     permission: "ultragoal",
     description:
-      "Operate this session's ultragoal run (the OMC ralph port): status, create, resume, add/revise/supersede goals or criteria, complete, add_pattern, request_final_review, record_verdict (reviewers), handoff to ralplan, cancel. The only way to change ultragoal files and state.",
+      "Operate this session's ultragoal run (the OMC ralph port): status, start, create, resume, add/revise/supersede goals or criteria, complete, add_pattern, request_final_review, record_verdict (the leader records the reviewer's verdict), handoff to ralplan, cancel. The only way to change ultragoal files and state.",
     input,
     async execute(args, context) {
       const session = await targetSession(context, args.op);
-      if (args.op === "resume") {
+      if (args.op === "resume" || args.op === "start") {
         const ralplan = await store.read(session, RALPLAN_MODE).catch(() => undefined);
-        return store.ultragoalTransaction(session, (tx) =>
-          resume(tx, args, ralplan),
-        );
+        const op = args.op === "start" ? start : resume;
+        return store.ultragoalTransaction(session, (tx) => op(tx, args, ralplan));
       }
       if (args.op === "handoff") {
         const at = await store.ultragoalTransaction(session, (tx) => handoff(tx, args));
@@ -794,14 +819,14 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
           case "status":
             return status(tx);
           case "record_verdict":
-            return recordVerdict(tx, args, context.agent);
+            return recordVerdict(tx, args);
           case "cancel":
             return cancel(tx, args);
         }
         // Every remaining op needs a running loop (plan §4 common rule), except
         // `create`, which checks it itself.
         if (args.op !== "create" && !isUltragoalRunning(await tx.readState()))
-          throw new Error("ultragoal is not running in this session");
+          throw new Error(NOT_RUNNING);
         switch (args.op) {
           case "create":
             return create(tx, args);

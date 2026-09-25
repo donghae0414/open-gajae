@@ -587,15 +587,11 @@ test("ralplan skill keeps the consensus contract and offers ultragoal as its onl
   ])
     expect(skill).toContain(step);
 
-  // `team` and `ralph` legitimately appear only inside the copied
-  // Pre-Execution Gate section (example prompts and signal table).
-  const gateStart = skill.indexOf("## Pre-Execution Gate");
-  const gateEnd = skill.indexOf("## Source and host substitutions");
-  expect(gateStart).toBeGreaterThan(-1);
-  expect(gateEnd).toBeGreaterThan(gateStart);
-  const outside = skill.slice(0, gateStart) + skill.slice(gateEnd);
-  expect(outside).not.toMatch(/\bteam\b/i);
-  expect(outside).not.toMatch(/\bralph\b/i);
+  // No execution workflow other than ultragoal is named, and the OMC
+  // pre-execution gate section is gone with the keyword gate (P-8).
+  expect(skill).not.toContain("## Pre-Execution Gate");
+  expect(skill).not.toMatch(/\bteam\b/i);
+  expect(skill).not.toMatch(/\bralph\b/i);
 
   // `compact` survives only as the adjective in "compact RALPLAN-DR summary",
   // never as one of OMC's execution options.
@@ -634,7 +630,8 @@ test("ultragoal skill keeps the OMC ralph skeleton with host substitutions", asy
     "ultragoal cancel(reason)",
     "Do not change ultragoal files through shell",
     "polite-stop anti-pattern",
-    "if the user merely mentions the word ralplan, ignore it",
+    "merely mentions the word ralplan, ignore it",
+    "ultragoal start(reason)",
   ])
     expect(skill).toContain(required);
   for (const forbidden of [

@@ -1,5 +1,5 @@
-// Ralplan pure logic: injected-message builders, the execution gate, and the
-// continuation/seed decisions. No `fs`, no client, no host imports beyond types.
+// Ralplan pure logic: injected-message builders and the continuation/seed
+// decisions. No `fs`, no client, no host imports beyond types.
 //
 // n6/a3: no bare marker token is added. Every injected message is wrapped in an
 // OMC-style tag, and `wrapInjected` is the ONLY way this module produces text,
@@ -9,14 +9,14 @@
 //
 // Source: oh-my-claudecode v5.4.0 (MIT). `<ralplan-continuation>` and
 // `<session-restore>` are OMC's own wrappers; `<ralplan-notice>` is a host
-// addition that wraps the keyword, breaker and gate notices OMC emitted bare.
+// addition that wraps the keyword and breaker notices OMC emitted bare.
 
 import type { ExplicitStatePatch } from "./state.js";
 
 export const INJECTION_MARKERS = [
   "<ralplan-continuation>", // OMC src/hooks/persistent-mode/index.ts:2147
   "<session-restore>", // OMC src/hooks/bridge.ts:2074
-  "<ralplan-notice>", // host addition: wraps the keyword, breaker and gate notices
+  "<ralplan-notice>", // host addition: wraps the keyword and breaker notices
   // Host addition: wraps OMC's `[MAGIC KEYWORD: DEEP-INTERVIEW]` guide, which
   // OMC emitted bare as `additionalContext` (scripts/keyword-detector.mjs:1544).
   "<deep-interview-notice>",
@@ -63,51 +63,6 @@ export const DEEP_INTERVIEW_SKILL_NAME = "deep-interview";
 const SKILL_INVOCATION_USER_REQUEST_MAX = 1200;
 
 /**
- * OMC seeds this with `ralph`, `autopilot` and `team`; this port registers only
- * `ultragoal`, the port of ralph (plan §6.7).
- */
-export const EXECUTION_GATE_KEYWORDS = new Set<string>(["ultragoal"]);
-
-/** OMC keyword-detector/index.ts:1002. */
-export const GATE_BYPASS_PREFIXES = ["force:", "!"];
-
-/**
- * Positive signals that the prompt IS well-specified enough for direct execution.
- * If ANY of these are present, the prompt auto-passes the gate (fast path).
- * Verbatim from OMC keyword-detector/index.ts:1008-1040.
- */
-export const WELL_SPECIFIED_SIGNALS: RegExp[] = [
-  // References specific files by extension
-  /\b[\w/.-]+\.(?:ts|js|py|go|rs|java|tsx|jsx|vue|svelte|rb|c|cpp|h|css|scss|html|json|yaml|yml|toml)\b/,
-  // References specific paths with directory separators
-  /(?:src|lib|test|spec|app|pages|components|hooks|utils|services|api|dist|build|scripts)\/\w+/,
-  // References specific functions/classes/methods by keyword
-  /\b(?:function|class|method|interface|type|const|let|var|def|fn|struct|enum)\s+\w{2,}/i,
-  // CamelCase identifiers (likely symbol names: processKeyword, getUserById)
-  /\b[a-z]+(?:[A-Z][a-z]+)+\b/,
-  // PascalCase identifiers (likely class/type names: KeywordDetector, UserModel)
-  /\b[A-Z][a-z]+(?:[A-Z][a-z0-9]*)+\b/,
-  // snake_case identifiers with 2+ segments (likely symbol names: user_model, get_user)
-  /\b[a-z]+(?:_[a-z]+)+\b/,
-  // Bare issue/PR number (#123, #42)
-  /(?:^|\s)#\d+\b/,
-  // Has numbered steps or bullet list (structured request)
-  /(?:^|\n)\s*(?:\d+[.)]\s|-\s+\S|\*\s+\S)/m,
-  // Has acceptance criteria or test spec keywords
-  /\b(?:acceptance\s+criteria|test\s+(?:spec|plan|case)|should\s+(?:return|throw|render|display|create|delete|update))\b/i,
-  // Has specific error or issue reference
-  /\b(?:error:|bug\s*#?\d+|issue\s*#\d+|stack\s*trace|exception|TypeError|ReferenceError|SyntaxError)\b/i,
-  // Has a code block with substantial content.
-  /```[\s\S]{20,}?```/,
-  // PR or commit reference
-  /\b(?:PR\s*#\d+|commit\s+[0-9a-f]{7}|pull\s+request)\b/i,
-  // "in <specific-path>" pattern
-  /\bin\s+[\w/.-]+\.(?:ts|js|py|go|rs|java|tsx|jsx)\b/,
-  // Test runner commands (explicit test target)
-  /\b(?:npm\s+test|npx\s+(?:vitest|jest)|pytest|cargo\s+test|go\s+test|make\s+test)\b/i,
-];
-
-/**
  * The full terminal-phase set from OMC persistent-mode/index.ts:806-824.
  * A ralplan session in any of these phases is finished: the continuation hook
  * stops reinforcing and resets the breaker instead.
@@ -140,89 +95,6 @@ function wrapInjected(tag: InjectionMarker, body: string): string {
 /** The one wrapper `src/ultragoal.ts` builds its messages with. */
 export function wrapUltragoalInjected(tag: UltragoalMarker, body: string) {
   return wrapInjected(tag, body);
-}
-
-/**
- * Check if a prompt is underspecified for direct execution.
- * Returns true if the prompt lacks enough specificity for heavy execution modes.
- * Verbatim from OMC keyword-detector/index.ts:1048-1070.
- */
-export function isUnderspecifiedForExecution(text: string): boolean {
-  const trimmed = text.trim();
-  if (!trimmed) return true;
-
-  // Escape hatch: force: or ! prefix bypasses the gate
-  for (const prefix of GATE_BYPASS_PREFIXES) {
-    if (trimmed.startsWith(prefix)) return false;
-  }
-
-  // If any well-specified signal is present, pass through
-  if (WELL_SPECIFIED_SIGNALS.some((p) => p.test(trimmed))) return false;
-
-  // Strip mode keywords for effective word counting
-  const stripped = trimmed
-    .replace(/\b(?:ralph|autopilot|team|ultragoal)\b/gi, "")
-    .trim();
-  const effectiveWords = stripped
-    .split(/\s+/)
-    .filter((w) => w.length > 0).length;
-
-  // Short prompts without well-specified signals are underspecified
-  if (effectiveWords <= 15) return true;
-
-  return false;
-}
-
-/**
- * Apply the ralplan-first gate: if execution keywords are present but the
- * prompt is underspecified, redirect to ralplan. Verbatim from OMC
- * keyword-detector/index.ts:1078-1114, typed on plain string keywords.
- *
- * Callers pass `"ultragoal"` for both the keyword and the `@ultragoal`
- * mention: OMC gates an explicit invocation too (decision 3).
- */
-export function applyRalplanGate(
-  keywords: string[],
-  text: string,
-): { keywords: string[]; gateApplied: boolean; gatedKeywords: string[] } {
-  if (keywords.length === 0) {
-    return { keywords, gateApplied: false, gatedKeywords: [] };
-  }
-
-  // Don't gate if cancel is present (cancel always wins)
-  if (keywords.includes("cancel")) {
-    return { keywords, gateApplied: false, gatedKeywords: [] };
-  }
-
-  // Don't gate if ralplan is already in the list
-  if (keywords.includes("ralplan")) {
-    return { keywords, gateApplied: false, gatedKeywords: [] };
-  }
-
-  // Check if any execution keywords are present
-  const executionKeywords = keywords.filter((k) =>
-    EXECUTION_GATE_KEYWORDS.has(k),
-  );
-  if (executionKeywords.length === 0) {
-    return { keywords, gateApplied: false, gatedKeywords: [] };
-  }
-
-  // Check if prompt is underspecified
-  if (!isUnderspecifiedForExecution(text)) {
-    return { keywords, gateApplied: false, gatedKeywords: [] };
-  }
-
-  // Gate: replace execution keywords with ralplan
-  const filtered = keywords.filter((k) => !EXECUTION_GATE_KEYWORDS.has(k));
-  if (!filtered.includes("ralplan")) {
-    filtered.push("ralplan");
-  }
-
-  return {
-    keywords: filtered,
-    gateApplied: true,
-    gatedKeywords: executionKeywords,
-  };
 }
 
 /**
@@ -307,20 +179,6 @@ Current phase: ${phase}
 Status: ${status}
 
 Treat this as prior-session context only. Prioritize the user's newest request, and resume ralplan only if the user explicitly asks to continue it.`,
-  );
-}
-
-// OMC bridge.ts:1597-1606, with the examples' `ralph` read as `ultragoal`.
-export function gateMessage(gatedKeywords: readonly string[]): string {
-  const gated = gatedKeywords.join(", ");
-  return wrapInjected(
-    "<ralplan-notice>",
-    `[RALPLAN GATE] Redirecting ${gated} → ralplan for scoping.
-Tip: add a concrete anchor to run directly next time:
-  • "ultragoal fix the bug in src/auth.ts"  (file path)
-  • "ultragoal implement #42"               (issue number)
-  • "ultragoal fix processKeyword"           (symbol name)
-Or prefix with \`force:\` / \`!\` to bypass.`,
   );
 }
 

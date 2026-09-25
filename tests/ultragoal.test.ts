@@ -284,7 +284,7 @@ async function start(h: Harness) {
 }
 
 function requestIdOf(text: string) {
-  return text.match(/request ([0-9a-f-]{36})/)![1];
+  return text.match(/request_id "([0-9a-f-]{36})"/)![1];
 }
 
 test("create refuses empty goals and an unfinished file without replace; overwrites a complete one", async () =>
@@ -335,7 +335,7 @@ test("amendments: substantive rules, ledger, last criterion and last goal", asyn
     expect(goals.goals[0].amendments[0]).toMatchObject({ kind: "revised", original: "help text", authority: "S" });
   }));
 
-test("complete creates one request; only the right architect child records a verdict", async () =>
+test("complete creates one request; only the leader records a verdict, and reviewers only read", async () =>
   fixture(async (h) => {
     await start(h);
     expect(await h.call({ ...completeArgs("G001"), learnings: [] })).toStartWith("Error:");
@@ -346,24 +346,24 @@ test("complete creates one request; only the right architect child records a ver
     const approve = { op: "record_verdict", request_id, goal_id: "G001", verdict: "approve", evidence: "ran the parser and read the help text", issues: [] };
     const before = await h.store.read("S", "ultragoal");
     const refusals: [Record<string, unknown>, string, string][] = [
-      [approve, "open-gajae", "S"],
+      [approve, "open-gajae-architect", "C"],
+      [approve, "open-gajae-critic", "C"],
       [approve, "open-gajae-executor", "C"],
       [approve, "open-gajae-cleaner", "C"],
-      [approve, "open-gajae-critic", "C"],
-      [approve, "open-gajae-architect", "G"],
-      [approve, "open-gajae-architect", "unknown"],
-      [{ ...approve, request_id: "other" }, "open-gajae-architect", "C"],
-      [{ ...approve, goal_id: "G002" }, "open-gajae-architect", "C"],
-      [{ ...approve, evidence: "  " }, "open-gajae-architect", "C"],
-      [{ ...approve, issues: ["help text missing"] }, "open-gajae-architect", "C"],
-      [{ ...approve, verdict: "reject" }, "open-gajae-architect", "C"],
+      [{ ...approve, request_id: "other" }, "open-gajae", "S"],
+      [{ ...approve, goal_id: "G002" }, "open-gajae", "S"],
+      [{ ...approve, evidence: "  " }, "open-gajae", "S"],
+      [{ ...approve, issues: ["help text missing"] }, "open-gajae", "S"],
+      [{ ...approve, verdict: "reject" }, "open-gajae", "S"],
     ].map(([a, agent, s]) => [a as Record<string, unknown>, agent as string, s as string]);
     for (const [args, agent, sessionID] of refusals)
       expect(`${agent}@${sessionID}: ${(await h.call(args, agent, sessionID)).slice(0, 6)}`).toBe(`${agent}@${sessionID}: Error:`);
     expect(await h.store.read("S", "ultragoal")).toEqual(before);
+    // Reviewers read the parent's status.
+    expect(JSON.parse(await h.call({ op: "status" }, "open-gajae-architect", "C")).pending_request.request_id).toBe(request_id);
     // A criteria change voids the request (④).
     expect(await h.call({ op: "add", target: "criterion", goal_id: "G001", criterion: "exit code 0", reason: REASON, evidence: EVIDENCE })).toContain("withdrawn");
-    expect(await h.call(approve, "open-gajae-architect", "C")).toStartWith("Error:");
+    expect(await h.call(approve)).toStartWith("Error:");
   }));
 
 test("reject reverts, approve verifies, and the final critic completes the run", async () =>
@@ -371,23 +371,23 @@ test("reject reverts, approve verifies, and the final critic completes the run",
     await start(h);
     const evidence = "checked each criterion";
     let id = requestIdOf(await h.call(completeArgs("G001")));
-    expect(await h.call({ op: "record_verdict", request_id: id, goal_id: "G001", verdict: "reject", evidence, issues: ["help text missing"] }, "open-gajae-architect", "C")).toContain("reject");
+    expect(await h.call({ op: "record_verdict", request_id: id, goal_id: "G001", verdict: "reject", evidence, issues: ["help text missing"] })).toContain("reject");
     let state = await h.store.read("S", "ultragoal");
     expect(state?.reject_counts).toEqual({ G001: 1 });
     expect(state?.verification_request).toBeUndefined();
     id = requestIdOf(await h.call(completeArgs("G001")));
     expect((await h.store.read("S", "ultragoal"))?.verification_request).toMatchObject({ attempt: 2 });
-    await h.call({ op: "record_verdict", request_id: id, goal_id: "G001", verdict: "approve", evidence, issues: [] }, "open-gajae-architect", "C");
+    await h.call({ op: "record_verdict", request_id: id, goal_id: "G001", verdict: "approve", evidence, issues: [] });
     id = requestIdOf(await h.call(completeArgs("G002")));
-    await h.call({ op: "record_verdict", request_id: id, goal_id: "G002", verdict: "approve", evidence, issues: [] }, "open-gajae-architect", "C2");
+    await h.call({ op: "record_verdict", request_id: id, goal_id: "G002", verdict: "approve", evidence, issues: [] });
     const report = { summary: "clean", blocking_issues: [] as string[] };
     const regression = [{ command: "bun test", result: "pass", summary: "all green" }];
     expect(await h.call({ op: "request_final_review", cleaner_report: { summary: "x", blocking_issues: ["dead code"] }, regression })).toContain("blocking issues");
     expect(await h.call({ op: "request_final_review", cleaner_report: report, regression: [{ ...regression[0], result: "fail" }] })).toContain("must pass");
     id = requestIdOf(await h.call({ op: "request_final_review", cleaner_report: report, regression }));
     const final = { op: "record_verdict", request_id: id, goal_id: "final", verdict: "approve", evidence: "whole run reviewed", issues: [] };
-    expect(await h.call(final, "open-gajae-architect", "C")).toStartWith("Error:");
-    expect(await h.call(final, "open-gajae-critic", "C")).toContain("complete");
+    expect(await h.call(final, "open-gajae-critic", "C")).toStartWith("Error:");
+    expect(await h.call(final)).toContain("complete");
     state = await h.store.read("S", "ultragoal");
     expect(state).toMatchObject({ active: false, current_phase: "complete" });
     const { sessionDir } = await h.store.resolveSessionPaths("S");
@@ -406,7 +406,7 @@ test("handoff seeds ralplan, resume needs ralplan finished, cancel keeps the fil
     expect(await h.store.read("S", "ultragoal")).toMatchObject({ active: false, current_phase: "handoff", handoff_to: "ralplan" });
     expect(await h.store.read("S", "ralplan")).toMatchObject({ active: true, current_phase: "ralplan", awaiting_confirmation: false });
     expect(await h.call(completeArgs("G001"))).toContain("not running");
-    expect(await h.call({ op: "resume", reason: "back" })).toContain("finish ralplan first");
+    expect(await h.call({ op: "resume", reason: "back" })).toContain("ralplan planning is running");
     await h.store.patch("S", { active: false, current_phase: "handoff" }, "ralplan");
     expect(await h.call({ op: "resume", reason: "back" })).toContain("Resumed");
     expect(await h.store.read("S", "ultragoal")).toMatchObject({ active: true, current_phase: "ultragoal", awaiting_confirmation: false });
@@ -448,4 +448,23 @@ test("state_write refuses to activate ralplan only while ultragoal runs", async 
     await h.call(createArgs);
     await writeFile(join(sessionDir, "ultragoal/goals.json"), "{bad");
     expect(await h.call(completeArgs("G001"))).toContain("replace: true");
+  }));
+
+test("start seeds or confirms ultragoal, refuses while ralplan or ultragoal runs, and logs START", async () =>
+  fixture(async (h) => {
+    expect(await h.call(createArgs)).toContain("call `ultragoal start(reason)` first");
+    expect(await h.call({ op: "start", reason: " " })).toContain("reason is required");
+    await h.store.patch("S", { active: true, current_phase: "ralplan", awaiting_confirmation: false }, "ralplan");
+    expect(await h.call({ op: "start", reason: "run the plan" })).toContain("ralplan planning is running");
+    await h.store.clear("S", "ralplan");
+    expect(await h.call({ op: "start", reason: "run the plan" })).toContain("Ultragoal started");
+    expect(await h.store.read("S", "ultragoal")).toMatchObject({ active: true, awaiting_confirmation: false, current_phase: "ultragoal", iteration: 1 });
+    expect(await h.call({ op: "start", reason: "again" })).toContain("already running");
+    expect(await h.call(createArgs)).toStartWith("Created");
+    // An awaiting keyword seed is confirmed, and a handed-off run restarts.
+    await h.store.patch("S", { awaiting_confirmation: true }, "ultragoal");
+    expect(await h.call({ op: "start", reason: "confirm" })).toContain("Ultragoal started");
+    expect((await h.store.read("S", "ultragoal"))?.awaiting_confirmation).toBe(false);
+    const { sessionDir } = await h.store.resolveSessionPaths("S");
+    expect(await readFile(join(sessionDir, "ultragoal/progress.txt"), "utf8")).toContain("- START");
   }));

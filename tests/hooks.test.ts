@@ -1329,20 +1329,17 @@ test("ultragoal keyword seeds awaiting, the skill load confirms, the mention see
   });
 });
 
-test("a vague ultragoal, keyword or mention, is gated to ralplan; force and ralplan-first prompts are not", async () => {
+test("with no gate, a vague ultragoal starts ultragoal; a prompt that also asks for ralplan starts only ralplan", async () => {
   await fixture(async (context) => {
-    const { store, hooks } = context;
-    for (const options of [{}, { skills: ["ultragoal"] }]) {
-      const id = nextSession("gate");
-      const texts = await notices(context, id, "ultragoal add auth", options);
-      expect(texts).toHaveLength(2);
-      expect(texts[0]).toContain("[MODE: RALPLAN]");
-      expect(texts[1]).toContain("[RALPLAN GATE] Redirecting ultragoal → ralplan");
-      expect(await missing(store, id, UG)).toBe(true);
-      expect((await store.read(id, RALPLAN_MODE))?.active).toBe(true);
-      // AC25: loading the ultragoal skill on the gated turn seeds nothing.
-      await hooks.executeBefore({ tool: "skill", sessionID: id, agent: "open-gajae", id: nextCall(), input: { id: "ultragoal" } });
-      expect(await missing(store, id, UG)).toBe(true);
+    const { store } = context;
+    const cases: [{ skills?: string[] }, boolean][] = [[{}, true], [{ skills: ["ultragoal"] }, false]];
+    for (const [options, awaiting] of cases) {
+      const id = nextSession("nogate");
+      const texts = await notices(context, id, "ultragoal로 계획대로 진행", options);
+      expect(texts).toHaveLength(1);
+      expect(texts[0]).toContain("[MODE: ULTRAGOAL]");
+      expect(await ugState(store, id)).toMatchObject({ active: true, awaiting_confirmation: awaiting });
+      expect(await missing(store, id, RALPLAN_MODE)).toBe(true);
     }
     const both = nextSession("both");
     await notices(context, both, "ralplan then ultragoal add auth");
