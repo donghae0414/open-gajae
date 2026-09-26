@@ -1,6 +1,10 @@
 [English](README.md) | [한국어](README.ko.md)
 
+![open-gajae — Clarify. Plan. Execute.](assets/branding/open-gajae-banner.png)
+
 # open-gajae
+
+OpenCode/Anomaly와 제휴하지 않은 비공식 OpenCode 플러그인입니다. [배너 출처](assets/branding/open-gajae-banner.md).
 
 세션에 묶인 `deep-interview`/`ralplan`/`ultragoal` skill, 여덟 개의 자체 역할, 작은 읽기 전용 코드 조사 도구를 제공하는 OpenCode 플러그인입니다. OMC v5.4.0의 일부 자료를 이식했지만 OMC 전체 이식은 아니며, 실행 워크플로는 OMC ralph를 이식한 `ultragoal` 하나뿐입니다.
 

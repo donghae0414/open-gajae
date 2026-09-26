@@ -1,6 +1,10 @@
 [English](README.md) | [한국어](README.ko.md)
 
+![open-gajae — Clarify. Plan. Execute.](assets/branding/open-gajae-banner.png)
+
 # open-gajae
+
+Unofficial OpenCode plugin; not affiliated with OpenCode/Anomaly. [Banner credits](assets/branding/open-gajae-banner.md).
 
 An OpenCode plugin with session-bound `deep-interview`, `ralplan`, and `ultragoal` skills, eight owned roles, and a small read-only code-research surface. It adapts selected OMC v5.4.0 material; it is **not** a full OMC port; its one execution workflow is `ultragoal`, the port of OMC ralph.
 
