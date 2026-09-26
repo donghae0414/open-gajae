@@ -4,20 +4,34 @@
 
 # open-gajae
 
-OpenCode/Anomaly와 제휴하지 않은 비공식 OpenCode 플러그인입니다. [배너 출처](assets/branding/open-gajae-banner.md).
+**OpenCode v2용 플러그인으로 개발한 개인 학습 및 토이 프로젝트입니다.** OpenCode v1은 지원하지 않습니다.
+
+## 개발 배경과 프로젝트 성격
+
+[gajae-code](https://github.com/Yeachan-Heo/gajae-code)와 [oh-my-claudecode (OMC)](https://github.com/Yeachan-Heo/oh-my-claudecode)를 사용하며 좋은 경험을 했습니다. 다만 OpenCode만 사용할 수 있는 환경적 제약이 있어, OpenCode에서도 비슷한 경험을 만들어 보고 싶었습니다. 코딩 에이전트 개발을 공부하려는 목적을 겸해 두 프로젝트를 참고하며 open-gajae를 개발하게 되었습니다. OpenCode 플러그인 개발과 호스트 연동 방식을 공부하는 데에는 [oh-my-openagent (OMO)](https://github.com/code-yeongyu/oh-my-openagent)도 참고했습니다. 영감과 배움의 바탕이 된 세 프로젝트의 제작자와 기여자분들께 감사드립니다.
+
+이 프로젝트는 독립적으로 개발한 비공식 프로젝트입니다. gajae-code, OMC, OMO, OpenCode/Anomaly와 제휴하거나 공식 승인을 받은 프로젝트가 아니며, gajae-code, OMC, OMO의 공식 이식판 또는 호환 플러그인이 아닙니다. 원본 프로젝트와 동일한 기능·동작이나 호환성을 보장하지 않으며, 개인 학습과 실험을 목적으로 합니다.
+
+실제로 포함하거나 수정해 사용한 외부 자료의 출처와 라이선스는 [third-party notices](THIRD-PARTY-NOTICES.md)에 기록되어 있습니다. [배너 출처](assets/branding/open-gajae-banner.md).
+
+## 라이선스
+
+open-gajae의 자체 작성 부분은 MIT, 외부 자료는 각 원본 라이선스를 따릅니다. 자세한 조건은 [LICENSE](LICENSE)와 [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES.md)를 확인하세요.
+
+## 개요
 
 세션에 묶인 `deep-interview`/`ralplan`/`ultragoal` skill, 여덟 개의 자체 역할, 작은 읽기 전용 코드 조사 도구를 제공하는 OpenCode 플러그인입니다. OMC v5.4.0의 일부 자료를 이식했지만 OMC 전체 이식은 아니며, 실행 워크플로는 OMC ralph를 이식한 `ultragoal` 하나뿐입니다.
 
 ## 범위와 상태
 
-- 기준은 OMC v5.4.0 커밋 `5281b19e0d64f8e6dc6767f2130299a88af2dc71`입니다. OMX는 현재 동작의 원천이 아닙니다.
+- 기준은 OMC v5.4.0 커밋 `5281b19e0d64f8e6dc6767f2130299a88af2dc71`입니다.
 - 대상 호스트는 OpenCode v2입니다. 이번 이식은 `@opencode/plugin` 2.0.15를 대상으로 하며, 로컬 `opencode/` 참조는 `v2.0.15`(`6f3639d82e`)에 고정되어 있습니다. v1 호스트는 더 이상 이 플러그인을 로드할 수 없습니다(v1 지원 중단 — deviations 표 참고).
 - 패키지는 빌드 단계가 없는 TS 소스입니다. `package.json`의 `exports["."]`는 `./src/index.ts`를 가리키고, 루트 `index.ts`가 이를 re-export합니다. `dist/`는 없습니다.
 - 구현 범위는 `deep-interview`·`ralplan`·`ultragoal`, `open-gajae`/`open-gajae-explore`/`open-gajae-document-specialist`, `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic` 합의 역할, `open-gajae-executor`/`open-gajae-cleaner` ultragoal 실행 역할, 세션 상태, native 문서 출력, 그리고 바로 호출 가능한 도구 12개(상태 도구 3개 + `ultragoal` 도구 1개 + 읽기 전용 AST/LSP 도구 8개)입니다. company context(v1의 advisory MCP hook)는 완전히 제거되었습니다.
 - `ralplan`은 제공하며 `pending approval` 상태의 plan에서 끝나고, 최종 승인 질문은 `Refine further`/`Execute via ultragoal`/`Stop here`를 제공합니다. `ultragoal`은 OMC ralph를 이식한 목표 기반 지속 실행 loop로, goal별 architect 검증·필수 읽기 전용 cleaner pass·최종 critic 리뷰를 제공합니다. deep-interview → ralplan → ultragoal 핸드오프 체인도 제공합니다. autopilot, team, 독립된 ralph skill, autoresearch, 공유 세션 상태, 자동 migration/recovery는 제공하지 않습니다. 슬래시 커맨드는 없으며 진입은 skill mention 또는 키워드입니다(아래 "진입" 참고).
 - 이 문서는 `feat/opencode-v2-port` 브랜치 커밋 `f4df6e6` 기준으로 구현된 v2 계약을 설명합니다. Phase 1 완료를 입증하지 않으며, 아래 검증 계층(typecheck, unit test, host probe)이 현재 통과하는지도 이 문서 자체가 주장하지 않습니다. 그 상태는 plan과 ledger에서 관리합니다.
 
-개발 정책은 [AGENTS.md](AGENTS.md), 배경 분석은 [이식 가이드](docs/analysis/opencode-porting-guide.md)(역사적 자료이며 권위는 AGENTS.md를 따름), 출처는 [third-party notices](THIRD-PARTY-NOTICES.md)를 확인하세요.
+개발 정책은 [AGENTS.md](AGENTS.md), 출처는 [third-party notices](THIRD-PARTY-NOTICES.md)를 확인하세요.
 
 ## 설치 (OpenCode v2)
 

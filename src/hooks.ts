@@ -21,7 +21,9 @@
 //
 // Source: oh-my-claudecode v5.4.0 (MIT) — `persistent-mode/index.ts` checkRalplan,
 // `bridge.ts` session restore, keyword seeding and confirmSkillModeStates — and
-// oh-my-openagent (MIT) for the OpenCode-side in-flight and injection patterns.
+// oh-my-openagent d1557a4b48fdbec06a7144fdc4afa3e65c6523ed (Sustainable Use
+// License) for OpenCode-side in-flight, lineage and injection patterns, modified
+// for open-gajae. See THIRD-PARTY-NOTICES.md and licenses/OMO-SUL.txt.
 
 import { basename, join } from "node:path";
 import { Error as ToolError } from "@opencode/plugin/promise/tool";

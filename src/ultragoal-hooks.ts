@@ -5,9 +5,10 @@
 //
 // Source: oh-my-claudecode v5.4.0 (MIT) — `scripts/persistent-mode.mjs` ralph
 // branch (iteration, extension, hard max), `keyword-detector.mjs` activation,
-// `bridge.ts` confirmSkillModeStates and session restore. oh-my-openagent (MIT)
-// for appending a plugin brief to a reviewer `subagent` call in
-// `tool.execute.before` (ULW oracle verification, plan D-brief).
+// `bridge.ts` confirmSkillModeStates and session restore. Reviewer integration
+// references oh-my-openagent d1557a4b48fdbec06a7144fdc4afa3e65c6523ed
+// (Sustainable Use License), modified for open-gajae. The reviewer-brief append
+// is a local adapter; see THIRD-PARTY-NOTICES.md and licenses/OMO-SUL.txt.
 
 import { randomUUID } from "node:crypto";
 import { RALPLAN_MODE, ULTRAGOAL_MODE, type StateStore } from "./state.js";

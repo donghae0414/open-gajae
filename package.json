@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "OMC-aligned OpenCode deep-interview with session-scoped state and read-only specialists",
-  "license": "SEE LICENSE IN THIRD-PARTY-NOTICES.md",
+  "license": "SEE LICENSE IN LICENSE",
   "exports": {
     ".": "./src/index.ts"
   },
@@ -13,7 +13,9 @@
     "src",
     "skills",
     "prompts",
+    "assets/branding",
     "licenses",
+    "LICENSE",
     "THIRD-PARTY-NOTICES.md"
   ],
   "scripts": {

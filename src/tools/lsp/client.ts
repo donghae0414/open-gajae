@@ -1,3 +1,6 @@
+// Adapted from oh-my-claudecode src/tools/lsp/client.ts at
+// 5281b19e0d64f8e6dc6767f2130299a88af2dc71 (MIT, Copyright 2025 Yeachan Heo).
+// Modified for open-gajae; see THIRD-PARTY-NOTICES.md and licenses/OMC-MIT.txt.
 import { spawn, type ChildProcess } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { dirname, join, parse, resolve } from "path";

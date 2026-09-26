@@ -4,20 +4,34 @@
 
 # open-gajae
 
-Unofficial OpenCode plugin; not affiliated with OpenCode/Anomaly. [Banner credits](assets/branding/open-gajae-banner.md).
+**A personal learning and toy project built as a plugin for OpenCode v2.** OpenCode v1 is not supported.
+
+## Background and project status
+
+I enjoyed using [gajae-code](https://github.com/Yeachan-Heo/gajae-code) and [oh-my-claudecode (OMC)](https://github.com/Yeachan-Heo/oh-my-claudecode), and wanted a similar experience in an environment where I could only use OpenCode. I started open-gajae to explore that possibility and learn how to develop coding agents, drawing on both projects as references. I also studied [oh-my-openagent (OMO)](https://github.com/code-yeongyu/oh-my-openagent) as a reference for OpenCode plugin development and host integration. Many thanks to the authors and contributors of all three projects for the inspiration and work shared with the community.
+
+This is an independent, unofficial project. It is not affiliated with or endorsed by gajae-code, OMC, OMO, or OpenCode/Anomaly, and is not an official port or compatibility layer for gajae-code, OMC, or OMO. It does not guarantee the same features, behavior, or compatibility as those projects. Its purpose is personal learning and experimentation.
+
+For retained and adapted third-party material, see [third-party notices](THIRD-PARTY-NOTICES.md). [Banner credits](assets/branding/open-gajae-banner.md).
+
+## License
+
+Original open-gajae contributions are licensed under MIT; third-party material remains under its respective original license. See [LICENSE](LICENSE) and [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES.md) for the applicable terms.
+
+## Overview
 
 An OpenCode plugin with session-bound `deep-interview`, `ralplan`, and `ultragoal` skills, eight owned roles, and a small read-only code-research surface. It adapts selected OMC v5.4.0 material; it is **not** a full OMC port; its one execution workflow is `ultragoal`, the port of OMC ralph.
 
 ## Scope and status
 
-- The baseline is OMC v5.4.0, commit `5281b19e0d64f8e6dc6767f2130299a88af2dc71`. OMX is not a current behavior source.
+- The baseline is OMC v5.4.0, commit `5281b19e0d64f8e6dc6767f2130299a88af2dc71`.
 - The target host is OpenCode v2. This port targets `@opencode/plugin` 2.0.15 against the local `opencode/` reference pinned to `v2.0.15` (`6f3639d82e`); a v1 host can no longer load this plugin (v1 support is dropped — see the deviations table).
 - The package is TS source with no build step: `package.json` `exports["."]` points at `./src/index.ts`, and the root `index.ts` re-exports it. There is no `dist/`.
 - Implemented scope: `deep-interview`, `ralplan`, and `ultragoal`; `open-gajae`, `open-gajae-explore`, and `open-gajae-document-specialist`; the `open-gajae-planner`, `open-gajae-architect`, and `open-gajae-critic` consensus roles; the `open-gajae-executor` and `open-gajae-cleaner` ultragoal-execution roles; session state; native document output; and twelve directly-callable tools (three state tools, the `ultragoal` tool, and eight read-only AST/LSP tools). Company context (the v1 advisory MCP hook) is removed entirely.
 - `ralplan` is implemented and ends at a plan marked `pending approval`, whose final approval step offers `Refine further`, `Execute via ultragoal`, or `Stop here`. `ultragoal` is implemented as a goal-driven persistence loop (a port of OMC's ralph) with per-goal architect verification, a mandatory read-only cleaner pass, and a final critic review; the deep-interview → ralplan → ultragoal handoff chain is provided. Not provided: autopilot, team, a standalone `ralph` skill, autoresearch, shared session state, or automatic migration/recovery. No slash commands exist; entry is a skill mention or a keyword (see Entry, below).
 - This documentation describes the implemented v2 contract on `feat/opencode-v2-port` as of commit `f4df6e6`. It does not establish Phase 1 completion, and it does not itself assert that the verification layers below (typecheck, unit tests, host probes) currently pass — see the plan and its ledger for that.
 
-See [AGENTS.md](AGENTS.md) for development policy, the [porting guide](docs/analysis/opencode-porting-guide.md) for background analysis (historical; see AGENTS.md on its authority), and [third-party notices](THIRD-PARTY-NOTICES.md) for attribution.
+See [AGENTS.md](AGENTS.md) for development policy and [third-party notices](THIRD-PARTY-NOTICES.md) for attribution.
 
 ## Install (OpenCode v2)
 

@@ -426,7 +426,7 @@ test("the catalog is twelve direct tools with visibility permissions", async () 
     }
   }));
 // Original source literals are deliberate contract tests, not expected values derived from the port.
-test("OMC scoring and challenge rules retained without OMX runtime gates", async () => {
+test("OMC scoring and challenge rules retained with host-native workflow boundaries", async () => {
   const skill = await readFile(
     new URL("../skills/deep-interview/SKILL.md", import.meta.url),
     "utf8",

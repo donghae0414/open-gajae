@@ -1,3 +1,6 @@
+// Agent/model/permission integration references oh-my-openagent
+// d1557a4b48fdbec06a7144fdc4afa3e65c6523ed (Sustainable Use License), modified
+// for open-gajae. Role policy follows OMC; see THIRD-PARTY-NOTICES.md for scope.
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
