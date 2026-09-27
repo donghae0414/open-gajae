@@ -24,12 +24,13 @@ open-gajae의 자체 작성 부분은 MIT, 외부 자료는 각 원본 라이선
 
 ## 범위와 상태
 
-- 메인 에이전트 프롬프트의 기준은 GJC 커밋 `07f59defbc691064a126d72e391e46ccd331f970`이며, OMC 기반 skill과 역할 내부 계약의 기준은 OMC v5.4.0 커밋 `5281b19e0d64f8e6dc6767f2130299a88af2dc71` 그대로입니다.
+- OMC 기준선 이식인 Phase 1은 2026-09-27 관리자 결정으로 종료되었습니다. Phase 2 개선은 gajae-code를 주 참조로 관리자가 결정합니다. 정책은 [AGENTS.md](AGENTS.md)에 있습니다.
+- 메인 에이전트 프롬프트의 기준은 GJC v0.17.7 커밋 `5c5231418930673e42cc5d08ebe4376e03187533`이며, OMC 기반 skill과 역할 내부 계약의 기준은 OMC v5.4.0 커밋 `5281b19e0d64f8e6dc6767f2130299a88af2dc71` 그대로입니다.
 - 대상 호스트는 OpenCode v2입니다. 이번 이식은 `@opencode/plugin` 2.0.15를 대상으로 하며, 로컬 `opencode/` 참조는 `v2.0.15`(`6f3639d82e`)에 고정되어 있습니다. v1 호스트는 더 이상 이 플러그인을 로드할 수 없습니다(v1 지원 중단 — deviations 표 참고).
 - 패키지는 빌드 단계가 없는 TS 소스입니다. `package.json`의 `exports["."]`는 `./src/index.ts`를 가리키고, 루트 `index.ts`가 이를 re-export합니다. `dist/`는 없습니다.
 - 구현 범위는 `deep-interview`·`ralplan`·`ultragoal`, `open-gajae`/`open-gajae-explore`/`open-gajae-document-specialist`, `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic` 합의 역할, `open-gajae-executor`/`open-gajae-cleaner` ultragoal 실행 역할, 세션 상태, native 문서 출력, 그리고 바로 호출 가능한 도구 12개(상태 도구 3개 + `ultragoal` 도구 1개 + 읽기 전용 AST/LSP 도구 8개)입니다. company context(v1의 advisory MCP hook)는 완전히 제거되었습니다.
 - `ralplan`은 제공하며 `pending approval` 상태의 plan에서 끝나고, 최종 승인 질문은 `Refine further`/`Execute via ultragoal`/`Stop here`를 제공합니다. `ultragoal`은 OMC ralph를 이식한 목표 기반 지속 실행 loop로, goal별 architect 검증·필수 읽기 전용 cleaner pass·최종 critic 리뷰를 제공합니다. deep-interview → ralplan → ultragoal 핸드오프 체인도 제공합니다. autopilot, team, 독립된 ralph skill, autoresearch, 공유 세션 상태, 자동 migration/recovery는 제공하지 않습니다. 슬래시 커맨드는 없으며 명시적인 자연어 요청이나 지원되는 mention·키워드로 skill에 진입할 수 있습니다(아래 "진입" 참고).
-- v2 호스트와 워크플로 설명은 `feat/opencode-v2-port` 브랜치 커밋 `f4df6e6`에서 비롯되었으며, 위 메인 에이전트 프롬프트 기준은 별도 변경입니다. Phase 1 완료를 입증하지 않으며, 아래 검증 계층(typecheck, unit test, host probe)이 이 변경에 대해 통과했다는 주장도 아닙니다. 검증 항목은 plan을 참고하세요.
+- v2 호스트와 워크플로 설명은 `feat/opencode-v2-port` 브랜치 커밋 `f4df6e6`에서 비롯되었으며, 위 메인 에이전트 프롬프트 기준은 별도 변경입니다. 그 변경 자체가 Phase 1 완료를 입증한 것은 아니며, 아래 검증 계층(typecheck, unit test, host probe)이 이 변경에 대해 통과했다는 주장도 아닙니다. 검증 항목은 plan을 참고하세요.
 
 개발 정책은 [AGENTS.md](AGENTS.md), 출처는 [third-party notices](THIRD-PARTY-NOTICES.md)를 확인하세요.
 

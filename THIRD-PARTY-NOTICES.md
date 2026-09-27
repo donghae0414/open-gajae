@@ -17,7 +17,7 @@ Revisions checked against local references:
 
 - OMC v5.4.0: `5281b19e0d64f8e6dc6767f2130299a88af2dc71` (behavioral baseline).
 - OMO: `d1557a4b48fdbec06a7144fdc4afa3e65c6523ed`.
-- GJC v0.17.2: `07f59defbc691064a126d72e391e46ccd331f970` (user-identified reference checkout).
+- GJC v0.17.7: `5c5231418930673e42cc5d08ebe4376e03187533` (local `gajae-code/` reference checkout; the main-agent prompt sources are identical at v0.17.2 `07f59defbc691064a126d72e391e46ccd331f970`, where the prompt was first derived).
 - OpenCode v2.0.15: `6f3639d82ed0760091792189b78f8eeb44f699b1`.
 
 These pins identify the sources checked for this notice; they do not reconstruct the exact historical introduction of every adaptation.
