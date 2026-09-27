@@ -20,16 +20,16 @@ Original open-gajae contributions are licensed under MIT; third-party material r
 
 ## Overview
 
-An OpenCode plugin with session-bound `deep-interview`, `ralplan`, and `ultragoal` skills, eight owned roles, and a small read-only code-research surface. It adapts selected OMC v5.4.0 material; it is **not** a full OMC port; its one execution workflow is `ultragoal`, the port of OMC ralph.
+An OpenCode plugin with session-bound `deep-interview`, `ralplan`, and `ultragoal` skills, eight owned roles, and a small read-only code-research surface. The main-agent prompt is adapted from GJC; the skills and role internals retain their OMC-derived contracts. It is **not** a full OMC port; its one execution workflow is `ultragoal`, the port of OMC ralph.
 
 ## Scope and status
 
-- The baseline is OMC v5.4.0, commit `5281b19e0d64f8e6dc6767f2130299a88af2dc71`.
+- The main-agent prompt baseline is GJC commit `07f59defbc691064a126d72e391e46ccd331f970`; the OMC-derived skills and role internals remain based on OMC v5.4.0, commit `5281b19e0d64f8e6dc6767f2130299a88af2dc71`.
 - The target host is OpenCode v2. This port targets `@opencode/plugin` 2.0.15 against the local `opencode/` reference pinned to `v2.0.15` (`6f3639d82e`); a v1 host can no longer load this plugin (v1 support is dropped — see the deviations table).
 - The package is TS source with no build step: `package.json` `exports["."]` points at `./src/index.ts`, and the root `index.ts` re-exports it. There is no `dist/`.
 - Implemented scope: `deep-interview`, `ralplan`, and `ultragoal`; `open-gajae`, `open-gajae-explore`, and `open-gajae-document-specialist`; the `open-gajae-planner`, `open-gajae-architect`, and `open-gajae-critic` consensus roles; the `open-gajae-executor` and `open-gajae-cleaner` ultragoal-execution roles; session state; native document output; and twelve directly-callable tools (three state tools, the `ultragoal` tool, and eight read-only AST/LSP tools). Company context (the v1 advisory MCP hook) is removed entirely.
-- `ralplan` is implemented and ends at a plan marked `pending approval`, whose final approval step offers `Refine further`, `Execute via ultragoal`, or `Stop here`. `ultragoal` is implemented as a goal-driven persistence loop (a port of OMC's ralph) with per-goal architect verification, a mandatory read-only cleaner pass, and a final critic review; the deep-interview → ralplan → ultragoal handoff chain is provided. Not provided: autopilot, team, a standalone `ralph` skill, autoresearch, shared session state, or automatic migration/recovery. No slash commands exist; entry is a skill mention or a keyword (see Entry, below).
-- This documentation describes the implemented v2 contract on `feat/opencode-v2-port` as of commit `f4df6e6`. It does not establish Phase 1 completion, and it does not itself assert that the verification layers below (typecheck, unit tests, host probes) currently pass — see the plan and its ledger for that.
+- `ralplan` is implemented and ends at a plan marked `pending approval`, whose final approval step offers `Refine further`, `Execute via ultragoal`, or `Stop here`. `ultragoal` is implemented as a goal-driven persistence loop (a port of OMC's ralph) with per-goal architect verification, a mandatory read-only cleaner pass, and a final critic review; the deep-interview → ralplan → ultragoal handoff chain is provided. Not provided: autopilot, team, a standalone `ralph` skill, autoresearch, shared session state, or automatic migration/recovery. No slash commands exist; explicit natural-language requests and supported mentions or keywords can enter a skill (see Entry, below).
+- The v2 host and workflow description originated on `feat/opencode-v2-port` at commit `f4df6e6`; the main-agent prompt baseline above is a separate change. This does not establish Phase 1 completion or assert that the verification layers below (typecheck, unit tests, host probes) pass for that change — see the plan for its checks.
 
 See [AGENTS.md](AGENTS.md) for development policy and [third-party notices](THIRD-PARTY-NOTICES.md) for attribution.
 
@@ -62,10 +62,10 @@ Once a first prompt has been sent in this directory (plugin `setup` runs lazily,
 
 ## Entry
 
-No slash commands exist in this port; v1's `/deep-interview` and `/ralplan` are gone (a recorded deviation). Enter a skill two ways:
+No slash commands exist in this port; v1's `/deep-interview` and `/ralplan` are gone (a recorded deviation). A direct natural-language request to use `deep-interview`, `ralplan`, or `ultragoal` runs the requested skill, as do supported mentions and invocation-context keywords:
 
 - **Mention:** type `@deep-interview` or `@ralplan` and pick it from the TUI's autocomplete. Selecting it attaches the skill directly; typing the text without selecting the suggestion sends plain text with no attached skill, since the server does not parse `@` mentions itself — the keyword path below is what picks that up instead.
-- **Keyword:** the same OMC-derived keyword detection as v1 (English/Korean/Japanese forms, exclusion of questions/quotes/code blocks, and ralplan's invocation-context requirement) enters the skill from plain text and injects a notice.
+- **Keyword:** the same OMC-derived keyword detection as v1 (English/Korean/Japanese forms, exclusion of questions/quotes/code blocks, and ralplan's invocation-context requirement) recognizes an explicit request from plain text and injects a notice. A heuristic suggestion when no skill was requested instead offers the skill or direct work and follows the user's choice. Ordinary clarification can still happen without starting `deep-interview`. Once a skill starts, its own questions, completion choices, and approval steps still apply.
 
 ## Deep interview and storage
 
@@ -168,11 +168,11 @@ The only product environment knobs reached by source are `OPEN_GAJAE_LSP_TIMEOUT
 
 ## Deviations from OMC and the v1 plugin
 
-Every host-required change from the OMC contract, or from the v1 implementation this replaces, is listed here (AGENTS.md policy). None of these were made unilaterally; each traces to a decision in the port's spec/plan (`.omc/specs/deep-interview-opencode-v2-port.md`, `.omc/plans/ralplan-opencode-v2-port.md`).
+The table records host-required changes to the OMC-derived workflows and roles, or to the v1 implementation they replaced (AGENTS.md policy). Those changes trace to the port's spec/plan (`.omc/specs/deep-interview-opencode-v2-port.md`, `.omc/plans/ralplan-opencode-v2-port.md`). The GJC-based main-agent prompt is a separate adaptation (see [third-party notices](THIRD-PARTY-NOTICES.md)).
 
 | Deviation | Detail |
 |---|---|
-| No slash commands | v1's `/deep-interview` and `/ralplan` are gone. Entry is only a skill mention or a plain-text keyword. |
+| No slash commands | v1's `/deep-interview` and `/ralplan` are gone. An explicit natural-language request or a supported skill mention/keyword enters the requested skill; heuristic suggestions require a user choice. |
 | Company context removed | The `companyContext` setting, the runtime-settings block entry, the deep-interview/ralplan step-0 instructions, and `tests/company-context-probe.ts` are gone entirely, not merely undocumented. |
 | `subagent_depth` is a host setting | v2's plugin API has no config-mutation domain, so the plugin cannot raise it as v1 did. Set `experimental.subagent_depth: 2` yourself; the planner falls back to direct research when refused. |
 | User config wins over role rules | Host `agents.<id>` permission rules apply after the plugin's and can loosen a role's default deny, unlike v1's rule-reordering trick. |
@@ -199,4 +199,4 @@ Every host-required change from the OMC contract, or from the v1 implementation 
 
 The verification layers this port defines are: `bun run typecheck` and `bun test` on `@opencode/plugin` 2.0.15; unit tests for the prompt hook, permission-rule generation, continuation, the artifact guard, and the state/code tools; host probes against a local OpenCode 2.0.15 binary (`tests/host-probe.ts`, `tests/host-session-probe.ts`, `tests/planner-permission-probe.ts`, `tests/package-probe.ts`); and a manual checklist with `openai/gpt-6-luna` covering the deep-interview → ralplan bridge, keyword entry, an Esc interrupt during ralplan, and planner delegation with and without `experimental.subagent_depth`. Their current pass/fail status is tracked by the port's plan and ledger, not asserted by this document.
 
-These layers are transport and source-contract checks, not proof of LLM obedience, prompt-branch guarantees, injection resistance, semantic model quality, external credentials, or installed language-server semantic correctness. LSP servers are never downloaded automatically. This guide records behavior and evidence scope; independent completion proof belongs in the durable delivery ledger.
+These layers are deterministic transport and source-contract checks using a fake provider where a host probe needs one; they are not actual-model behavior verification or proof of LLM obedience, prompt-branch guarantees, injection resistance, semantic model quality, external credentials, or installed language-server semantic correctness. Actual-model conversation checks for the GJC main prompt belong to the user, as specified in the GJC prompt plan's user-only checklist; they have not been performed here. LSP servers are never downloaded automatically. This guide records behavior and evidence scope; independent completion proof belongs in the durable delivery ledger.

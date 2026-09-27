@@ -20,16 +20,16 @@ open-gajae의 자체 작성 부분은 MIT, 외부 자료는 각 원본 라이선
 
 ## 개요
 
-세션에 묶인 `deep-interview`/`ralplan`/`ultragoal` skill, 여덟 개의 자체 역할, 작은 읽기 전용 코드 조사 도구를 제공하는 OpenCode 플러그인입니다. OMC v5.4.0의 일부 자료를 이식했지만 OMC 전체 이식은 아니며, 실행 워크플로는 OMC ralph를 이식한 `ultragoal` 하나뿐입니다.
+세션에 묶인 `deep-interview`/`ralplan`/`ultragoal` skill, 여덟 개의 자체 역할, 작은 읽기 전용 코드 조사 도구를 제공하는 OpenCode 플러그인입니다. 메인 에이전트 프롬프트는 GJC를 바탕으로 이식하며, skill과 역할 내부 계약은 OMC 기반을 유지합니다. OMC 전체 이식은 아니며, 실행 워크플로는 OMC ralph를 이식한 `ultragoal` 하나뿐입니다.
 
 ## 범위와 상태
 
-- 기준은 OMC v5.4.0 커밋 `5281b19e0d64f8e6dc6767f2130299a88af2dc71`입니다.
+- 메인 에이전트 프롬프트의 기준은 GJC 커밋 `07f59defbc691064a126d72e391e46ccd331f970`이며, OMC 기반 skill과 역할 내부 계약의 기준은 OMC v5.4.0 커밋 `5281b19e0d64f8e6dc6767f2130299a88af2dc71` 그대로입니다.
 - 대상 호스트는 OpenCode v2입니다. 이번 이식은 `@opencode/plugin` 2.0.15를 대상으로 하며, 로컬 `opencode/` 참조는 `v2.0.15`(`6f3639d82e`)에 고정되어 있습니다. v1 호스트는 더 이상 이 플러그인을 로드할 수 없습니다(v1 지원 중단 — deviations 표 참고).
 - 패키지는 빌드 단계가 없는 TS 소스입니다. `package.json`의 `exports["."]`는 `./src/index.ts`를 가리키고, 루트 `index.ts`가 이를 re-export합니다. `dist/`는 없습니다.
 - 구현 범위는 `deep-interview`·`ralplan`·`ultragoal`, `open-gajae`/`open-gajae-explore`/`open-gajae-document-specialist`, `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic` 합의 역할, `open-gajae-executor`/`open-gajae-cleaner` ultragoal 실행 역할, 세션 상태, native 문서 출력, 그리고 바로 호출 가능한 도구 12개(상태 도구 3개 + `ultragoal` 도구 1개 + 읽기 전용 AST/LSP 도구 8개)입니다. company context(v1의 advisory MCP hook)는 완전히 제거되었습니다.
-- `ralplan`은 제공하며 `pending approval` 상태의 plan에서 끝나고, 최종 승인 질문은 `Refine further`/`Execute via ultragoal`/`Stop here`를 제공합니다. `ultragoal`은 OMC ralph를 이식한 목표 기반 지속 실행 loop로, goal별 architect 검증·필수 읽기 전용 cleaner pass·최종 critic 리뷰를 제공합니다. deep-interview → ralplan → ultragoal 핸드오프 체인도 제공합니다. autopilot, team, 독립된 ralph skill, autoresearch, 공유 세션 상태, 자동 migration/recovery는 제공하지 않습니다. 슬래시 커맨드는 없으며 진입은 skill mention 또는 키워드입니다(아래 "진입" 참고).
-- 이 문서는 `feat/opencode-v2-port` 브랜치 커밋 `f4df6e6` 기준으로 구현된 v2 계약을 설명합니다. Phase 1 완료를 입증하지 않으며, 아래 검증 계층(typecheck, unit test, host probe)이 현재 통과하는지도 이 문서 자체가 주장하지 않습니다. 그 상태는 plan과 ledger에서 관리합니다.
+- `ralplan`은 제공하며 `pending approval` 상태의 plan에서 끝나고, 최종 승인 질문은 `Refine further`/`Execute via ultragoal`/`Stop here`를 제공합니다. `ultragoal`은 OMC ralph를 이식한 목표 기반 지속 실행 loop로, goal별 architect 검증·필수 읽기 전용 cleaner pass·최종 critic 리뷰를 제공합니다. deep-interview → ralplan → ultragoal 핸드오프 체인도 제공합니다. autopilot, team, 독립된 ralph skill, autoresearch, 공유 세션 상태, 자동 migration/recovery는 제공하지 않습니다. 슬래시 커맨드는 없으며 명시적인 자연어 요청이나 지원되는 mention·키워드로 skill에 진입할 수 있습니다(아래 "진입" 참고).
+- v2 호스트와 워크플로 설명은 `feat/opencode-v2-port` 브랜치 커밋 `f4df6e6`에서 비롯되었으며, 위 메인 에이전트 프롬프트 기준은 별도 변경입니다. Phase 1 완료를 입증하지 않으며, 아래 검증 계층(typecheck, unit test, host probe)이 이 변경에 대해 통과했다는 주장도 아닙니다. 검증 항목은 plan을 참고하세요.
 
 개발 정책은 [AGENTS.md](AGENTS.md), 출처는 [third-party notices](THIRD-PARTY-NOTICES.md)를 확인하세요.
 
@@ -62,10 +62,10 @@ bun test
 
 ## 진입
 
-이 이식에는 슬래시 커맨드가 없습니다. v1의 `/deep-interview`와 `/ralplan`은 사라졌습니다(기록된 deviation). skill 진입은 두 가지입니다.
+이 이식에는 슬래시 커맨드가 없습니다. v1의 `/deep-interview`와 `/ralplan`은 사라졌습니다(기록된 deviation). `deep-interview`, `ralplan`, `ultragoal`을 사용하라는 명시적 자연어 요청이나 지원되는 mention·호출 문맥의 키워드로 요청한 skill에 진입합니다.
 
 - **Mention**: `@deep-interview` 또는 `@ralplan`을 입력하고 TUI 자동완성에서 선택합니다. 선택하면 skill이 바로 붙습니다. 자동완성을 선택하지 않고 텍스트만 입력하면 skill이 붙지 않은 일반 텍스트로 전송됩니다 — 서버가 `@` mention을 자체적으로 파싱하지 않기 때문이며, 이 경우 아래 키워드 경로가 대신 감지합니다.
-- **키워드**: v1과 같은 OMC 기반 키워드 감지(영/한/일 표기, 질문·인용·코드 블록 제외, ralplan의 호출 문맥 요구)가 일반 텍스트에서 skill로 진입시키고 안내를 주입합니다.
+- **키워드**: v1과 같은 OMC 기반 키워드 감지(영/한/일 표기, 질문·인용·코드 블록 제외, ralplan의 호출 문맥 요구)가 일반 텍스트의 명시적 요청을 감지하고 안내를 주입합니다. 사용자가 요청하지 않은 heuristic 추천은 skill 또는 직접 진행을 제시하고 사용자의 선택을 따릅니다. `deep-interview`를 시작하지 않고도 일반적인 확인 질문을 할 수 있습니다. skill 시작 후에는 내부 질문·완료 선택·승인 절차가 그대로 적용됩니다.
 
 ## Deep interview와 저장소
 
@@ -168,11 +168,11 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
 
 ## OMC와 v1 플러그인으로부터의 deviation
 
-OMC 계약, 또는 이번에 대체되는 v1 구현으로부터 host 요구에 의해 바뀐 모든 항목을 여기에 기록합니다(AGENTS.md 정책). 어느 것도 임의로 결정하지 않았으며, 각 항목은 이식의 spec/plan(`.omc/specs/deep-interview-opencode-v2-port.md`, `.omc/plans/ralplan-opencode-v2-port.md`)의 결정으로 추적됩니다.
+아래 표는 OMC 기반 워크플로·역할 또는 그 이전 v1 구현에서 호스트 요구로 바뀐 항목을 기록합니다(AGENTS.md 정책). 이 항목들은 이식의 spec/plan(`.omc/specs/deep-interview-opencode-v2-port.md`, `.omc/plans/ralplan-opencode-v2-port.md`)의 결정으로 추적됩니다. GJC 기반 메인 에이전트 프롬프트는 별도 이식입니다([third-party notices](THIRD-PARTY-NOTICES.md) 참고).
 
 | Deviation | 내용 |
 |---|---|
-| 슬래시 커맨드 없음 | v1의 `/deep-interview`와 `/ralplan`이 사라졌습니다. 진입은 skill mention이나 일반 텍스트 키워드뿐입니다. |
+| 슬래시 커맨드 없음 | v1의 `/deep-interview`와 `/ralplan`이 사라졌습니다. 명시적 자연어 요청 또는 지원되는 skill mention·키워드로 요청한 skill에 진입하며, heuristic 추천은 사용자의 선택이 필요합니다. |
 | company context 제거 | `companyContext` 설정, runtime-settings block 항목, deep-interview/ralplan의 step-0 지시, `tests/company-context-probe.ts`가 문서화 누락이 아니라 완전히 사라졌습니다. |
 | `subagent_depth`는 host 설정 | v2 플러그인 API에는 config를 수정하는 domain이 없어 v1처럼 플러그인이 직접 올릴 수 없습니다. `experimental.subagent_depth: 2`를 직접 넣으세요. 값이 없으면 planner가 직접 조사로 fallback합니다. |
 | host 설정이 역할 rule보다 우선 | host `agents.<id>` permission rule이 플러그인 것보다 뒤에 적용되어, v1의 rule 재정렬 트릭과 달리 역할의 기본 deny를 완화할 수 있습니다. |
@@ -199,4 +199,4 @@ OMC 계약, 또는 이번에 대체되는 v1 구현으로부터 host 요구에 �
 
 이 이식이 정의하는 검증 계층은 `@opencode/plugin` 2.0.15에서의 `bun run typecheck`/`bun test`, prompt hook·permission rule 생성·continuation·artifact guard·state/code tool에 대한 unit test, 로컬 OpenCode 2.0.15 바이너리를 대상으로 한 host probe(`tests/host-probe.ts`, `tests/host-session-probe.ts`, `tests/planner-permission-probe.ts`, `tests/package-probe.ts`), 그리고 `openai/gpt-6-luna`로 deep-interview → ralplan bridge, 키워드 진입, ralplan 중 Esc interrupt, `experimental.subagent_depth` 유무에 따른 planner delegation을 다루는 manual checklist입니다. 이들의 현재 pass/fail 상태는 이식의 plan과 ledger가 관리하며 이 문서가 주장하지 않습니다.
 
-이 계층들은 transport와 source-contract 검사이지 LLM obedience, prompt branch 보장, injection resistance, model 의미적 품질, external credential, 설치된 language server의 의미적 정확성 증거가 아닙니다. LSP server는 자동 다운로드되지 않습니다. 이 가이드는 동작과 evidence scope를 기록하며 독립 completion proof는 durable delivery ledger에 둡니다.
+이 계층들은 호스트 probe에 필요할 때 가짜 provider를 쓰는 결정적 transport·source-contract 검사입니다. 실제 모델 행동 검증이나 LLM obedience, prompt branch 보장, injection resistance, model 의미적 품질, external credential, 설치된 language server의 의미적 정확성 증거는 아닙니다. GJC 메인 프롬프트의 실제 모델 대화 확인은 GJC 프롬프트 plan의 사용자 전용 체크리스트에 따라 사용자가 맡으며, 여기서는 수행하지 않았습니다. LSP server는 자동 다운로드되지 않습니다. 이 가이드는 동작과 evidence scope를 기록하며 독립 completion proof는 durable delivery ledger에 둡니다.

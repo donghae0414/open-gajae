@@ -10,6 +10,7 @@
 ## Development phases
 
 - Phase 1 follows OMC as its behavioral baseline. Adapt Claude Code-specific integration to OpenCode's native APIs, tools, permissions, and lifecycle without modifying the host.
+- Primary-prompt exception: use the pinned GJC system and project prompts as the source for `prompts/open-gajae.md` only, adapting host-dependent instructions to OpenCode. OMC remains the baseline for existing skills, subagent roles, and other Phase 1 contracts; this exception is not a full GJC port.
 - Record each host-required deviation from OMC, its reason, and its behavioral impact. Do not silently fill gaps with policy from other projects.
 - Before implementation alignment, define the Phase 1 feature scope, pin the OMC baseline commit, and specify completion checks. The current product contains deep-interview, ralplan, owned primary/explore roles, and the `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic` consensus roles; this does not imply a full OMC port or settle the Phase 1 scope.
 - Begin Phase 2 only after the agreed Phase 1 completion checks pass. Evaluate any future improvements individually against the completed OMC baseline; do not assume wholesale adoption of another project.
