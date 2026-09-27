@@ -131,9 +131,11 @@ continuation은 ralplan state가 active인 동안 durable `session.execution.suc
 
 역할 rule은 각 agent의 `permissions` 배열에 host 기본값 뒤에 추가되지만, **여러분의 host `agents.<id>` permission rule은 플러그인 것보다 뒤에 적용되어 우선합니다** — v1이 순서를 바꿔 mandatory deny를 지켰던 것과 달리, host override가 역할의 기본 deny를 완화할 수 있습니다(기록된 deviation: "user config wins"). 설정은 `~/.open-gajae/open-gajae.jsonc`와 `<worktree>/.open-gajae/open-gajae.jsonc`에서 읽습니다. field는 project → user → defaults 순으로 병합됩니다. 알 수 없는 key, 잘못된 JSONC, 잘못된 값은 진단과 함께 실패합니다.
 
+모호성 임계값의 기본값은 `0.1`(10%)입니다. 사용자 요청으로 명확성 기준을 강화한 것으로, 고정된 OMC 기준 버전의 기본값 `0.2`(20%)와 다릅니다. 이는 호스트 제약에 따른 차이가 아닌 제품 선택이며, 명시적인 설정값은 기본값보다 우선합니다.
+
 ```jsonc
 {
-  "deepInterview": { "ambiguityThreshold": 0.2, "maxRounds": 20 },
+  "deepInterview": { "ambiguityThreshold": 0.1, "maxRounds": 20 },
   "ultragoal": {
     // 0이면 무제한, 기본 200
     "hardMaxIterations": 200

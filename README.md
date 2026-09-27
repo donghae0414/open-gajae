@@ -131,9 +131,11 @@ The real handoff: on **Execute via ultragoal**, ralplan marks the plan `approved
 
 Role rules are pushed onto each agent's `permissions` array after the host's own defaults, but **host `agents.<id>` permission rules from your config apply after the plugin's and win** — unlike v1, which reordered rules to keep a mandatory denial in force, a host override can loosen a role's default deny (a recorded deviation: "user config wins"). Settings are read from `~/.open-gajae/open-gajae.jsonc` and `<worktree>/.open-gajae/open-gajae.jsonc`. Fields merge project → user → defaults; unknown keys, invalid JSONC, or invalid values fail with diagnostics.
 
+The default ambiguity threshold is `0.1` (10%). This user-requested stricter clarity gate differs from the pinned OMC default of `0.2` (20%); it is a product choice, not a host-required deviation. Explicit settings still override the default.
+
 ```jsonc
 {
-  "deepInterview": { "ambiguityThreshold": 0.2, "maxRounds": 20 },
+  "deepInterview": { "ambiguityThreshold": 0.1, "maxRounds": 20 },
   "ultragoal": {
     // 0 = unlimited, default 200
     "hardMaxIterations": 200

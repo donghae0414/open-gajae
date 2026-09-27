@@ -139,7 +139,7 @@ export async function loadSettings(
   }
   return {
     deepInterview: {
-      ambiguityThreshold: 0.2,
+      ambiguityThreshold: 0.1,
       maxRounds: 20,
       ...user.deepInterview,
       ...project.deepInterview,

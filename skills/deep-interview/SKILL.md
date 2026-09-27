@@ -55,7 +55,7 @@ Inspired by the [Ouroboros project](https://github.com/Q00/ouroboros) which demo
 Complete this phase before Phase 1, brownfield exploration, `state_write`, Round 0, and ambiguity scoring. Do not continue if the effective threshold and maximum are unknown.
 
 1. Read the resolved Open-gajae runtime settings supplied by the host prompt. The JSONC settings are already resolved field-by-field from project over user; do not read OMC, GJC, or session-specific configuration files.
-2. Use `deepInterview.ambiguityThreshold`, default `0.2`, and `deepInterview.maxRounds`, default `20`. Set `<resolvedThreshold>`, `<resolvedThresholdPercent>`, `<resolvedMaxRounds>`, and `<resolvedThresholdSource>` (`resolved open-gajae settings` or `default`).
+2. Use `deepInterview.ambiguityThreshold`, default `0.1`, and `deepInterview.maxRounds`, default `20`. Set `<resolvedThreshold>`, `<resolvedThresholdPercent>`, `<resolvedMaxRounds>`, and `<resolvedThresholdSource>` (`resolved open-gajae settings` or `default`).
 3. Emit this required first line before any other interview announcement:
 
 ```
@@ -643,7 +643,7 @@ Open-gajae resolves optional settings from `~/.open-gajae/open-gajae.jsonc` and 
 ```jsonc
 {
   "deepInterview": {
-    "ambiguityThreshold": 0.2,
+    "ambiguityThreshold": 0.1,
     "maxRounds": 20
   }
 }
