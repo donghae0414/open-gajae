@@ -280,7 +280,7 @@ test("the plugin's own continuation text is ignored when it re-enters", async ()
   });
 });
 
-test("the three role subagents are denied and everything else proceeds", async () => {
+test("the three role subagents are denied; no agent and the open-gajae primary proceed", async () => {
   await fixture(async (context) => {
     const { store } = context;
     for (const agent of [
@@ -296,16 +296,47 @@ test("the three role subagents are denied and everything else proceeds", async (
       expect(await noState(store, id)).toBe(true);
     }
 
-    // No agent on the session, and every other agent name, proceed.
+    // No agent on the session, and the open-gajae primary, proceed.
     const undefinedAgent = nextSession("undefined-agent");
     const written = await notices(context, undefinedAgent, "랄플랜 정리해줘");
     expect(written).toHaveLength(1);
     expect(written[0]).toContain("[MODE: RALPLAN]");
 
-    const otherAgent = nextSession("other-agent");
+    const primary = nextSession("primary-agent");
     expect(
-      await notices(context, otherAgent, "랄플랜 정리해줘", { agent: "build" }),
+      await notices(context, primary, "랄플랜 정리해줘", { agent: "open-gajae" }),
     ).toHaveLength(1);
+  });
+});
+
+test("other agents get no notice or seed but still lift the ultragoal pause (R-OD20)", async () => {
+  await fixture(async (context) => {
+    const { store } = context;
+    const id = nextSession("build-agent");
+    for (const text of ["랄플랜 정리해줘", "force: ultragoal add auth", "딥인터뷰 하고 싶어"])
+      expect(await notices(context, id, text, { agent: "build" })).toHaveLength(0);
+    expect(
+      await notices(context, id, "plan", { agent: "build", skills: ["ralplan", "ultragoal", "deep-interview"] }),
+    ).toHaveLength(0);
+    expect(await noState(store, id)).toBe(true);
+    expect(await ugState(store, id)).toBeUndefined();
+
+    const paused = nextSession("build-paused");
+    await ugSeed(store, paused, { paused_reason: "no_tool_progress", tool_less_turns: 3 });
+    expect(await notices(context, paused, "keep going", { agent: "build" })).toHaveLength(0);
+    expect(await ugState(store, paused)).toMatchObject({ tool_less_turns: 0 });
+    expect((await ugState(store, paused))?.paused_reason).toBeUndefined();
+
+    // A stale awaiting seed is still cleared; an @ultragoal mention runs no entry gate.
+    const stale = nextSession("build-stale");
+    await ugSeed(store, stale, { awaiting_confirmation: true });
+    await notices(context, stale, "hello", { agent: "build" });
+    expect(await ugState(store, stale)).toBeUndefined();
+    const planned = nextSession("build-final");
+    await plan(store, planned, { current_phase: "final" });
+    await notices(context, planned, "go", { agent: "build", skills: ["ultragoal"] });
+    expect(await store.read(planned, RALPLAN_MODE)).toMatchObject({ active: true, current_phase: "final" });
+    expect(await ugState(store, planned)).toBeUndefined();
   });
 });
 

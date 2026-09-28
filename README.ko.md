@@ -93,7 +93,7 @@ ambiguity 임계값에 도달해 spec을 저장한 뒤에는 인터뷰를 마칠
 
 `ralplan`은 GJC 고정 커밋의 ralplan skill과 런타임 계약을 바탕으로 다시 만든 합의 계획입니다. 구성은 `skills/ralplan/SKILL.md`, `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic` 프롬프트, 그리고 `src/ralplan-runtime/`의 `ralplan` 도구입니다. 계획만 하며, 사용자가 실행을 승인하기 전까지 plan은 `pending approval`로 남습니다. GJC와 다른 점은 모두 [GJC로부터의 deviation (ralplan)](#gjc로부터의-deviation-ralplan)에 기록되어 있습니다.
 
-`@ralplan [--interactive] [--deliberate] <task>` mention, 또는 `ralplan`/`랄플랜` 키워드가 합의 계획을 시작합니다. OMC와 같이 키워드는 호출 문맥에서만 발화합니다: 직접 호출 접두(`$ralplan`, `!ralplan`, `force: ralplan`), 활성화 동사(`use`, `run`, `start`, `please`, `let's`), 또는 메시지 맨 앞의 키워드. 질문, 인용·참조 언급, 코드·표·인용 블록 안의 텍스트는 발화하지 않습니다. 키워드는 모든 primary agent에서 동작하지만, agent가 `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic`인 메시지는 키워드 hook이 무시합니다. 한 메시지에 ralplan과 deep-interview 키워드가 함께 있으면 두 안내가 ralplan부터 순서대로 주입됩니다.
+`@ralplan [--interactive] [--deliberate] <task>` mention, 또는 `ralplan`/`랄플랜` 키워드가 합의 계획을 시작합니다. OMC와 같이 키워드는 호출 문맥에서만 발화합니다: 직접 호출 접두(`$ralplan`, `!ralplan`, `force: ralplan`), 활성화 동사(`use`, `run`, `start`, `please`, `let's`), 또는 메시지 맨 앞의 키워드. 질문, 인용·참조 언급, 코드·표·인용 블록 안의 텍스트는 발화하지 않습니다. 키워드와 mention 안내는 `open-gajae` primary, 또는 agent가 없는 세션만 받습니다. 호스트 `build`와 사용자 정의 agent는 `ralplan` 도구가 거부하므로 받지 않고(R-OD20), 소유 역할 subagent는 역할 지시문이 키워드를 인용할 수 있으므로 받지 않습니다. 한 메시지에 ralplan과 deep-interview 키워드가 함께 있으면 두 안내가 ralplan부터 순서대로 주입됩니다.
 
 키워드 턴은 `[MODE: RALPLAN]` 안내를 주입해 모델에게 `ralplan` skill을 열도록 요청합니다. `@ralplan` mention은 skill이 이미 붙었다는 자체 `[MODE: RALPLAN]` 안내를 넣어 삽입 사실이 보이게 합니다(TUI에 `open-gajae: ralplan mention notice added`가 표시됨). 어느 쪽도 ralplan state를 쓰지 않습니다 — 시딩, 확인 단계, 남은 seed 정리가 없습니다. run은 primary가 문서화된 진입인 `ralplan start`를 호출할 때 시작합니다(GJC의 `gjc ralplan "<task>"`).
 
@@ -252,6 +252,7 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
 | LSP surface가 도구 4개에서 7개로 확장 | `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`에 `lsp_goto_definition`, `lsp_hover`, `lsp_diagnostics`가 추가되었습니다. |
 | `@deep-interview` mention도 magic notice를 받음 | OMC parity입니다. v1은 명시적 호출에서 안내를 억제했습니다. |
 | `@ralplan` mention도 안내를 받음 | mention 안내는 skill이 이미 붙었음을 알립니다. 키워드 안내처럼 ralplan state를 쓰지 않으며, run은 `ralplan start`에서 시작합니다. OMC도 명시적 호출에 안내를 붙이며, 문구는 host 추가분입니다. 사용자가 모든 삽입을 볼 수 있도록 추가했습니다. |
+| 안내는 `open-gajae` primary에만 | 키워드·mention 안내(ralplan, deep-interview, ultragoal), ultragoal 키워드·mention seed, ultragoal 복원 안내를 호스트 `build`·`general`과 사용자 정의 agent를 포함한 다른 모든 agent에는 주지 않습니다. `ralplan`·`ultragoal`·state 도구가 그 agent들을 거부하기 때문입니다(R-OD20). OMC는 모든 agent에 주입합니다. 그런 프롬프트도 중단 표시와 ultragoal 일시정지는 풀고, 오래된 ultragoal seed도 정리합니다. agent가 없는 세션이나 agent 조회 실패는 계속 안내를 받습니다. |
 | ralplan restore 안내 제거 | OMC 유래 `[RALPLAN MODE RESTORED]` 안내, 그 prompt hook 분기, `restored_at` 기록을 삭제했습니다. seed가 `started_at`과 `restored_at`을 같게 기록해 정상 흐름에서는 발동하지 않았고, GJC에는 이런 안내가 없으며, 문맥 손실은 압축 복구(`<ralplan-compaction-context>`)가 담당합니다. 재개한 세션에 ralplan 안내는 없고, ultragoal restore banner는 유지됩니다. |
 | 설치 문서가 디렉터리 plugin 형태만 보여줌 | 일부 host 문서는 파일 경로 `plugins` 예시를 보여주지만, v2 host는 실제로는 파일 경로로 설정된 plugin 항목을 건너뜁니다. |
 

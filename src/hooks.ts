@@ -165,14 +165,18 @@ export type RalplanHooks = {
   onEvent(event: unknown): Promise<void>;
 };
 
+/** The primary this plugin drives; the only agent its workflow tools serve. */
+const PRIMARY_AGENT = "open-gajae";
+
 /**
  * G1's deny-list: the five owned role subagents from `src/config.ts`. A
  * `subagent` turn runs in a child session carrying the child's agent, and a
  * role's brief can quote a workflow keyword, so the prompt hook skips these
  * roles: no keyword or mention notices, and no ultragoal seed (the only state
  * this hook seeds; ralplan gets a notice only) in a session whose agent has
- * `state_clear` denied. Every other value — including `undefined` or a failed
- * lookup — proceeds.
+ * `state_clear` denied. Any other agent except `open-gajae` gets no notice or
+ * seed either (R-OD20) but still lifts the stop mark and the ultragoal pause;
+ * `undefined` or a failed lookup proceeds.
  */
 const ROLE_SUBAGENTS = new Set([
   "open-gajae-planner",
@@ -695,6 +699,13 @@ export function createHooks(
         ultragoalState = undefined;
       }
 
+      // R-OD20: notices and seeds go only to the primary this plugin drives;
+      // the ralplan, ultragoal and state tools refuse every other agent
+      // (DR-22), so a notice would lead it to a refusal. The stop mark, the
+      // pause and a stale seed are still handled above. A session without an
+      // agent, or a failed lookup, proceeds (G1).
+      if (typeof agent === "string" && agent !== PRIMARY_AGENT) return;
+
       const restored = await ultragoal.restore(sessionID, ultragoalState);
       if (restored) notices.push(restored);
 
@@ -834,7 +845,7 @@ export function createHooks(
       if (event.tool !== "skill" || !isRecord(event.input)) return;
       // v2 `skill` input is `{ id }` (core/src/tool/plugin/skill.ts:12-14).
       if (event.input.id === ULTRAGOAL_SKILL_NAME) {
-        if (event.agent !== "open-gajae") return;
+        if (event.agent !== PRIMARY_AGENT) return;
         // ③ The ultragoal entry gate (plan C-4) before the skill's confirm: a
         // refusal invalidates the input like every block here (a throw would
         // be swallowed and fail open); a finished ralplan is handed off and
