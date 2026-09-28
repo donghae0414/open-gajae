@@ -1,0 +1,43 @@
+{
+  "schema": "ralplan.review_conflicts.v1",
+  "plannerStageN": 1,
+  "findings": [
+    {
+      "findingId": "arch-1",
+      "targetId": "contract.field",
+      "action": "remove",
+      "severity": "block",
+      "evidence": "redundant with session identity",
+      "sourceRole": "architect",
+      "sourceReceipt": {
+        "stage": "architect",
+        "stageN": 1,
+        "path": "/fixture-root/.gjc/_session-disp/plans/ralplan/disp-run/stage-01-architect.md",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "findingId": "crit-1",
+      "targetId": "contract.field",
+      "action": "add",
+      "severity": "watch",
+      "evidence": "needed for multi-repo binding",
+      "sourceRole": "critic",
+      "sourceReceipt": {
+        "stage": "critic",
+        "stageN": 1,
+        "path": "/fixture-root/.gjc/_session-disp/plans/ralplan/disp-run/stage-01-critic.md",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    }
+  ],
+  "dispositions": [
+    {
+      "conflictId": "conflict:contract.field:arch-1:crit-1",
+      "choice": "accept_architect",
+      "rationale": "Field duplicates existing session identity.",
+      "decisionOwner": "ralplan-leader",
+      "affectedSections": ["## Contracts"]
+    }
+  ]
+}

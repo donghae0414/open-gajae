@@ -6,7 +6,7 @@
 //   3. Name the tarball as a package spec (`open-gajae@file:<tgz>`), so the
 //      host installs it with its own installer into the disposable cache.
 // Each case must load id `open-gajae` from the installed TS source and
-// register the eight agents and twelve tools. npm runs with a disposable HOME
+// register the eight agents and thirteen tools. npm runs with a disposable HOME
 // and cache; the install needs registry access for the dependencies.
 // Run: `bun ./tests/package-probe.ts`.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -33,7 +33,7 @@ async function loads(report: Report, host: Host, label: string, expectedEntry: (
   const agents = (await host.list("/api/agent")).map((a) => a.id ?? a.name).filter((id) => AGENTS.includes(id));
   report.check(`${label}: eight agents registered`, agents.length === 8, agents);
   const tools = host.provider.thread(label)[0]?.tools ?? [];
-  report.check(`${label}: twelve plugin tools offered`, OUR_TOOLS.every((t) => tools.includes(t)), tools);
+  report.check(`${label}: thirteen plugin tools offered`, OUR_TOOLS.every((t) => tools.includes(t)), tools);
 }
 
 await runProbe("open-gajae-package-probe", async (report, scratch) => {

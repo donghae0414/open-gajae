@@ -711,7 +711,12 @@ export function decideUltragoal(
 export function seedUltragoalState(
   existing: UltragoalStateSnapshot,
   now: string,
-  { awaiting, task }: { awaiting: boolean; task?: string },
+  {
+    awaiting,
+    task,
+    handoff_from,
+    handoff_at,
+  }: { awaiting: boolean; task?: string; handoff_from?: string; handoff_at?: string },
 ): (ExplicitStatePatch & Record<string, unknown>) | undefined {
   if (existing?.active === true) return undefined;
   const description = task ? oneLine(task).slice(0, LIMITS.text) : "";
@@ -725,6 +730,10 @@ export function seedUltragoalState(
     max_iterations: ULTRAGOAL_DEFAULT_MAX_ITERATIONS,
     tool_less_turns: 0,
     ...(description ? { task_description: description } : {}),
+    // Plan S2, C-1.3: carried through from a ralplan handoff so the seeded
+    // state records where it arrived from.
+    ...(handoff_from !== undefined ? { handoff_from } : {}),
+    ...(handoff_at !== undefined ? { handoff_at } : {}),
   };
 }
 

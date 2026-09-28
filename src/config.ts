@@ -300,6 +300,9 @@ export function roleRules(id: string, plannerPrefix: string): Rule[] {
       ),
       ...readonlyDenies,
       deny("ultragoal"),
+      // Plan S2: the executor doesn't drive ralplan (unlike the planner and
+      // the ultragoal reviewers, who keep it with no extra rule).
+      deny("ralplan"),
     ];
   if (id === "open-gajae-planner")
     return [
@@ -318,7 +321,14 @@ export function roleRules(id: string, plannerPrefix: string): Rule[] {
     ];
   // explore, document-specialist and the cleaner. The cleaner keeps `shell`
   // for read-only inspection; its prompt forbids changing files (decision 23).
-  return [deny("edit"), deny("subagent"), ...readonlyDenies, deny("ultragoal")];
+  // Plan S2: none of the three drive ralplan.
+  return [
+    deny("edit"),
+    deny("subagent"),
+    ...readonlyDenies,
+    deny("ultragoal"),
+    deny("ralplan"),
+  ];
 }
 
 export async function loadPrompts(

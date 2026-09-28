@@ -123,6 +123,8 @@ export type ExecuteAfterEvent = {
 export type RalplanHooks = {
   /** Fail-closed parent lookup, shared with the `ultragoal` tool (plan §2 A1″). */
   parentSession(sessionID: string): Promise<string | undefined>;
+  /** Fail-closed lineage root, shared with the `ralplan` tool (plan DR-1). */
+  rootSession(sessionID: string): Promise<string>;
   prompt(event: PromptEvent): Promise<void>;
   /** The `compaction` session hook: ultragoal context while it runs (plan §7). */
   compaction(event: CompactionEvent): Promise<void>;
@@ -825,6 +827,7 @@ export function createHooks(
 
   return {
     parentSession,
+    rootSession,
     prompt,
     compaction: ultragoal.compaction,
     executeBefore,

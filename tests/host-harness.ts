@@ -48,6 +48,7 @@ export const OUR_TOOLS = [
   "lsp_hover",
   "lsp_servers",
   "lsp_workspace_symbols",
+  "ralplan",
   "state_clear",
   "state_read",
   "state_write",

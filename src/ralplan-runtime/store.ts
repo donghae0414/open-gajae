@@ -1,0 +1,1689 @@
+// Ralplan record operations: the state envelope and its transition audit, the
+// stage files, the run ledger (`index.jsonl`) and `pending-approval.md`, the
+// active row `state/active/ralplan.json` and the snapshot
+// `state/skill-active-state.json`, with one `state/audit.jsonl` row per file
+// change (DR-18). Every `*Tx` function takes the `tx` of one
+// `StateStore.ralplanTransaction` and never calls a queued StateStore method
+// (plan C-1.1); the exported entry points wrap exactly one transaction each,
+// and the cross-skill ones run their transactions one after another, never
+// nested (C-1.2, C-1.3). The ultragoal entry gate reads before any
+// transaction (C-1.4).
+//
+// Source: gajae-code 5c5231418930673e42cc5d08ebe4376e03187533 (MIT),
+// `packages/coding-agent/src/`:
+// - `gjc-runtime/ralplan-runtime.ts:885-899` (`readActiveRunId`), `:971-1059`
+//   (`advanceCurrentPhase`, `persistActiveRunId`), `:1260-1374` (role and lane
+//   metadata apply, `recordRalplanPlanningStuck`), `:1437-1468`
+//   (`persistRalplanFinalAdmission`), `:1608-1674` (`persistArtifact`),
+//   `:1759-1873` (`findOnDiskStageArtifact`, `ensureFinalPendingApproval`,
+//   `repairMissingStageArtifactLedger`), `:1908-1931` (`syncRalplanHud`),
+//   `:2033-2261` (`handleArtifactWrite`, DR-2 order), `:2263-2310`
+//   (`buildDeduplicatedResult`), `:2382-2475` (`seedRalplanState`,
+//   `handleConsensusHandoff`)
+// - `gjc-runtime/state-runtime.ts:317-600` (doctor), `:826-839`
+//   (`mergeWithNullDelete`), `:973-999` (`syncWorkflowSkillState`),
+//   `:1156-1222` (`handleRead`), `:1235-1400` (`handleWrite`), `:1402-1490`
+//   (`handleClear`), `:1739-1763` (handoff caller state)
+// - `gjc-runtime/state-writer.ts:396-411` (`buildActiveSnapshot`), `:517-532`
+//   (`maybeAudit`), `:958-1067` (`readPersistedPhase`,
+//   `recordInvalidWorkflowTransition`, `writeWorkflowEnvelopeAtomic`),
+//   `:1234-1257` (`appendJsonlIdempotent`), `:1322-1413` (active entry write
+//   and removal, `rebuildActiveSnapshot`)
+// - `gjc-runtime/state-migrations.ts:62-127` (`migrateWorkflowState` v1→v2)
+// - `gjc-runtime/state-validation.ts` (`validateWorkflowStateEnvelope`)
+// - `gjc-runtime/state-renderer.ts:82-190` (`STATE_FIELD_ALLOWLIST`,
+//   `projectStateFields`)
+// - `skill-state/active-state.ts:65-83,914-952` (`SkillActiveEntry`,
+//   `syncSkillActiveState`), `:886-898` (stale entry replacement, gate ⑤)
+// - `skill-state/workflow-state-contract.ts:59-84` (state-write receipt on the
+//   active row)
+// Deviations (plan §7.1):
+// - 1: CLI verbs become tool ops; messages name tool inputs (`force`,
+//   `ralplan clear`) instead of `--force`/`gjc state …`.
+// - 12: the repository binding is recorded, never enforced.
+// - 13: doctor has no checksum or orphan-journal checks.
+// - 14: only the ralplan row is written; the snapshot is rebuilt from
+//   whatever rows exist, without gjc's planning-pipeline supersession.
+// - 17: no gjc envelope receipt, checksum or `state_revision`; the StateStore
+//   `_meta` stays. Rows and the snapshot carry no `source_state_revision` /
+//   `state_revision` and there is no stale-skip (R-OD6).
+// - 19: `clear` removes the active row (AC14).
+// - 21: audit `owner` is `open-gajae-runtime` / `open-gajae-hook`.
+// - 25: `ralplanHandoff` seeds ultragoal state (R-O2).
+// - 34: the handoff requires a phase in T (DR-7).
+// DR-8 (R-OD5, gjc as-is): after a write the row `phase` and the `stage` chip
+// are the stage just written; after start/state they are the resulting
+// `current_phase`. The HUD sync is best-effort like gjc's (`:1908-1931`,
+// `state-runtime.ts:973-999`); row removal on handoff and at the gate is not.
+
+import { randomUUID } from "node:crypto";
+import path from "node:path";
+import type { Settings } from "../config.js";
+import {
+  type InterviewState,
+  RALPLAN_MODE,
+  type RalplanTx,
+  type StateStore,
+  ULTRAGOAL_MODE,
+} from "../state.js";
+import { isUltragoalRunning } from "../ultragoal.js";
+import { seedUltragoal } from "../ultragoal-hooks.js";
+import { captureRepositoryBinding } from "./binding.js";
+import {
+  buildRalplanHud,
+  buildRalplanHudFromState,
+  normalizeWorkflowHudSummary,
+  type WorkflowHudSummary,
+} from "./hud.js";
+import {
+  buildDeduplicatedReceipt,
+  buildLaneBudgetStuckResult,
+  buildPlanningStuckResult,
+  buildWriteReceipt,
+  countRalplanOnDiskLaneArtifacts,
+  countRalplanOnDiskOpeners,
+  evaluateRalplanIterationCap,
+  evaluateRalplanReviewLaneBudget,
+  type ExistingStageArtifact,
+  findExistingStageArtifact,
+  findJsonlDuplicate,
+  type LaneVerdictUpdate,
+  laneVerdictStatePayload,
+  loadRalplanIndexForCap,
+  normalizeArtifactContent,
+  normalizeDispositionArtifact,
+  parseRalplanFinalAdmission,
+  PLANNING_STUCK_MARKER,
+  type PersistedRoleStateUpdate,
+  persistedRoleStatePayload,
+  RALPLAN_INDEX_FILE,
+  RALPLAN_PENDING_APPROVAL_FILE,
+  type RalplanAutoHandoffResolution,
+  type RalplanIndexLoad,
+  ralplanIndexKey,
+  ralplanPlanningStuckIndexEntry,
+  ralplanPlanningStuckIndexKey,
+  ralplanStageFileName,
+  ralplanStageIndexEntry,
+  readRalplanPlanningStuck,
+  resolveRalplanAutoHandoffTarget,
+  reviewBudgetWarning,
+  sha256Hex,
+  stageOverwriteRefusal,
+  unavailableRalplanFinalAdmission,
+} from "./ledger.js";
+import {
+  advanceCurrentPhase,
+  isKnownPhase,
+  isValidTransition,
+  RALPLAN_INITIAL_STATE,
+  RALPLAN_PHASE_LOCK,
+  RALPLAN_STATES,
+  RALPLAN_TRANSITIONS,
+  type RalplanStage,
+  TERMINAL_PHASES,
+} from "./manifest.js";
+
+/** Deviation 21: gjc `gjc-runtime` / `gjc-hook`. */
+export const RUNTIME_OWNER = "open-gajae-runtime" as const;
+export const HOOK_OWNER = "open-gajae-hook" as const;
+export type AuditOwner = typeof RUNTIME_OWNER | typeof HOOK_OWNER;
+
+export type RalplanSettings = Settings["ralplan"];
+
+/** gjc `WORKFLOW_STATE_VERSION`. */
+const WORKFLOW_STATE_VERSION = 2;
+/** gjc `WORKFLOW_STATE_RECEIPT_FRESH_MS`. */
+const RECEIPT_FRESH_MS = 30 * 60 * 1000;
+const SKILL = "ralplan";
+
+/** C-4 ③: ultragoal entry refused while ralplan planning runs (R-O5 label). */
+export const RALPLAN_RUNNING_REFUSAL =
+  'ralplan planning is running; finish it first: choose "Approve execution via ultragoal" at its approval step, or stop ralplan (`ralplan state` with {"active": false}) and try again.';
+
+type Json = Record<string, unknown>;
+
+function isRecord(value: unknown): value is Json {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function now(): string {
+  return new Date().toISOString();
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function trimmed(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/** A state copy without the StateStore `_meta` (regenerated on every write). */
+function payloadOf(state: InterviewState | Json | undefined): Json {
+  const { _meta, ...rest } = state ?? {};
+  return rest;
+}
+
+function isManifestState(phase: string): boolean {
+  return (RALPLAN_STATES as readonly string[]).includes(phase);
+}
+
+// ---------------------------------------------------------------------------
+// Audit rows and the state envelope
+// ---------------------------------------------------------------------------
+
+type AuditInput = {
+  category: "state" | "artifact" | "ledger";
+  verb: string;
+  owner: AuditOwner;
+  /** gjc sets it for mode-state, artifact and ledger rows, not active rows. */
+  skill?: string;
+  mutationId?: string;
+  fromPhase?: string;
+  toPhase?: string;
+  forced?: boolean;
+  path: string;
+};
+
+/**
+ * gjc `maybeAudit`: `{ts, skill, category, verb, owner, mutation_id,
+ * from_phase, to_phase, forced, paths}`; absent optional keys are omitted.
+ */
+async function appendAudit(tx: RalplanTx, row: AuditInput): Promise<void> {
+  await tx.appendLine(
+    tx.paths.auditPath,
+    JSON.stringify({
+      ts: now(),
+      skill: row.skill,
+      category: row.category,
+      verb: row.verb,
+      owner: row.owner,
+      mutation_id: row.mutationId ?? randomUUID(),
+      from_phase: row.fromPhase,
+      to_phase: row.toPhase,
+      forced: row.forced ?? false,
+      paths: [row.path],
+    }),
+  );
+}
+
+type StateWriteAudit = {
+  owner: AuditOwner;
+  verb?: string;
+  mutationId?: string;
+  fromPhase?: string;
+  toPhase?: string;
+  forced?: boolean;
+};
+
+/**
+ * gjc `writeWorkflowEnvelopeAtomic`: an unforced active write must name a
+ * manifest state, and an edge the table lacks (from the persisted active
+ * phase) leaves an `invalid_transition_detected` row but is written anyway
+ * (spec D-T11); then the state is replaced and audited.
+ */
+async function writeStateTx(
+  tx: RalplanTx,
+  prior: Json | undefined,
+  next: Json,
+  audit: StateWriteAudit,
+): Promise<Json> {
+  if (audit.forced !== true && next.active === true) {
+    const toPhase = trimmed(next.current_phase);
+    if (toPhase) {
+      if (!isManifestState(toPhase))
+        throw new Error(
+          `Refusing to write unknown ralplan phase "${toPhase}" to ${tx.paths.statePath}: not a known ralplan manifest state`,
+        );
+      const fromPhase =
+        audit.fromPhase?.trim() ||
+        (prior?.active === true ? trimmed(prior.current_phase) : undefined);
+      if (
+        fromPhase &&
+        fromPhase !== toPhase &&
+        isManifestState(fromPhase) &&
+        !isValidTransition(fromPhase, toPhase)
+      ) {
+        // Audit-only diagnostic, best-effort as in gjc.
+        const at = now();
+        await appendAudit(tx, {
+          category: "state",
+          verb: "invalid_transition_detected",
+          owner: audit.owner,
+          skill: SKILL,
+          mutationId: audit.mutationId ?? `${SKILL}:invalid-transition:${at}`,
+          fromPhase,
+          toPhase,
+          forced: false,
+          path: tx.paths.statePath,
+        }).catch(() => undefined);
+      }
+    }
+  }
+  await tx.writeState(
+    next,
+    audit.owner === HOOK_OWNER ? "ralplan_hook" : "ralplan_tool",
+  );
+  await appendAudit(tx, {
+    category: "state",
+    verb: audit.verb ?? "write",
+    owner: audit.owner,
+    skill: SKILL,
+    mutationId: audit.mutationId,
+    fromPhase: audit.fromPhase,
+    toPhase: audit.toPhase,
+    forced: audit.forced,
+    path: tx.paths.statePath,
+  });
+  return next;
+}
+
+/** gjc `readExistingStateForMutation` + corrupt refusal. */
+async function readStateForMutation(tx: RalplanTx): Promise<Json | undefined> {
+  try {
+    const state = await tx.readState();
+    return state === undefined ? undefined : payloadOf(state);
+  } catch (error) {
+    throw new Error(
+      `existing ralplan state is corrupt or tampered (${message(error)}); refusing to overwrite ${tx.paths.statePath}. Reset it with \`ralplan clear\` and force: true.`,
+      { cause: error },
+    );
+  }
+}
+
+/** gjc `migrateWorkflowState` (v1 → v2): version, skill and a manifest phase. */
+function migrateRalplanState(state: Json): Json {
+  const fromVersion = typeof state.version === "number" ? state.version : 1;
+  if (fromVersion >= WORKFLOW_STATE_VERSION) return state;
+  const source =
+    typeof state.current_phase === "string" ? state.current_phase : state.phase;
+  const raw = typeof source === "string" ? source.trim() : "";
+  const legacy = raw === "planning" ? RALPLAN_INITIAL_STATE : raw;
+  const phase = isManifestState(legacy) ? legacy : RALPLAN_INITIAL_STATE;
+  const migrated: Json = {
+    ...state,
+    version: WORKFLOW_STATE_VERSION,
+    skill: SKILL,
+    current_phase: phase,
+  };
+  if (typeof migrated.phase === "string") migrated.phase = phase;
+  return migrated;
+}
+
+/** gjc `validateWorkflowStateEnvelope` for ralplan; an error string or undefined. */
+function envelopeError(state: unknown): string | undefined {
+  if (!isRecord(state)) return "state for ralplan must be a JSON object";
+  if ("skill" in state && state.skill !== SKILL)
+    return "state skill must match selected mode ralplan";
+  if ("active" in state && typeof state.active !== "boolean")
+    return "state.active must be a boolean when present";
+  if ("current_phase" in state && typeof state.current_phase !== "string")
+    return "state.current_phase must be a string when present";
+  if ("version" in state && typeof state.version !== "number")
+    return "state.version must be a number when present";
+  if ("updated_at" in state && typeof state.updated_at !== "string")
+    return "state.updated_at must be a string when present";
+  if ("receipt" in state && state.receipt !== undefined && !isRecord(state.receipt))
+    return "state.receipt must be an object when present";
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Active row and snapshot
+// ---------------------------------------------------------------------------
+
+type ActiveRowInput = {
+  active: boolean;
+  phase?: string;
+  sessionId: string;
+  hud?: WorkflowHudSummary;
+  receipt?: Json;
+  handoff_from?: string;
+  handoff_to?: string;
+  handoff_at?: string;
+};
+
+/**
+ * gjc `syncSkillActiveState` for ralplan: an active entry is written, an
+ * inactive one removed (`persistActiveEntry`, `active-state.ts:849-866`), then
+ * the snapshot is rebuilt. `activated_at` is the sync time, as in gjc.
+ */
+async function syncActiveRowTx(
+  tx: RalplanTx,
+  input: ActiveRowInput,
+  owner: AuditOwner,
+): Promise<void> {
+  const rowPath = tx.paths.activeRowPath;
+  if (!input.active) {
+    if ((await tx.remove(rowPath)) === "deleted")
+      await appendAudit(tx, {
+        category: "state",
+        verb: "remove-active-entry",
+        owner,
+        path: rowPath,
+      });
+  } else {
+    const at = now();
+    const hud = normalizeWorkflowHudSummary(input.hud);
+    const entry = {
+      skill: SKILL,
+      phase: input.phase,
+      active: true,
+      activated_at: at,
+      updated_at: at,
+      session_id: input.sessionId,
+      ...(input.handoff_from ? { handoff_from: input.handoff_from } : {}),
+      ...(input.handoff_to ? { handoff_to: input.handoff_to } : {}),
+      ...(input.handoff_at ? { handoff_at: input.handoff_at } : {}),
+      ...(hud ? { hud } : {}),
+      ...(input.receipt ? { receipt: input.receipt } : {}),
+    };
+    await tx.writeText(rowPath, `${JSON.stringify(entry, null, 2)}\n`);
+    await appendAudit(tx, {
+      category: "state",
+      verb: "write-active-entry",
+      owner,
+      path: rowPath,
+    });
+  }
+  await rebuildSnapshotTx(tx, owner);
+}
+
+/** gjc `readActiveEntries` + `buildActiveSnapshot` + `rebuildActiveSnapshot`. */
+async function rebuildSnapshotTx(tx: RalplanTx, owner: AuditOwner): Promise<void> {
+  const dir = path.dirname(tx.paths.activeRowPath);
+  const entries: Json[] = [];
+  for (const name of await tx.list(dir)) {
+    if (!name.endsWith(".json")) continue;
+    const text = await tx.readText(path.join(dir, name));
+    if (text === undefined) continue;
+    const raw: unknown = JSON.parse(text);
+    if (!isRecord(raw) || !trimmed(raw.skill)) continue;
+    entries.push(raw);
+  }
+  const updatedAt = (entry: Json) => Date.parse(String(entry.updated_at ?? "")) || 0;
+  const visible = entries
+    .filter((entry) => entry.active !== false)
+    .sort((a, b) => updatedAt(b) - updatedAt(a));
+  const primary = visible[0];
+  const snapshot = {
+    version: 1,
+    active: visible.length > 0,
+    skill: primary?.skill ?? "",
+    phase: primary?.phase ?? "",
+    updated_at: primary?.updated_at ?? "",
+    session_id: primary?.session_id,
+    active_skills: entries,
+    active_subskills: [],
+  };
+  await tx.writeText(tx.paths.snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+  await appendAudit(tx, {
+    category: "state",
+    verb: "rebuild-active-snapshot",
+    owner,
+    path: tx.paths.snapshotPath,
+  });
+}
+
+/** gjc's HUD sync never changes the command's outcome. */
+async function bestEffort(run: () => Promise<void>): Promise<void> {
+  try {
+    await run();
+  } catch {
+    // HUD sync is best-effort and must not change command semantics.
+  }
+}
+
+/** gjc `buildWorkflowStateReceipt`, carried on the row after a `state` op. */
+function stateWriteReceipt(
+  tx: RalplanTx,
+  owner: AuditOwner,
+  at: string,
+  mutationId: string,
+): Json {
+  return {
+    version: 1,
+    skill: SKILL,
+    owner,
+    command: "ralplan state",
+    state_path: tx.paths.snapshotPath,
+    storage_path: tx.paths.statePath,
+    mutated_at: at,
+    fresh_until: new Date(Date.parse(at) + RECEIPT_FRESH_MS).toISOString(),
+    status: "fresh",
+    mutation_id: mutationId,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Ledger and artifacts
+// ---------------------------------------------------------------------------
+
+function indexPathOf(runDir: string): string {
+  return path.join(runDir, RALPLAN_INDEX_FILE);
+}
+
+/** gjc `loadRalplanIndexForCap`: an unreadable index is present but untrusted. */
+async function loadIndexTx(tx: RalplanTx, runDir: string): Promise<RalplanIndexLoad> {
+  let text: string | undefined;
+  try {
+    text = await tx.readText(indexPathOf(runDir));
+  } catch {
+    return loadRalplanIndexForCap(undefined, true);
+  }
+  return loadRalplanIndexForCap(text);
+}
+
+/** gjc `appendJsonlIdempotent`: append unless a row with the same key exists. */
+async function appendJsonlIdempotentTx(
+  tx: RalplanTx,
+  file: string,
+  entry: unknown,
+  key: (entry: unknown) => string | undefined,
+  owner: AuditOwner,
+): Promise<{ appended: boolean; duplicate?: unknown }> {
+  const duplicate = findJsonlDuplicate(await tx.readText(file), entry, key);
+  if (duplicate !== undefined) return { appended: false, duplicate };
+  await tx.appendLine(file, JSON.stringify(entry));
+  await appendAudit(tx, {
+    category: "ledger",
+    verb: "append",
+    owner,
+    skill: SKILL,
+    path: file,
+  });
+  return { appended: true };
+}
+
+async function writeArtifactTx(
+  tx: RalplanTx,
+  file: string,
+  content: string,
+  owner: AuditOwner,
+): Promise<void> {
+  await tx.writeText(file, content);
+  await appendAudit(tx, {
+    category: "artifact",
+    verb: "write",
+    owner,
+    skill: SKILL,
+    path: file,
+  });
+}
+
+/** gjc `persistArtifact`: stage file, ledger row, then the final's approval copy. */
+async function persistArtifactTx(
+  tx: RalplanTx,
+  runDir: string,
+  stage: RalplanStage,
+  stageN: number,
+  content: string,
+  sha256: string,
+  finalAdmission: RalplanAutoHandoffResolution | undefined,
+  owner: AuditOwner,
+): Promise<{ path: string; createdAt: string; pendingApprovalPath?: string }> {
+  const filePath = path.join(runDir, ralplanStageFileName(stage, stageN));
+  await writeArtifactTx(tx, filePath, content, owner);
+  const createdAt = now();
+  await appendJsonlIdempotentTx(
+    tx,
+    indexPathOf(runDir),
+    ralplanStageIndexEntry({
+      stage,
+      stageN,
+      path: filePath,
+      createdAt,
+      sha256,
+      autoHandoff: finalAdmission,
+    }),
+    ralplanIndexKey,
+    owner,
+  );
+  let pendingApprovalPath: string | undefined;
+  if (stage === "final") {
+    pendingApprovalPath = path.join(runDir, RALPLAN_PENDING_APPROVAL_FILE);
+    await writeArtifactTx(tx, pendingApprovalPath, content, owner);
+  }
+  return { path: filePath, createdAt, pendingApprovalPath };
+}
+
+/** gjc `ensureFinalPendingApproval`: a deduplicated final keeps its byte-identical copy. */
+async function ensureFinalPendingApprovalTx(
+  tx: RalplanTx,
+  runDir: string,
+  stageN: number,
+  artifact: { path: string; sha256: string },
+  owner: AuditOwner,
+): Promise<string> {
+  const pendingApprovalPath = path.join(runDir, RALPLAN_PENDING_APPROVAL_FILE);
+  const stageContent = await tx.readText(artifact.path);
+  if (stageContent === undefined)
+    throw new Error(
+      `refusing to deduplicate ralplan final stage ${stageN}: stage artifact missing at ${artifact.path}.`,
+    );
+  const stageSha256 = sha256Hex(stageContent);
+  if (stageSha256 !== artifact.sha256)
+    throw new Error(
+      `refusing to deduplicate ralplan final stage ${stageN}: stage artifact sha256 mismatch at ${artifact.path} (ledger sha256=${artifact.sha256}, artifact sha256=${stageSha256}).`,
+    );
+  const pending = await tx.readText(pendingApprovalPath);
+  if (pending === undefined) {
+    await writeArtifactTx(tx, pendingApprovalPath, stageContent, owner);
+    return pendingApprovalPath;
+  }
+  const pendingSha256 = sha256Hex(pending);
+  if (pending !== stageContent || pendingSha256 !== stageSha256)
+    throw new Error(
+      `refusing to deduplicate ralplan final stage ${stageN}: pending approval content mismatch at ${pendingApprovalPath} (stage sha256=${stageSha256}, pending sha256=${pendingSha256}).`,
+    );
+  return pendingApprovalPath;
+}
+
+/** gjc `repairMissingStageArtifactLedger`: the row a crash left unwritten. */
+async function repairLedgerTx(
+  tx: RalplanTx,
+  runDir: string,
+  stage: RalplanStage,
+  stageN: number,
+  onDisk: { path: string; sha256: string },
+  finalAdmission: RalplanAutoHandoffResolution | undefined,
+  owner: AuditOwner,
+): Promise<ExistingStageArtifact> {
+  const createdAt = now();
+  const result = await appendJsonlIdempotentTx(
+    tx,
+    indexPathOf(runDir),
+    ralplanStageIndexEntry({
+      stage,
+      stageN,
+      path: onDisk.path,
+      createdAt,
+      sha256: onDisk.sha256,
+      autoHandoff: finalAdmission,
+    }),
+    ralplanIndexKey,
+    owner,
+  );
+  const duplicate = result.duplicate;
+  if (
+    isRecord(duplicate) &&
+    typeof duplicate.path === "string" &&
+    typeof duplicate.sha256 === "string"
+  )
+    return {
+      path: duplicate.path,
+      sha256: duplicate.sha256,
+      createdAt:
+        typeof duplicate.created_at === "string" ? duplicate.created_at : createdAt,
+      ...(stage === "final"
+        ? {
+            autoHandoff:
+              parseRalplanFinalAdmission(duplicate.auto_handoff) ??
+              unavailableRalplanFinalAdmission(),
+          }
+        : {}),
+    };
+  return {
+    path: onDisk.path,
+    sha256: onDisk.sha256,
+    createdAt,
+    ...(stage === "final"
+      ? { autoHandoff: finalAdmission ?? unavailableRalplanFinalAdmission() }
+      : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// State updates on write (gjc `persistActiveRunId` and the metadata writers)
+// ---------------------------------------------------------------------------
+
+/** The state's `run_id`, checked as a path component (gjc `readActiveRunId`). */
+function activeRunId(tx: RalplanTx, state: Json | undefined): string | undefined {
+  const candidate = trimmed(state?.run_id);
+  if (!candidate) return undefined;
+  tx.paths.runDir(candidate);
+  return candidate;
+}
+
+/**
+ * gjc `persistActiveRunId` (DR-3): create or re-activate the state and move
+ * the phase to the stage just written, except a locked phase; a new run_id
+ * starts a fresh run and drops the previous verdict, stuck flag and final
+ * admission. Unchanged when the same run already sits on that phase and is
+ * active or locked (`:1014-1021`), so a write after Stop here or `clear`
+ * leaves the state inactive on `final` / `complete`, as in gjc.
+ */
+async function persistActiveRunIdTx(
+  tx: RalplanTx,
+  state: Json | undefined,
+  runId: string,
+  stage: RalplanStage,
+  owner: AuditOwner,
+): Promise<Json> {
+  let existing: Json = payloadOf(state);
+  const isNewRun = existing.run_id !== runId;
+  const nextPhase = isNewRun ? stage : advanceCurrentPhase(existing.current_phase, stage);
+  if (isNewRun) {
+    delete existing.verdict;
+    for (const key of Object.keys(existing))
+      if (key.startsWith("last_review_verdict")) delete existing[key];
+    delete existing.planning_stuck;
+    delete existing.auto_handoff;
+  }
+  if (
+    !isNewRun &&
+    existing.version === WORKFLOW_STATE_VERSION &&
+    existing.current_phase === nextPhase &&
+    (existing.active === true ||
+      (RALPLAN_PHASE_LOCK as readonly string[]).includes(nextPhase))
+  )
+    return existing;
+  existing.run_id = runId;
+  if (typeof existing.skill !== "string") existing.skill = SKILL;
+  existing.active = true;
+  existing.current_phase = nextPhase;
+  existing = migrateRalplanState(existing);
+  existing.updated_at = now();
+  return writeStateTx(tx, state, existing, { owner });
+}
+
+/** gjc `applyPersistedRoleStateUpdate` / `applyLaneVerdictUpdate` (shared body). */
+async function mergeRunStateTx(
+  tx: RalplanTx,
+  state: Json | undefined,
+  fields: Json,
+  expectedRunId: string | undefined,
+  owner: AuditOwner,
+): Promise<Json | undefined> {
+  let existing: Json = payloadOf(state);
+  if (expectedRunId !== undefined && existing.run_id !== expectedRunId) return undefined;
+  Object.assign(existing, fields);
+  if (typeof existing.skill !== "string") existing.skill = SKILL;
+  if (typeof existing.active !== "boolean") existing.active = true;
+  if (typeof existing.current_phase !== "string")
+    existing.current_phase = RALPLAN_INITIAL_STATE;
+  existing = migrateRalplanState(existing);
+  existing.updated_at = now();
+  return writeStateTx(tx, state, existing, { owner });
+}
+
+/** gjc `recordRalplanPlanningStuck`: one stuck row per run, then the state flag. */
+async function recordPlanningStuckTx(
+  tx: RalplanTx,
+  state: Json | undefined,
+  runDir: string,
+  runId: string,
+  reason: string,
+  owner: AuditOwner,
+): Promise<void> {
+  await appendJsonlIdempotentTx(
+    tx,
+    indexPathOf(runDir),
+    ralplanPlanningStuckIndexEntry(reason, now()),
+    ralplanPlanningStuckIndexKey,
+    owner,
+  );
+  if (state === undefined || state.run_id !== runId) return;
+  let next: Json = {
+    ...payloadOf(state),
+    planning_stuck: { marker: PLANNING_STUCK_MARKER, reason },
+  };
+  next = migrateRalplanState(next);
+  next.updated_at = now();
+  await writeStateTx(tx, state, next, { owner });
+}
+
+/** gjc `persistRalplanFinalAdmission`: only onto the same run. */
+async function persistFinalAdmissionTx(
+  tx: RalplanTx,
+  state: Json,
+  runId: string,
+  admission: RalplanAutoHandoffResolution,
+  owner: AuditOwner,
+): Promise<Json> {
+  if (state.run_id !== runId) return state;
+  let next: Json = { ...payloadOf(state), auto_handoff: admission };
+  next = migrateRalplanState(next);
+  next.updated_at = now();
+  return writeStateTx(tx, state, next, { owner });
+}
+
+// ---------------------------------------------------------------------------
+// write
+// ---------------------------------------------------------------------------
+
+export type StageWriteInput = {
+  /** The owner (lineage root) session: receipts and the default run_id. */
+  sessionId: string;
+  stage: RalplanStage;
+  stageN: number;
+  /** The explicit `run_id` input, if any. */
+  runId?: string;
+  artifact: string;
+  persistedRoleState?: PersistedRoleStateUpdate;
+  laneVerdict?: LaneVerdictUpdate;
+  settings: RalplanSettings;
+  projectDir: string;
+};
+
+export type StageWriteResult =
+  | { kind: "receipt"; payload: Record<string, unknown>; text: string }
+  | { kind: "stuck"; payload: Record<string, unknown>; detail: string };
+
+/**
+ * gjc `handleArtifactWrite` in its order (DR-2), minus the repository-binding
+ * enforcement (deviation 12). Ledger duplicates change nothing (DR-5, DR-20);
+ * a PLANNING-STUCK outcome is a result, not an error.
+ */
+export async function writeStageTx(
+  tx: RalplanTx,
+  input: StageWriteInput,
+  owner: AuditOwner = RUNTIME_OWNER,
+): Promise<StageWriteResult> {
+  const { stage, stageN, sessionId, settings } = input;
+  // Run id (`:1565-1570`): explicit → state `run_id` → owner session.
+  const state = await readStateForMutation(tx);
+  const runId = input.runId?.trim() || activeRunId(tx, state) || sessionId;
+  const runDir = tx.paths.runDir(runId);
+  // `enforceRalplanRepositoryBinding` without the enforcement: the state's
+  // binding, else a live capture for the receipt.
+  const repositoryBinding =
+    state?.repository_binding ?? (await captureRepositoryBinding(input.projectDir));
+
+  // One ledger snapshot for dedupe, both gates and disposition provenance (`:2075`).
+  const indexLoad = await loadIndexTx(tx, runDir);
+  const normalizedArtifact =
+    stage === "disposition"
+      ? normalizeDispositionArtifact(input.artifact, stageN, indexLoad.rawText)
+      : input.artifact;
+  const content = normalizeArtifactContent(normalizedArtifact);
+  const sha256 = sha256Hex(content);
+  const receiptBase = { sessionId, runId, stage, stageN, sha256, repositoryBinding };
+  const finalReceipt = async (pendingApprovalPath: string) =>
+    stage === "final"
+      ? {
+          pendingApprovalPath,
+          planningStuck: readRalplanPlanningStuck(await loadIndexTx(tx, runDir)),
+        }
+      : undefined;
+
+  // Ledger duplicate (`:2088-2101`): no state, row or file change.
+  const existing = findExistingStageArtifact(indexLoad.rawText, stage, stageN);
+  if (existing) {
+    if (existing.sha256 !== sha256)
+      throw new Error(
+        stageOverwriteRefusal({
+          stage,
+          stageN,
+          path: existing.path,
+          existingSha256: existing.sha256,
+          newSha256: sha256,
+        }),
+      );
+    const pending =
+      stage === "final"
+        ? await ensureFinalPendingApprovalTx(tx, runDir, stageN, existing, owner)
+        : "";
+    return {
+      kind: "receipt",
+      ...buildDeduplicatedReceipt({
+        ...receiptBase,
+        existing,
+        final: await finalReceipt(pending),
+      }),
+    };
+  }
+
+  // Crash-gap repair (`:2103-2135`): the stage file exists but its row does not.
+  const stagePath = path.join(runDir, ralplanStageFileName(stage, stageN));
+  const onDiskText = await tx.readText(stagePath);
+  if (onDiskText !== undefined) {
+    const onDisk = { path: stagePath, sha256: sha256Hex(onDiskText) };
+    if (onDisk.sha256 !== sha256)
+      throw new Error(
+        stageOverwriteRefusal({
+          stage,
+          stageN,
+          path: onDisk.path,
+          existingSha256: onDisk.sha256,
+          newSha256: sha256,
+        }),
+      );
+    const pending =
+      stage === "final"
+        ? await ensureFinalPendingApprovalTx(tx, runDir, stageN, onDisk, owner)
+        : "";
+    const repaired = await repairLedgerTx(
+      tx,
+      runDir,
+      stage,
+      stageN,
+      onDisk,
+      stage === "final" ? unavailableRalplanFinalAdmission() : undefined,
+      owner,
+    );
+    // Role metadata and the lane verdict ride the repair only onto the active run (DR-20).
+    let current = state;
+    let appliedRole: PersistedRoleStateUpdate | undefined;
+    if (input.persistedRoleState) {
+      const next = await mergeRunStateTx(
+        tx,
+        current,
+        persistedRoleStatePayload(input.persistedRoleState),
+        runId,
+        owner,
+      );
+      if (next) {
+        current = next;
+        appliedRole = input.persistedRoleState;
+      }
+    }
+    let appliedLane: LaneVerdictUpdate | undefined;
+    if (input.laneVerdict) {
+      const next = await mergeRunStateTx(
+        tx,
+        current,
+        laneVerdictStatePayload(input.laneVerdict),
+        runId,
+        owner,
+      );
+      if (next) appliedLane = input.laneVerdict;
+    }
+    return {
+      kind: "receipt",
+      ...buildDeduplicatedReceipt({
+        ...receiptBase,
+        existing: repaired,
+        laneVerdict: appliedLane,
+        persistedRoleState: appliedRole,
+        final: await finalReceipt(pending),
+      }),
+    };
+  }
+
+  // Opener cap, then the review-lane budget (DR-4), with on-disk floors.
+  const names = await tx.list(runDir);
+  const capDecision = evaluateRalplanIterationCap({
+    rows: indexLoad.rows,
+    stage,
+    maxIterations: settings.maxIterations,
+    iterationFloor: countRalplanOnDiskOpeners(names),
+  });
+  if (!capDecision.allowed) {
+    await recordPlanningStuckTx(tx, state, runDir, runId, capDecision.reason, owner);
+    return {
+      kind: "stuck",
+      ...buildPlanningStuckResult({
+        stage,
+        stageN,
+        runId,
+        decision: capDecision,
+        source: settings.source.maxIterations,
+      }),
+    };
+  }
+  const laneDecision = evaluateRalplanReviewLaneBudget({
+    rows: indexLoad.rows,
+    stage,
+    maxReviewPassesPerLane: settings.maxReviewPassesPerLane,
+    onDiskLaneCounts: countRalplanOnDiskLaneArtifacts(names),
+  });
+  if (!laneDecision.allowed) {
+    await recordPlanningStuckTx(tx, state, runDir, runId, laneDecision.reason, owner);
+    return {
+      kind: "stuck",
+      ...buildLaneBudgetStuckResult({
+        stage,
+        stageN,
+        runId,
+        decision: laneDecision,
+        source: settings.source.maxReviewPassesPerLane,
+      }),
+    };
+  }
+
+  // Final admission before any final write (`:2191-2203`).
+  const autoHandoff =
+    stage === "final"
+      ? resolveRalplanAutoHandoffTarget(
+          settings.autoHandoff,
+          settings.source.autoHandoff,
+          { planningStuck: readRalplanPlanningStuck(indexLoad) },
+        )
+      : undefined;
+  // State → file → ledger → pending-approval → role → verdict → admission.
+  let current = await persistActiveRunIdTx(tx, state, runId, stage, owner);
+  const persisted = await persistArtifactTx(
+    tx,
+    runDir,
+    stage,
+    stageN,
+    content,
+    sha256,
+    autoHandoff,
+    owner,
+  );
+  if (input.persistedRoleState)
+    current = (await mergeRunStateTx(
+      tx,
+      current,
+      persistedRoleStatePayload(input.persistedRoleState),
+      undefined,
+      owner,
+    ))!;
+  if (input.laneVerdict)
+    current = (await mergeRunStateTx(
+      tx,
+      current,
+      laneVerdictStatePayload(input.laneVerdict),
+      undefined,
+      owner,
+    ))!;
+  if (autoHandoff)
+    current = await persistFinalAdmissionTx(tx, current, runId, autoHandoff, owner);
+  // Active row (`:2217-2226`): the stage just written (DR-8).
+  await bestEffort(async () =>
+    syncActiveRowTx(
+      tx,
+      {
+        active: true,
+        phase: stage,
+        sessionId,
+        hud: buildRalplanHud({
+          stage,
+          pendingApproval: stage === "final",
+          iteration: stageN,
+          reviewPassBudget: settings.maxReviewPassesPerLane,
+          index: await loadIndexTx(tx, runDir),
+          lastReviewVerdict:
+            typeof current.last_review_verdict === "string"
+              ? current.last_review_verdict
+              : undefined,
+          latestSummary: `persisted ${stage} stage ${stageN}`,
+          updatedAt: now(),
+        }),
+      },
+      owner,
+    ),
+  );
+  return {
+    kind: "receipt",
+    ...buildWriteReceipt({
+      ...receiptBase,
+      path: persisted.path,
+      createdAt: persisted.createdAt,
+      pendingApprovalPath: persisted.pendingApprovalPath,
+      persistedRoleState: input.persistedRoleState,
+      reviewBudgetWarning: reviewBudgetWarning(laneDecision),
+      laneVerdict: input.laneVerdict,
+      autoHandoff,
+    }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// start
+// ---------------------------------------------------------------------------
+
+export type StartRunInput = {
+  task: string;
+  interactive?: boolean;
+  deliberate?: boolean;
+  run_id?: string;
+  /** Internal callers only (R-O1): the skill this run was handed off from. */
+  handoff_from?: string;
+  handoff_at?: string;
+};
+
+export type StartRunSummary = {
+  session_id: string;
+  skill: "ralplan";
+  mode: "short" | "deliberate";
+  state_path: string;
+  run_id: string;
+  handoff: string;
+  repository_binding: unknown;
+};
+
+/**
+ * gjc `seedRalplanState` + `handleConsensusHandoff`: a whole new state on
+ * `planner`, the run id per DR-19, the binding of the same run or a fresh
+ * capture, and the active row.
+ */
+async function startRunTx(
+  tx: RalplanTx,
+  sessionId: string,
+  input: StartRunInput,
+  projectDir: string,
+  owner: AuditOwner,
+): Promise<StartRunSummary> {
+  const state = await readStateForMutation(tx);
+  const existingRunId = activeRunId(tx, state);
+  // DR-19 (deviation 31): explicit → state `run_id` → owner session.
+  const runId = input.run_id?.trim() || existingRunId || sessionId;
+  const runDir = tx.paths.runDir(runId);
+  const repositoryBinding =
+    runId === existingRunId && state?.repository_binding !== undefined
+      ? state.repository_binding
+      : await captureRepositoryBinding(projectDir);
+  const mode = input.deliberate === true ? "deliberate" : "short";
+  const interactive = input.interactive === true;
+  const at = now();
+  const handoff =
+    input.handoff_from !== undefined
+      ? { handoff_from: input.handoff_from, handoff_at: input.handoff_at ?? at }
+      : {};
+  await writeStateTx(
+    tx,
+    state,
+    {
+      active: true,
+      current_phase: RALPLAN_INITIAL_STATE,
+      skill: SKILL,
+      version: WORKFLOW_STATE_VERSION,
+      mode,
+      interactive,
+      task: input.task,
+      run_id: runId,
+      updated_at: at,
+      repository_binding: repositoryBinding,
+      session_id: sessionId,
+      ...handoff,
+    },
+    { owner },
+  );
+  await bestEffort(async () =>
+    syncActiveRowTx(
+      tx,
+      {
+        active: true,
+        phase: RALPLAN_INITIAL_STATE,
+        sessionId,
+        hud: buildRalplanHud({
+          stage: RALPLAN_INITIAL_STATE,
+          pendingApproval: false,
+          iteration: 1,
+          index: await loadIndexTx(tx, runDir),
+          latestSummary: `${mode} run · ${interactive ? "interactive" : "automated"}`,
+          updatedAt: at,
+        }),
+        ...handoff,
+      },
+      owner,
+    ),
+  );
+  return {
+    session_id: sessionId,
+    skill: SKILL,
+    mode,
+    state_path: tx.paths.statePath,
+    run_id: runId,
+    // gjc `/skill:ralplan`, as the host's skill id.
+    handoff: SKILL,
+    repository_binding: repositoryBinding,
+  };
+}
+
+/**
+ * `ralplan start`, and the R-O1 entry (`handoff_from: "ultragoal"`). The
+ * caller checks a running ultragoal before this (C-1.2).
+ */
+export async function startRun(
+  store: StateStore,
+  sessionId: string,
+  input: StartRunInput,
+  deps: { projectDir: string },
+  owner: AuditOwner = RUNTIME_OWNER,
+): Promise<StartRunSummary> {
+  if (typeof input.task !== "string" || !input.task.trim())
+    throw new Error('ralplan start requires a task description, e.g. task: "<task>".');
+  return store.ralplanTransaction(sessionId, (tx) =>
+    startRunTx(tx, sessionId, input, deps.projectDir, owner),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// state, clear, status, doctor
+// ---------------------------------------------------------------------------
+
+/**
+ * gjc `gjc state ralplan write`: a merge patch (`null` deletes), a phase
+ * change checked against the table (AC12), the row refreshed from the
+ * resulting state. `{active: false}` is Stop here.
+ */
+export async function patchStateTx(
+  tx: RalplanTx,
+  sessionId: string,
+  patch: Record<string, unknown>,
+  owner: AuditOwner = RUNTIME_OWNER,
+): Promise<Json> {
+  let existing: Json;
+  try {
+    existing = payloadOf(await tx.readState());
+  } catch (error) {
+    throw new Error(
+      `existing state for ralplan is corrupt or tampered (${message(error)}); reset it with \`ralplan clear\` and force: true`,
+      { cause: error },
+    );
+  }
+  const at = now();
+  const mutationId = `${SKILL}:${at}`;
+  const { _meta, ...payload } = patch;
+  const incomingPhase = trimmed(payload.current_phase) ?? trimmed(payload.phase);
+  const merged: Json = { ...existing };
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === null) delete merged[key];
+    else merged[key] = value;
+  }
+  const preError = envelopeError(merged);
+  if (preError) throw new Error(preError);
+  merged.skill = SKILL;
+  if (incomingPhase) merged.current_phase = incomingPhase;
+  else if (!trimmed(merged.current_phase))
+    merged.current_phase = trimmed(existing.current_phase) ?? RALPLAN_INITIAL_STATE;
+  else merged.current_phase = (merged.current_phase as string).trim();
+  merged.version = WORKFLOW_STATE_VERSION;
+  if (typeof merged.active !== "boolean") merged.active = true;
+  merged.updated_at = at;
+  if (typeof merged.session_id !== "string") merged.session_id = sessionId;
+  const fromPhase = trimmed(existing.current_phase);
+  const toPhase = merged.current_phase as string;
+  if (!isManifestState(toPhase))
+    throw new Error(`unknown ralplan phase "${toPhase}"`);
+  if (
+    fromPhase &&
+    isManifestState(fromPhase) &&
+    !isValidTransition(fromPhase, toPhase)
+  )
+    throw new Error(`invalid ralplan phase transition from ${fromPhase} to ${toPhase}`);
+  const postError = envelopeError(merged);
+  if (postError) throw new Error(postError);
+  await writeStateTx(tx, existing, merged, {
+    owner,
+    verb: "write",
+    mutationId,
+    fromPhase,
+    toPhase,
+  });
+  const active = merged.active !== false;
+  await bestEffort(() =>
+    syncActiveRowTx(
+      tx,
+      {
+        active,
+        phase: toPhase,
+        sessionId,
+        hud: buildRalplanHudFromState(merged, at),
+        receipt: stateWriteReceipt(tx, owner, at, mutationId),
+      },
+      owner,
+    ),
+  );
+  return {
+    ok: true,
+    skill: SKILL,
+    state_path: tx.paths.statePath,
+    current_phase: toPhase,
+    active,
+    mutation_id: mutationId,
+  };
+}
+
+/**
+ * gjc `gjc state ralplan clear` (DR-6): `{active: false, current_phase:
+ * "complete"}` over the kept fields (run_id stays), files kept; a corrupt
+ * state needs `force`. The row is removed (deviation 19).
+ */
+export async function clearStateTx(
+  tx: RalplanTx,
+  sessionId: string,
+  force: boolean,
+  owner: AuditOwner = RUNTIME_OWNER,
+): Promise<Json> {
+  let existing: Json = {};
+  try {
+    existing = payloadOf(await tx.readState());
+  } catch (error) {
+    if (!force)
+      throw new Error(
+        `existing state for ralplan is corrupt or tampered (${message(error)}); use force: true to overwrite`,
+        { cause: error },
+      );
+  }
+  const at = now();
+  const mutationId = `${SKILL}:clear:${at}`;
+  const cleared: Json = {
+    skill: SKILL,
+    ...existing,
+    active: false,
+    current_phase: "complete",
+    updated_at: at,
+    version: WORKFLOW_STATE_VERSION,
+  };
+  cleared.skill = SKILL;
+  await writeStateTx(tx, existing, cleared, {
+    owner,
+    verb: "clear",
+    mutationId,
+    fromPhase: trimmed(existing.current_phase),
+    toPhase: "complete",
+    forced: force,
+  });
+  await bestEffort(() => syncActiveRowTx(tx, { active: false, sessionId }, owner));
+  return {
+    ok: true,
+    skill: SKILL,
+    state_path: tx.paths.statePath,
+    active: false,
+    current_phase: "complete",
+    mutation_id: mutationId,
+  };
+}
+
+/** gjc `STATE_FIELD_ALLOWLIST` (`state-renderer.ts:82-102`). */
+export const STATE_FIELD_ALLOWLIST = [
+  "skill",
+  "phase",
+  "current_phase",
+  "next",
+  "active",
+  "status",
+  "fresh",
+  "fresh_until",
+  "receipt",
+  "artifact_path",
+  "plan_path",
+  "spec_path",
+  "run_id",
+  "stage",
+  "stage_n",
+  "session_id",
+  "updated_at",
+  "handoff_to",
+  "handoff_from",
+  "counts",
+  "hud",
+] as const;
+export type StateProjectionField = (typeof STATE_FIELD_ALLOWLIST)[number];
+
+function scalar(value: unknown): string | undefined {
+  if (typeof value === "string") return value.trim() || undefined;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return undefined;
+}
+
+/** gjc `projectStateFields` for ralplan. */
+function projectStateFields(
+  state: Json,
+  fields: readonly StateProjectionField[],
+): Json {
+  const phase =
+    scalar(state.current_phase) ?? scalar(state.phase) ?? RALPLAN_INITIAL_STATE;
+  const receipt = isRecord(state.receipt) ? state.receipt : undefined;
+  const freshUntil = receipt ? scalar(receipt.fresh_until) : undefined;
+  const projected: Json = {};
+  for (const field of fields) {
+    switch (field) {
+      case "skill":
+        projected.skill = SKILL;
+        break;
+      case "phase":
+      case "current_phase":
+        projected[field] = phase;
+        break;
+      case "next":
+        projected.next = RALPLAN_TRANSITIONS.filter((t) => t.from === phase).map(
+          (t) => t.to,
+        );
+        break;
+      case "fresh":
+        projected.fresh = freshUntil ? Date.parse(freshUntil) > Date.now() : false;
+        break;
+      case "fresh_until":
+        projected.fresh_until = freshUntil;
+        break;
+      case "receipt":
+        projected.receipt = receipt;
+        break;
+      default:
+        projected[field] = state[field];
+    }
+  }
+  return projected;
+}
+
+/**
+ * gjc `gjc state read ralplan` (OQ4): `{skill, state, storage_path}`, or the
+ * projection of `fields`. An unreadable state reads as `{}` with a warning.
+ */
+export async function readStatusTx(
+  tx: RalplanTx,
+  fields?: readonly StateProjectionField[],
+): Promise<{ result: Json; warning?: string }> {
+  let state: Json = {};
+  let warning: string | undefined;
+  try {
+    state = (await tx.readState()) ?? {};
+  } catch (error) {
+    warning = `WARNING: failed to read ${tx.paths.statePath}; ignoring corrupt state: ${message(error)}`;
+  }
+  const envelope = { skill: SKILL, state, storage_path: tx.paths.statePath };
+  return {
+    result: fields ? projectStateFields(state, fields) : envelope,
+    ...(warning ? { warning } : {}),
+  };
+}
+
+type DoctorProblemType = "schema_violation" | "stale_active_state";
+
+type DoctorProblem = {
+  type: DoctorProblemType;
+  skill: "ralplan";
+  path: string;
+  message: string;
+  fixCommand: string;
+};
+
+export type DoctorSummary = {
+  ok: boolean;
+  root: string;
+  summary: {
+    skills_scanned: number;
+    files_scanned: number;
+    findings_total: number;
+    by_kind: Record<DoctorProblemType, number>;
+  };
+  problems: DoctorProblem[];
+};
+
+async function readRawJsonTx(
+  tx: RalplanTx,
+  file: string,
+): Promise<{ exists: boolean; value?: unknown; error?: string }> {
+  try {
+    const text = await tx.readText(file);
+    if (text === undefined) return { exists: false };
+    return { exists: true, value: JSON.parse(text) };
+  } catch (error) {
+    return { exists: true, error: message(error) };
+  }
+}
+
+function activeFlag(value: unknown): boolean {
+  return isRecord(value) && value.active !== false;
+}
+
+function rowPhase(value: unknown): string | undefined {
+  return isRecord(value) ? trimmed(value.phase) : undefined;
+}
+
+/** gjc `modeStatePhase`: an inactive state's phase counts only when locked. */
+function modeStatePhase(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const phase = trimmed(value.current_phase);
+  if (!phase) return undefined;
+  if (
+    value.active === false &&
+    !(RALPLAN_PHASE_LOCK as readonly string[]).includes(phase)
+  )
+    return undefined;
+  return phase;
+}
+
+/**
+ * gjc `collectDoctorSummary` for ralplan (D-T13): `schema_violation` for an
+ * unreadable or invalid envelope or an unknown phase (DR-21), and
+ * `stale_active_state` for a row or snapshot entry that is active without a
+ * live active state, has no row behind it, or names another phase. Reports
+ * only; nothing is fixed.
+ */
+export async function doctorTx(tx: RalplanTx): Promise<DoctorSummary> {
+  const problems: DoctorProblem[] = [];
+  const problem = (
+    type: DoctorProblemType,
+    file: string,
+    text: string,
+  ): DoctorProblem => ({
+    type,
+    skill: SKILL,
+    path: file,
+    message: text,
+    // gjc `gjc state ralplan migrate` / `clear` (deviation 1, no migrate op).
+    fixCommand: type === "schema_violation" ? "ralplan clear (force: true)" : "ralplan clear",
+  });
+  let filesScanned = 0;
+  let invalidState = false;
+
+  const statePath = tx.paths.statePath;
+  const state = await readRawJsonTx(tx, statePath);
+  if (state.exists) {
+    filesScanned += 1;
+    if (state.error) {
+      problems.push(
+        problem("schema_violation", statePath, `mode-state JSON is unreadable: ${state.error}`),
+      );
+      invalidState = true;
+    } else {
+      const error = envelopeError(state.value);
+      const phase = isRecord(state.value) ? state.value.current_phase : undefined;
+      if (error) problems.push(problem("schema_violation", statePath, error));
+      else if (typeof phase === "string" && !isKnownPhase(phase))
+        problems.push(
+          problem("schema_violation", statePath, `unknown ralplan phase "${phase}"`),
+        );
+      invalidState = problems.length > 0;
+    }
+  }
+
+  const drift = (file: string, kind: string, entry: unknown) => {
+    const entryPhase = rowPhase(entry);
+    const statePhase = modeStatePhase(state.value);
+    if (!entryPhase || !statePhase || entryPhase === statePhase) return;
+    problems.push(
+      problem(
+        "stale_active_state",
+        file,
+        `${kind} for ralplan phase ${entryPhase} differs from canonical mode-state phase ${statePhase}`,
+      ),
+    );
+  };
+
+  const activeDir = path.dirname(tx.paths.activeRowPath);
+  const rowSkills = new Set<string>();
+  for (const name of (await tx.list(activeDir)).filter((n) => n.endsWith(".json"))) {
+    filesScanned += 1;
+    const file = path.join(activeDir, name);
+    const entry = await readRawJsonTx(tx, file);
+    const skill =
+      (isRecord(entry.value) && typeof entry.value.skill === "string"
+        ? entry.value.skill
+        : undefined) ?? path.basename(name, ".json");
+    rowSkills.add(skill);
+    // Deviation 14: rows of other skills are not checked.
+    if (skill !== SKILL) continue;
+    if (activeFlag(entry.value) && (!state.exists || !activeFlag(state.value)))
+      problems.push(
+        problem(
+          "stale_active_state",
+          file,
+          "active entry for ralplan does not match a live active mode-state",
+        ),
+      );
+    if (activeFlag(entry.value) && !invalidState) drift(file, "active entry", entry.value);
+  }
+
+  const snapshotPath = tx.paths.snapshotPath;
+  const snapshot = await readRawJsonTx(tx, snapshotPath);
+  if (snapshot.exists) filesScanned += 1;
+  if (isRecord(snapshot.value) && Array.isArray(snapshot.value.active_skills)) {
+    for (const entry of snapshot.value.active_skills as unknown[]) {
+      if (!isRecord(entry) || entry.skill !== SKILL) continue;
+      if (activeFlag(entry) && !rowSkills.has(SKILL))
+        problems.push(
+          problem(
+            "stale_active_state",
+            snapshotPath,
+            "active snapshot lists ralplan but no raw per-skill active entry exists",
+          ),
+        );
+      if (activeFlag(entry) && !invalidState) drift(snapshotPath, "active snapshot", entry);
+    }
+  }
+
+  problems.sort((a, b) => a.type.localeCompare(b.type) || a.path.localeCompare(b.path));
+  const byKind: Record<DoctorProblemType, number> = {
+    schema_violation: 0,
+    stale_active_state: 0,
+  };
+  for (const found of problems) byKind[found.type] += 1;
+  return {
+    ok: problems.length === 0,
+    root: path.dirname(statePath),
+    summary: {
+      skills_scanned: 1,
+      files_scanned: filesScanned,
+      findings_total: problems.length,
+      by_kind: byKind,
+    },
+    problems,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Cross-skill handoff and the ultragoal entry gate (C-1.3, C-4)
+// ---------------------------------------------------------------------------
+
+export type RalplanHandoffMeta = {
+  handoff_from: "ralplan";
+  handoff_at: string;
+  /** The run's `pending-approval.md`, when it exists (the approved plan). */
+  pending_approval_path?: string;
+};
+
+/**
+ * The ralplan side of a handoff to ultragoal, in one transaction: the phase
+ * must be in T (DR-7, deviation 34), then the gjc caller state `{active:
+ * false, current_phase: "handoff", handoff_to, handoff_at}` over the kept
+ * fields, the row removed and the snapshot rebuilt.
+ */
+export async function demoteRalplanForUltragoalEntry(
+  store: StateStore,
+  sessionId: string,
+  owner: AuditOwner = RUNTIME_OWNER,
+): Promise<RalplanHandoffMeta> {
+  return store.ralplanTransaction(sessionId, async (tx) => {
+    const state = await readStateForMutation(tx);
+    if (state === undefined)
+      throw new Error("there is no ralplan state in this session to hand off");
+    const phase = trimmed(state.current_phase) ?? "";
+    if (!TERMINAL_PHASES.has(phase))
+      throw new Error(
+        `ralplan can hand off to ultragoal only from a finished phase (${[...TERMINAL_PHASES].join(", ")}); the current phase is ${phase || "(none)"}. Record the final plan first.`,
+      );
+    const at = now();
+    await writeStateTx(
+      tx,
+      state,
+      {
+        ...state,
+        skill: SKILL,
+        version: WORKFLOW_STATE_VERSION,
+        active: false,
+        current_phase: "handoff",
+        handoff_to: "ultragoal",
+        handoff_at: at,
+        updated_at: at,
+      },
+      {
+        owner,
+        verb: "handoff",
+        mutationId: `${SKILL}:handoff:${at}`,
+        fromPhase: phase,
+        toPhase: "handoff",
+      },
+    );
+    await syncActiveRowTx(tx, { active: false, sessionId }, owner);
+    const runId = activeRunId(tx, state);
+    const runDir = runId ? tx.paths.runDir(runId) : undefined;
+    const pending =
+      runDir && (await tx.list(runDir)).includes(RALPLAN_PENDING_APPROVAL_FILE)
+        ? path.join(runDir, RALPLAN_PENDING_APPROVAL_FILE)
+        : undefined;
+    return {
+      handoff_from: "ralplan",
+      handoff_at: at,
+      ...(pending ? { pending_approval_path: pending } : {}),
+    };
+  });
+}
+
+/**
+ * `ralplan handoff {to: "ultragoal"}` (R-O2): demote ralplan, and only after
+ * that transaction seed ultragoal confirmed with the handoff meta. If the
+ * seed fails, ralplan stays in `handoff` and the error says how to continue
+ * (R-19).
+ */
+export async function ralplanHandoff(
+  store: StateStore,
+  sessionId: string,
+  owner: AuditOwner = RUNTIME_OWNER,
+): Promise<string> {
+  const meta = await demoteRalplanForUltragoalEntry(store, sessionId, owner);
+  const plan = meta.pending_approval_path
+    ? ` with source_plan ${meta.pending_approval_path}`
+    : "";
+  try {
+    await seedUltragoal(store, sessionId, {
+      awaiting: false,
+      handoff_from: meta.handoff_from,
+      handoff_at: meta.handoff_at,
+    });
+  } catch (error) {
+    throw new Error(
+      `ralplan was handed off (inactive, phase handoff) but ultragoal could not be activated: ${message(error)}. Call \`ultragoal start\` with a reason to start it, then \`ultragoal create\` the goals${plan}.`,
+      { cause: error },
+    );
+  }
+  return `Handed off to ultragoal: ralplan is inactive (phase handoff) and ultragoal is active. Load the \`ultragoal\` skill now and call \`ultragoal create\` with the approved plan's goals${plan}.`;
+}
+
+export type UltragoalEntryGateResult =
+  | { status: "pass" }
+  | { status: "refused"; message: string }
+  | ({ status: "handoff" } & RalplanHandoffMeta);
+
+/**
+ * C-4, before any transaction (C-1.4): ① a running ultragoal passes without
+ * reading ralplan (R-O9); ② a missing, unreadable or unknown-phase ralplan
+ * state passes (DR-21); ③ an active ralplan outside T is refused; ④ an active
+ * one in T is demoted and the caller records the handoff meta on ultragoal;
+ * ⑤ an inactive one whose active row remains has the row removed (gjc
+ * `active-state.ts:886-898`), then passes.
+ */
+export async function ultragoalEntryGate(
+  store: StateStore,
+  sessionId: string,
+  owner: AuditOwner = RUNTIME_OWNER,
+): Promise<UltragoalEntryGateResult> {
+  const ultragoal = await store.read(sessionId, ULTRAGOAL_MODE).catch(() => undefined);
+  if (isUltragoalRunning(ultragoal)) return { status: "pass" };
+  const ralplan = await store.read(sessionId, RALPLAN_MODE).catch(() => undefined);
+  if (!ralplan || !isKnownPhase(ralplan.current_phase)) return { status: "pass" };
+  if (ralplan.active === true) {
+    if (!TERMINAL_PHASES.has(ralplan.current_phase))
+      return { status: "refused", message: RALPLAN_RUNNING_REFUSAL };
+    return {
+      status: "handoff",
+      ...(await demoteRalplanForUltragoalEntry(store, sessionId, owner)),
+    };
+  }
+  await store.ralplanTransaction(sessionId, async (tx) => {
+    const current = await tx.readState().catch(() => undefined);
+    if (current?.active === true) return;
+    const rows = await tx.list(path.dirname(tx.paths.activeRowPath));
+    if (!rows.includes(path.basename(tx.paths.activeRowPath))) return;
+    await syncActiveRowTx(tx, { active: false, sessionId }, owner);
+  });
+  return { status: "pass" };
+}

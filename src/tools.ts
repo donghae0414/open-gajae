@@ -11,6 +11,11 @@ import {
 } from "./state.js";
 import { isUltragoalRunning, RALPLAN_ACTIVATION_REFUSAL } from "./ultragoal.js";
 import { ultragoalTool, type UltragoalToolDeps } from "./ultragoal-tool.js";
+import {
+  DEFAULT_RALPLAN_SETTINGS,
+  ralplanTool,
+  type RalplanToolDeps,
+} from "./ralplan-runtime/tool.js";
 import { astGrepSearchTool } from "./tools/ast-tools.js";
 import { defineTool, type ToolCallContext } from "./tools/define.js";
 import { lspTools } from "./tools/lsp-tools.js";
@@ -88,12 +93,22 @@ async function pathResult(
   return { statePath, specsDir, plansDir, draftsDir };
 }
 
+/**
+ * Host lookups and setup-time settings. `rootSession` and `ralplanSettings`
+ * are optional so harnesses that pass only `parentSession` still build: a
+ * missing `rootSession` fails closed and only the `ralplan` tool refuses.
+ */
+export type ToolDeps = UltragoalToolDeps &
+  Partial<Pick<RalplanToolDeps, "rootSession">> & {
+    ralplanSettings?: RalplanToolDeps["settings"];
+  };
+
+async function noHostLookup(): Promise<never> {
+  throw new Error("no host session lookup is available");
+}
+
 /** Without a host, no reviewer's parent can be resolved: fail closed. */
-const noHost: UltragoalToolDeps = {
-  async parentSession() {
-    throw new Error("no host session lookup is available");
-  },
-};
+const noHost: ToolDeps = { parentSession: noHostLookup };
 
 /**
  * Every tool this plugin adds, in v2 shape, for one `ctx.tool.transform`. State
@@ -102,12 +117,17 @@ const noHost: UltragoalToolDeps = {
 export function createTools(
   store: StateStore,
   paths: CodeToolPaths,
-  deps: UltragoalToolDeps = noHost,
+  deps: ToolDeps = noHost,
 ) {
   return [
     astGrepSearchTool(paths),
     ...lspTools(paths),
     ultragoalTool(store, deps),
+    ralplanTool(store, {
+      rootSession: deps.rootSession ?? noHostLookup,
+      settings: deps.ralplanSettings ?? DEFAULT_RALPLAN_SETTINGS,
+      projectDir: paths.projectDir,
+    }),
     defineTool({
       name: "state_read",
       permission: "state_read",

@@ -46,7 +46,9 @@ export default Plugin.define({
     });
     await registerSkills(ctx.skill, skills);
     // The hooks come first: the `ultragoal` tool resolves a reviewer's parent
-    // through the hooks' fail-closed `parentSession` (plan §2 A1″).
+    // through the hooks' fail-closed `parentSession` (plan §2 A1″), and the
+    // `ralplan` tool its owner through `rootSession` (plan DR-1). The ralplan
+    // settings are resolved once here (DR-13); `projectDir` rides `paths`.
     const hooks = createHooks(
       store,
       ctx.session,
@@ -58,7 +60,11 @@ export default Plugin.define({
     const tools = createTools(
       store,
       { locationDir, projectDir },
-      { parentSession: hooks.parentSession },
+      {
+        parentSession: hooks.parentSession,
+        rootSession: hooks.rootSession,
+        ralplanSettings: settings.ralplan,
+      },
     );
     await ctx.tool.transform((editor) => {
       for (const tool of tools) editor.add(tool);

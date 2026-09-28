@@ -1,7 +1,8 @@
 // v2 host probe (plan Step 8): the repository loads as a directory plugin on
-// the installed 2.0.15 host, registers eight agents, three skills and twelve
-// tools, the read-only roles do not see `opencode_session_move`/`_rename`, and
-// only the primary and the two ultragoal reviewers see the `ultragoal` tool.
+// the installed 2.0.15 host, registers eight agents, three skills and
+// thirteen tools, the read-only roles do not see
+// `opencode_session_move`/`_rename`, and only the primary and the two
+// ultragoal reviewers see the `ultragoal` tool.
 // Run: `bun run test:host` (or `bun ./tests/host-probe.ts`).
 import { join } from "node:path";
 import {
@@ -44,7 +45,7 @@ await runProbe("open-gajae-host-probe", async (report, scratch) => {
 
     const load = host.provider.thread("load")[0];
     const primaryTools = OUR_TOOLS.filter((t) => load?.tools.includes(t));
-    report.check("twelve plugin tools offered to the primary as direct tools", primaryTools.length === 12, primaryTools);
+    report.check("thirteen plugin tools offered to the primary as direct tools", primaryTools.length === 13, primaryTools);
     const primaryCatalog = opencodeCatalog(load);
     report.check(
       "primary keeps opencode.session_move/session_rename",
@@ -80,6 +81,15 @@ await runProbe("open-gajae-host-probe", async (report, scratch) => {
         !!request && request.tools.includes("ultragoal") === reviewer,
         request?.tools,
       );
+      // Plan S2: ralplan is visible to the primary, the planner and the two
+      // ultragoal reviewers; hidden for explore, document-specialist, cleaner
+      // and executor.
+      const ralplanVisible = reviewer || agent === "open-gajae-planner";
+      report.check(
+        `${agent}: ralplan ${ralplanVisible ? "offered" : "hidden"}`,
+        !!request && request.tools.includes("ralplan") === ralplanVisible,
+        request?.tools,
+      );
       if (agent === "open-gajae-cleaner")
         report.check("open-gajae-cleaner: shell offered for read-only inspection", !!request?.tools.includes("shell"), request?.tools);
     }
@@ -94,8 +104,11 @@ await runProbe("open-gajae-host-probe", async (report, scratch) => {
       exec?.tools,
     );
     report.check(
-      "open-gajae-executor: ultragoal, question, state_write and state_clear hidden",
-      !!exec && !["ultragoal", "question", "state_write", "state_clear"].some((t) => exec.tools.includes(t)),
+      "open-gajae-executor: ultragoal, ralplan, question, state_write and state_clear hidden",
+      !!exec &&
+        !["ultragoal", "ralplan", "question", "state_write", "state_clear"].some((t) =>
+          exec.tools.includes(t),
+        ),
       exec?.tools,
     );
   });

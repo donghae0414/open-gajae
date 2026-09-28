@@ -232,17 +232,17 @@ test("read-only roles deny edit, subagent, question, state writes and session to
     expect(roleRules(name, "")).toEqual([
       ...denies("edit", "subagent"),
       ...readonlyDenies,
-      ...denies("ultragoal"),
+      ...denies("ultragoal", "ralplan"),
     ]);
 });
 
-test("executor edits, delegates only to explore and architect, and cannot ask or use ultragoal", () => {
+test("executor edits, delegates only to explore and architect, and cannot ask, use ultragoal or ralplan", () => {
   expect(roleRules("open-gajae-executor", "")).toEqual([
     ...denies("subagent"),
     { action: "subagent", resource: "open-gajae-explore", effect: "allow" },
     { action: "subagent", resource: "open-gajae-architect", effect: "allow" },
     ...readonlyDenies,
-    ...denies("ultragoal"),
+    ...denies("ultragoal", "ralplan"),
   ]);
 });
 
@@ -439,7 +439,7 @@ test("explicit document input does not transfer source state; clear preserves bo
     expect(await readFile(input, "utf8")).toBe(source);
     expect(await readFile(output, "utf8")).toContain("New session result");
   }));
-test("the catalog is twelve direct tools with visibility permissions", async () =>
+test("the catalog is thirteen direct tools with visibility permissions", async () =>
   fixture(async (root) => {
     const { list } = toolsOf(stateStore(root), root);
     expect(list.map((tool) => tool.name).sort()).toEqual([
@@ -451,6 +451,7 @@ test("the catalog is twelve direct tools with visibility permissions", async () 
       "lsp_hover",
       "lsp_servers",
       "lsp_workspace_symbols",
+      "ralplan",
       "state_clear",
       "state_read",
       "state_write",

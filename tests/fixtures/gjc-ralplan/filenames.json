@@ -1,0 +1,47 @@
+{
+  ".omc": [
+    "state"
+  ],
+  "01a0ba1a-c9c1-7188-8020-24474005f3f9": [
+    ".omc",
+    "index.jsonl",
+    "pending-approval.md",
+    "stage-01-architect.md",
+    "stage-01-critic.md",
+    "stage-01-intent.md",
+    "stage-01-planner.md",
+    "stage-02-architect.md",
+    "stage-02-critic.md",
+    "stage-02-revision.md",
+    "stage-03-architect.md",
+    "stage-03-critic.md",
+    "stage-03-final.md",
+    "stage-03-post-interview.md",
+    "stage-03-revision.md"
+  ],
+  "ultragoal-gjc-parity-20260921": [
+    "index.jsonl",
+    "pending-approval.md",
+    "stage-01-intent.md",
+    "stage-01-planner.md",
+    "stage-02-architect.md",
+    "stage-02-critic.md",
+    "stage-02-intent.md",
+    "stage-02-revision.md",
+    "stage-03-adr.md",
+    "stage-03-architect.md",
+    "stage-03-critic.md",
+    "stage-03-final.md",
+    "stage-03-intent.md",
+    "stage-03-post-interview.md",
+    "stage-03-revision.md",
+    "stage-04-adr.md",
+    "stage-04-architect.md",
+    "stage-04-critic.md",
+    "stage-04-final.md",
+    "stage-04-intent.md",
+    "stage-04-post-interview.md",
+    "stage-04-revision.md",
+    "stage-05-intent.md"
+  ]
+}

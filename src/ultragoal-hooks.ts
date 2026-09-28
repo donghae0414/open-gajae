@@ -59,6 +59,52 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Seed (plan §6.4): a whole new state unless one is already active; an
+ * awaiting seed is confirmed when `awaiting` is false. Extracted to a
+ * standalone function that uses only `store.ultragoalTransaction` (no host
+ * deps), so the S2 `ralplan handoff` op can call it directly (plan §3.0
+ * C-1.3, Architect 2nd-round MINOR-3).
+ *
+ * Plan S2, C-1.3: when a state is already active, the old behavior only
+ * confirmed an awaiting seed. It now also merges `handoff_from`/`handoff_at`
+ * when given, so a keyword awaiting-seed followed by a ralplan handoff keeps
+ * that meta instead of losing it (Critic 2nd-round MINOR-6).
+ */
+export async function seedUltragoal(
+  store: StateStore,
+  sessionID: string,
+  {
+    awaiting,
+    task,
+    handoff_from,
+    handoff_at,
+  }: { awaiting: boolean; task?: string; handoff_from?: string; handoff_at?: string },
+): Promise<void> {
+  await store.ultragoalTransaction(sessionID, async (tx) => {
+    const state = await tx.readState();
+    if (state?.active === true) {
+      const patch: Record<string, unknown> = {};
+      if (!awaiting && state.awaiting_confirmation === true)
+        patch.awaiting_confirmation = false;
+      if (handoff_from !== undefined) patch.handoff_from = handoff_from;
+      if (handoff_at !== undefined) patch.handoff_at = handoff_at;
+      if (Object.keys(patch).length)
+        await tx.writeState(mergeState(state, patch), "ultragoal_hook");
+      return;
+    }
+    await tx.writeState(
+      seedUltragoalState(state, new Date().toISOString(), {
+        awaiting,
+        task,
+        handoff_from,
+        handoff_at,
+      })!,
+      "ultragoal_hook",
+    );
+  });
+}
+
 export function createUltragoalHooks(
   store: StateStore,
   synthetic: Synthetic,
@@ -134,29 +180,12 @@ export function createUltragoalHooks(
     };
   }
 
-  /**
-   * Seed (plan §6.4): a whole new state unless one is already active; an
-   * awaiting seed is confirmed when `awaiting` is false.
-   */
+  /** Seed (plan §6.4), delegated to the standalone `seedUltragoal`. */
   async function seed(
     sessionID: string,
     { awaiting, task }: { awaiting: boolean; task?: string },
   ): Promise<void> {
-    await store.ultragoalTransaction(sessionID, async (tx) => {
-      const state = await tx.readState();
-      if (state?.active === true) {
-        if (!awaiting && state.awaiting_confirmation === true)
-          await tx.writeState(
-            mergeState(state, { awaiting_confirmation: false }),
-            "ultragoal_hook",
-          );
-        return;
-      }
-      await tx.writeState(
-        seedUltragoalState(state, new Date().toISOString(), { awaiting, task })!,
-        "ultragoal_hook",
-      );
-    });
+    await seedUltragoal(store, sessionID, { awaiting, task });
   }
 
   /**

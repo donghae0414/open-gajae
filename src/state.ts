@@ -55,6 +55,8 @@ export type ExplicitStatePatch = {
   last_rejections?: Record<string, Record<string, unknown>>;
   handoff_to?: string;
   handoff_at?: string;
+  /** Plan S2, C-1.3: the skill a handoff arrived from (e.g. "ralplan"). */
+  handoff_from?: string;
 };
 
 export type UltragoalFile = "goals.json" | "progress.txt";
@@ -196,6 +198,7 @@ function validateExplicitPatch(patch: ExplicitStatePatch) {
     ["paused_target", 200],
     ["handoff_to", 200],
     ["handoff_at", 100],
+    ["handoff_from", 200],
   ] as const) {
     const value = patch[key];
     if (
