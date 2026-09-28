@@ -135,7 +135,7 @@ test("JSONC validation rejects invalid model, unknown keys and company context",
     );
   }));
 /** A fake `AgentEditor` that creates missing agents like `Agent.Info.default`. */
-async function registered(settings: Settings, plannerPrefix = "") {
+async function registered(settings: Settings) {
   const agents = new Map<string, AgentDraft>();
   await registerAgents(
     {
@@ -153,7 +153,7 @@ async function registered(settings: Settings, plannerPrefix = "") {
         });
       },
     },
-    { settings, prompts: await loadPrompts(resolve(".")), plannerPrefix },
+    { settings, prompts: await loadPrompts(resolve(".")) },
   );
   return agents;
 }
@@ -217,10 +217,10 @@ const readonlyDenies = denies(
 );
 
 test("read-only roles deny edit, subagent, question, state writes and session tools; primary adds none", () => {
-  expect(roleRules("open-gajae", "")).toEqual([]);
+  expect(roleRules("open-gajae")).toEqual([]);
   // The ultragoal reviewers keep the `ultragoal` tool (status, record_verdict).
   for (const name of ["open-gajae-architect", "open-gajae-critic"])
-    expect(roleRules(name, "")).toEqual([
+    expect(roleRules(name)).toEqual([
       ...denies("edit", "subagent"),
       ...readonlyDenies,
     ]);
@@ -229,7 +229,7 @@ test("read-only roles deny edit, subagent, question, state writes and session to
     "open-gajae-document-specialist",
     "open-gajae-cleaner",
   ])
-    expect(roleRules(name, "")).toEqual([
+    expect(roleRules(name)).toEqual([
       ...denies("edit", "subagent"),
       ...readonlyDenies,
       ...denies("ultragoal", "ralplan"),
@@ -237,7 +237,7 @@ test("read-only roles deny edit, subagent, question, state writes and session to
 });
 
 test("executor edits, delegates only to explore and architect, and cannot ask, use ultragoal or ralplan", () => {
-  expect(roleRules("open-gajae-executor", "")).toEqual([
+  expect(roleRules("open-gajae-executor")).toEqual([
     ...denies("subagent"),
     { action: "subagent", resource: "open-gajae-explore", effect: "allow" },
     { action: "subagent", resource: "open-gajae-architect", effect: "allow" },
@@ -303,31 +303,20 @@ test("ralplan settings default to gjc, merge per key with a source, and reject b
     }
   }));
 
-test("planner writes only session plans and drafts and delegates only to the two research roles", () => {
-  // Deny-`*`-then-allow: the host evaluates with `findLast`.
-  for (const prefix of ["", "../"])
-    expect(roleRules("open-gajae-planner", prefix)).toEqual([
-      ...denies("edit"),
-      {
-        action: "edit",
-        resource: `${prefix}.open-gajae/_session-*/plans/*`,
-        effect: "allow",
-      },
-      {
-        action: "edit",
-        resource: `${prefix}.open-gajae/_session-*/drafts/*`,
-        effect: "allow",
-      },
-      ...denies("subagent"),
-      { action: "subagent", resource: "open-gajae-explore", effect: "allow" },
-      {
-        action: "subagent",
-        resource: "open-gajae-document-specialist",
-        effect: "allow",
-      },
-      ...readonlyDenies,
-      ...denies("ultragoal"),
-    ]);
+test("planner edits no path and delegates only to the two research roles", () => {
+  // Deny-`*`-then-allow: the host evaluates with `findLast`. Plans go through
+  // the `ralplan` tool, so no plans, drafts or temp-directory `edit` allow.
+  expect(roleRules("open-gajae-planner")).toEqual([
+    ...denies("edit", "subagent"),
+    { action: "subagent", resource: "open-gajae-explore", effect: "allow" },
+    {
+      action: "subagent",
+      resource: "open-gajae-document-specialist",
+      effect: "allow",
+    },
+    ...readonlyDenies,
+    ...denies("ultragoal"),
+  ]);
 });
 
 test("state tools enforce actors and return refusals as content before writing", async () =>
@@ -345,6 +334,7 @@ test("state tools enforce actors and return refusals as content before writing",
         task_description: "explicit",
       }),
     );
+    expect(Object.keys(first).sort()).toEqual(["specsDir", "state", "statePath"]);
     expect(first.state.task_description).toBe("explicit");
     expect(first.state._runtime).toEqual({ arbitrary: true });
     expect(first.state._meta.sessionId).toBe("s");
@@ -367,19 +357,25 @@ test("state tools enforce actors and return refusals as content before writing",
     expect(
       await call("state_read", { mode: "deep-interview" }, context("s", "build")),
     ).toStartWith("Error: ");
-    // All six owned roles may read.
+    // All six owned roles may read; results carry no plans or drafts path.
     for (const agent of [
       "open-gajae-explore",
       "open-gajae-document-specialist",
       "open-gajae-planner",
       "open-gajae-architect",
       "open-gajae-critic",
-    ])
-      expect(
-        json(
-          await call("state_read", { mode: "deep-interview" }, context("s", agent)),
-        ).exists,
-      ).toBe(true);
+    ]) {
+      const read = json(
+        await call("state_read", { mode: "deep-interview" }, context("s", agent)),
+      );
+      expect(read.exists).toBe(true);
+      expect(Object.keys(read).sort()).toEqual([
+        "exists",
+        "specsDir",
+        "state",
+        "statePath",
+      ]);
+    }
     expect(await store.read("s")).toEqual(before);
   }));
 test("current native session is the only selector and refused calls make no directories", async () =>
@@ -392,8 +388,10 @@ test("current native session is the only selector and refused calls make no dire
         input.safeParse({ mode: "deep-interview", session_id: "foreign" })
           .success,
       ).toBe(false);
-      // Ultragoal state is reached only through the `ultragoal` tool (decision 21).
-      expect(input.safeParse({ mode: "ultragoal" }).success).toBe(false);
+      // Ultragoal and ralplan state are reached only through their own tools
+      // (decision 21, AC15).
+      for (const mode of ["ultragoal", "ralplan"])
+        expect(input.safeParse({ mode }).success).toBe(false);
     }
     expect(
       await call("state_read", { mode: "deep-interview" }, context("")),
@@ -602,43 +600,33 @@ test("ralplan skill keeps the consensus contract and offers ultragoal as its onl
   expect(skill).not.toContain("Skill(");
   expect(skill).not.toMatch(/codex/i);
   expect(skill).not.toMatch(/--(direct|review|consensus)\b/);
-  // Step 0 (company context) is removed (R17); numbering is 1-9.
+  // The gjc consensus steps are numbered 1-9.
   for (let step = 1; step <= 9; step += 1)
     expect(skill).toMatch(new RegExp(`^${step}\\. `, "m"));
   expect(skill).not.toMatch(/^0\. /m);
   expect(skill).toContain("- `--interactive`:");
   expect(skill).toContain("- `--deliberate`:");
-  expect(skill).toContain(
-    "Critic returns one of `REJECT`, `REVISE`, `ACCEPT-WITH-RESERVATIONS`, `ACCEPT`",
-  );
-  expect(skill).toContain(
-    "`ACCEPT` and `ACCEPT-WITH-RESERVATIONS` = APPROVE; `REVISE` = ITERATE; `REJECT` = REJECT",
-  );
+  expect(skill).toContain("`OKAY`/`ITERATE`/`REJECT`");
   expect(skill).toContain("**Refine further**");
   expect(skill).toContain("**Stop here**");
   // AC3: the one execution path and its handoff procedure.
-  expect(skill).toContain("**Execute via ultragoal**");
+  expect(skill).toContain("**Approve execution via ultragoal (Recommended)**");
   for (const step of [
-    'state_write(mode="ralplan", active=false, current_phase="handoff"',
+    'ralplan handoff(to="ultragoal")',
     "load `skill` `ultragoal`",
     "`ultragoal status`",
-    "call `resume(reason)` and merge the new plan",
+    "or `resume` an unfinished goal list",
     "`create` with `source_plan`",
     'ultragoal handoff(to="ralplan", reason)',
   ])
     expect(skill).toContain(step);
 
-  // No execution workflow other than ultragoal is named, and the OMC
-  // pre-execution gate section is gone with the keyword gate (P-8).
-  expect(skill).not.toContain("## Pre-Execution Gate");
+  // No execution workflow other than ultragoal is named; the gjc
+  // Pre-Execution Gate section is kept as text (D-F16).
+  expect(skill).toContain("## Pre-Execution Gate");
   expect(skill).not.toMatch(/\bteam\b/i);
   expect(skill).not.toMatch(/\bralph\b/i);
-
-  // `compact` survives only as the adjective in "compact RALPLAN-DR summary",
-  // never as one of OMC's execution options.
-  expect((skill.match(/compact/gi) ?? []).length).toBe(
-    (skill.match(/compact \*\*RALPLAN-DR summary\*\*/gi) ?? []).length,
-  );
+  // `compact` is never one of OMC's execution options.
   expect(skill).not.toMatch(/\*\*compact\*\*/i);
 });
 
@@ -694,7 +682,7 @@ test("ultragoal skill keeps the OMC ralph skeleton with host substitutions", asy
     );
 });
 
-test("prompts name the executor, the cleaner and ultragoal", async () => {
+test("prompts name the executor, the cleaner, ultragoal and the review lanes' ralplan writes", async () => {
   const read = (name: string) =>
     readFile(new URL(`../prompts/${name}.md`, import.meta.url), "utf8");
   const primary = await read("open-gajae");
@@ -702,10 +690,10 @@ test("prompts name the executor, the cleaner and ultragoal", async () => {
   expect(primary).toContain("`open-gajae-executor`");
   expect(primary).toContain("`open-gajae-cleaner`");
   expect(await read("open-gajae-architect")).toContain(
-    "implementing changes (open-gajae-executor)",
+    'ralplan write(stage="architect"',
   );
   expect(await read("open-gajae-critic")).toContain(
-    "open-gajae-executor (code changes needed)",
+    'ralplan write(stage="critic"',
   );
   expect(await read("open-gajae-cleaner")).toContain(
     "Do not modify any file, including through shell.",

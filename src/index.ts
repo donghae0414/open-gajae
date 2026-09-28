@@ -1,6 +1,5 @@
 import { Plugin } from "@opencode/plugin";
 import { fileURLToPath } from "node:url";
-import { projectPrefix } from "./artifact-guard";
 import {
   loadPrompts,
   loadSettings,
@@ -26,7 +25,6 @@ export default Plugin.define({
     const projectDir = ctx.location.project.directory;
     const locationDir = ctx.location.directory;
     const packageRoot = fileURLToPath(new URL("../", import.meta.url));
-    const plannerPrefix = projectPrefix(locationDir, projectDir);
     // 1. Settings.
     const settings = await loadSettings(projectDir);
     // 2. State store; the session folder label comes from `time.created`.
@@ -42,7 +40,6 @@ export default Plugin.define({
     await registerAgents(ctx.agent as unknown as AgentHost, {
       settings,
       prompts,
-      plannerPrefix,
     });
     await registerSkills(ctx.skill, skills);
     // The hooks come first: the `ultragoal` tool resolves a reviewer's parent

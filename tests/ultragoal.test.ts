@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INJECTION_MARKERS } from "../src/ralplan";
+import { patchStateTx, RALPLAN_RUNNING_REFUSAL } from "../src/ralplan-runtime/store";
 import { StateStore } from "../src/state";
 import { createTools } from "../src/tools";
 import {
@@ -169,8 +170,11 @@ test("running predicates treat awaiting seeds and handed-off states as not runni
   expect(isUltragoalRunning(running({ awaiting_confirmation: true }))).toBe(false);
   expect(isUltragoalRunning({ active: false, current_phase: "handoff" })).toBe(false);
   expect(isUltragoalRunning({ active: false, current_phase: "complete" })).toBe(false);
-  expect(isRalplanRunning({ active: true })).toBe(true);
-  expect(isRalplanRunning({ active: true, awaiting_confirmation: true })).toBe(false);
+  // C-2: active on a phase outside T; an unknown phase is unreadable (DR-21).
+  expect(isRalplanRunning({ active: true, current_phase: "planner" })).toBe(true);
+  expect(isRalplanRunning({ active: true, current_phase: "final" })).toBe(false);
+  expect(isRalplanRunning({ active: true, current_phase: "ralplan" })).toBe(false);
+  expect(isRalplanRunning({ active: false, current_phase: "planner" })).toBe(false);
   expect(seedUltragoalState(running(), T, { awaiting: true })).toBeUndefined();
   expect(seedUltragoalState({ active: false, current_phase: "complete" }, T, { awaiting: true })).toMatchObject({
     active: true,
@@ -397,22 +401,41 @@ test("reject reverts, approve verifies, and the final critic completes the run",
     expect(await readFile(join(sessionDir, "ultragoal/progress.txt"), "utf8")).toContain("## [2");
   }));
 
-test("handoff seeds ralplan, resume needs ralplan finished, cancel keeps the files", async () =>
+test("handoff starts ralplan on the existing run, resume waits for it, cancel keeps the files (P-AC6, P-AC13)", async () =>
   fixture(async (h) => {
     await start(h);
     for (const op of ["handoff", "resume", "cancel"])
       expect(await h.call({ op, to: "ralplan", reason: "  " })).toContain("reason is required");
-    expect(await h.call({ op: "handoff", to: "ralplan", reason: "replan" })).toContain("Load the `ralplan` skill");
-    expect(await h.store.read("S", "ultragoal")).toMatchObject({ active: false, current_phase: "handoff", handoff_to: "ralplan" });
-    expect(await h.store.read("S", "ralplan")).toMatchObject({ active: true, current_phase: "ralplan", awaiting_confirmation: false });
+    const { sessionDir } = await h.store.resolveSessionPaths("S");
+    const goalsBefore = await readFile(join(sessionDir, "ultragoal/goals.json"));
+    // An earlier finished run: the handoff reuses its run_id (R-O8).
+    await h.store.ralplanTransaction("S", (tx) =>
+      tx.writeState({ active: false, current_phase: "complete", run_id: "run-7" }, "ralplan_tool"),
+    );
+    const text = await h.call({ op: "handoff", to: "ralplan", reason: "replan" });
+    for (const part of ["ralplan started (run_id run-7)", "Load the `ralplan` skill", "call `ralplan start` with a new `run_id`", "choose Approve execution via ultragoal and call resume"])
+      expect(text).toContain(part);
+    const ultragoal = await h.store.read("S", "ultragoal");
+    expect(ultragoal).toMatchObject({ active: false, current_phase: "handoff", handoff_to: "ralplan", handoff_at: expect.any(String) });
+    expect(await readFile(join(sessionDir, "ultragoal/goals.json"))).toEqual(goalsBefore);
+    expect(await h.store.read("S", "ralplan")).toMatchObject({
+      active: true,
+      current_phase: "planner",
+      task: "replan",
+      handoff_from: "ultragoal",
+      handoff_at: ultragoal?.handoff_at,
+      run_id: "run-7",
+    });
+    expect(JSON.parse(await readFile(join(sessionDir, "state/active/ralplan.json"), "utf8"))).toMatchObject({ phase: "planner", handoff_from: "ultragoal" });
+    expect(await readFile(join(sessionDir, "state/audit.jsonl"), "utf8")).toContain('"owner":"open-gajae-runtime"');
     expect(await h.call(completeArgs("G001"))).toContain("not running");
-    expect(await h.call({ op: "resume", reason: "back" })).toContain("ralplan planning is running");
-    await h.store.patch("S", { active: false, current_phase: "handoff" }, "ralplan");
+    expect(await h.call({ op: "resume", reason: "back" })).toBe(`Error: ${RALPLAN_RUNNING_REFUSAL}`);
+    // Stop here releases the gate.
+    await h.store.ralplanTransaction("S", (tx) => patchStateTx(tx, "S", { active: false }));
     expect(await h.call({ op: "resume", reason: "back" })).toContain("Resumed");
     expect(await h.store.read("S", "ultragoal")).toMatchObject({ active: true, current_phase: "ultragoal", awaiting_confirmation: false });
     expect(await h.call({ op: "cancel", reason: "user stop" })).toContain("cancelled");
     expect(await h.store.read("S", "ultragoal")).toBeUndefined();
-    const { sessionDir } = await h.store.resolveSessionPaths("S");
     const progress = await readFile(join(sessionDir, "ultragoal/progress.txt"), "utf8");
     for (const part of ["- HANDOFF", "- replan", "- RESUME", "- CANCEL", "- user stop"]) expect(progress).toContain(part);
     // With no state at all, resume re-seeds and keeps the goals.
@@ -432,18 +455,9 @@ test("an op and a hook patch in parallel both land", async () =>
     expect(state?.verification_request).toBeDefined();
   }));
 
-test("state_write refuses to activate ralplan only while ultragoal runs", async () =>
+test("a corrupt goals.json keeps ops failing closed without throwing", async () =>
   fixture(async (h) => {
-    const stateWrite = h.tools.find((t) => t.name === "state_write")!;
-    const write = async () =>
-      (await stateWrite.execute(stateWrite.input.parse({ mode: "ralplan", active: true }) as never, { agent: "open-gajae", sessionID: "S", signal: new AbortController().signal })).content;
-    await h.store.patch("S", seedUltragoalState(undefined, T, { awaiting: true })!, "ultragoal");
-    expect(await write()).not.toStartWith("Error:");
-    await h.store.patch("S", { awaiting_confirmation: false }, "ultragoal");
-    expect(await write()).toBe(
-      'Error: ralplan cannot be activated while ultragoal is running; call ultragoal handoff(to="ralplan", reason) first.',
-    );
-    // A corrupt goals.json keeps ops failing closed without throwing.
+    await h.store.patch("S", seedUltragoalState(undefined, T, { awaiting: false })!, "ultragoal");
     const { sessionDir } = await h.store.resolveSessionPaths("S");
     await h.call(createArgs);
     await writeFile(join(sessionDir, "ultragoal/goals.json"), "{bad");
@@ -454,8 +468,8 @@ test("start seeds or confirms ultragoal, refuses while ralplan or ultragoal runs
   fixture(async (h) => {
     expect(await h.call(createArgs)).toContain("call `ultragoal start(reason)` first");
     expect(await h.call({ op: "start", reason: " " })).toContain("reason is required");
-    await h.store.patch("S", { active: true, current_phase: "ralplan", awaiting_confirmation: false }, "ralplan");
-    expect(await h.call({ op: "start", reason: "run the plan" })).toContain("ralplan planning is running");
+    await h.store.patch("S", { active: true, current_phase: "planner" }, "ralplan");
+    expect(await h.call({ op: "start", reason: "run the plan" })).toBe(`Error: ${RALPLAN_RUNNING_REFUSAL}`);
     await h.store.clear("S", "ralplan");
     expect(await h.call({ op: "start", reason: "run the plan" })).toContain("Ultragoal started");
     expect(await h.store.read("S", "ultragoal")).toMatchObject({ active: true, awaiting_confirmation: false, current_phase: "ultragoal", iteration: 1 });

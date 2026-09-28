@@ -42,19 +42,12 @@ type FakeOptions = {
 
 /**
  * A structural `ctx.session`. `agents` is mutable so a test can pin the agent
- * of a session before delivering to it; `order` records each state write and
- * each `synthetic` call in sequence.
+ * of a session before delivering to it.
  */
-function fakeSession(store: StateStore, options: FakeOptions, location: string) {
+function fakeSession(options: FakeOptions, location: string) {
   const synthetics: Synthetic[] = [];
   const sessionGets: string[] = [];
   const agents: Record<string, string> = {};
-  const order: string[] = [];
-  const patch = store.patch.bind(store);
-  store.patch = (async (...args: Parameters<StateStore["patch"]>) => {
-    order.push("state");
-    return patch(...args);
-  }) as StateStore["patch"];
   const session: HostSession = {
     async get(input) {
       sessionGets.push(input.sessionID);
@@ -67,13 +60,12 @@ function fakeSession(store: StateStore, options: FakeOptions, location: string) 
       };
     },
     async synthetic(input) {
-      order.push("synthetic");
       synthetics.push({ ...input });
       if (options.syntheticRejects) throw new Error("synthetic failed");
       return {};
     },
   };
-  return { session, synthetics, sessionGets, agents, order };
+  return { session, synthetics, sessionGets, agents };
 }
 
 type Fixture = {
@@ -93,7 +85,7 @@ async function fixture(
     const store = new StateStore(root, async () =>
       Date.parse("2026-09-18T03:09:58+09:00"),
     );
-    const { session, ...fake } = fakeSession(store, options, root);
+    const { session, ...fake } = fakeSession(options, root);
     // The real plugin root, so `deepInterviewSkillPath` points at the shipped
     // `skills/deep-interview/SKILL.md` exactly as it does at runtime.
     await run({
@@ -198,85 +190,70 @@ async function noState(store: StateStore, sessionID: string) {
   );
 }
 
-function strip(state: Record<string, unknown> | undefined) {
-  const copy = { ...(state ?? {}) };
-  delete copy._meta;
-  return copy;
+/** A ralplan state as the runtime writes it: a known phase and a run. */
+const plan = (store: StateStore, sessionID: string, state: Record<string, unknown> = {}) =>
+  store.ralplanTransaction(sessionID, (tx) =>
+    tx.writeState({ active: true, current_phase: "planner", run_id: "run-1", ...state }, "ralplan_tool"),
+  );
+
+/** The hook-only continuation counter (plan R-O3), or `undefined`. */
+async function counter(store: StateStore, sessionID: string) {
+  const file = join(await store.resolveSessionDir(sessionID), "state", "ralplan-continuation.json");
+  return readFile(file, "utf8").then((text) => JSON.parse(text)).catch(() => undefined);
 }
 
-test("a corrupt state file leaves every hook inert and the file byte-identical", async () => {
+const setCounter = (store: StateStore, sessionID: string, value: Record<string, unknown>) =>
+  store.ralplanTransaction(sessionID, (tx) => tx.writeText(tx.paths.continuationPath, JSON.stringify(value)));
+
+test("a corrupt state file stays byte-identical; the prompt and skill hooks resolve", async () => {
   await fixture(async (context) => {
-    const { store, hooks, synthetics } = context;
+    const { store, hooks } = context;
     const id = nextSession("corrupt");
     const file = await store.statePath(id, RALPLAN_MODE);
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, "{", "utf8");
 
     expect(await notices(context, id, "unrelated question")).toHaveLength(0);
-    // The keyword path fails at the seed write and resolves without a notice.
-    expect(await notices(context, id, "랄플랜 정리해줘")).toHaveLength(0);
+    expect(await notices(context, id, "랄플랜 정리해줘")).toHaveLength(1);
     await notices(context, id, "plan it", { skills: ["ralplan"] });
     await skillCall(hooks, id, { id: "ralplan" });
-
-    expect(synthetics).toHaveLength(0);
     expect(await readFile(file, "utf8")).toBe("{");
   });
 });
 
-test("the ralplan keyword writes one notice and seeds awaiting state", async () => {
+test("the ralplan keyword writes one notice", async () => {
   await fixture(async (context) => {
-    const { store } = context;
     for (const text of ["ralplan 계획 세워줘", "랄플랜 <task>"]) {
       const id = nextSession("keyword");
       const written = await notices(context, id, text);
       expect(written).toHaveLength(1);
       expect(written[0]).toContain("[MODE: RALPLAN]");
       expect(written[0].startsWith("<ralplan-notice>")).toBe(true);
-
-      const state = await store.read(id, RALPLAN_MODE);
-      expect(state?.active).toBe(true);
-      expect(state?.awaiting_confirmation).toBe(true);
-      expect(state?.current_phase).toBe("ralplan");
-      expect(state?.breaker_count).toBe(0);
-      expect(state?.started_at).toBe(state?.restored_at as string);
     }
   });
 });
 
-test("the keyword seed is written before the synthetic notice", async () => {
-  await fixture(async (context) => {
-    const id = nextSession("order");
-    await notices(context, id, "ralplan 계획 세워줘");
-    expect(context.order).toEqual(["state", "synthetic"]);
-  });
-});
-
-test("a rejected synthetic appends the marked notice to the prompt and keeps the seed", async () => {
+test("a rejected synthetic appends the marked notice to the prompt", async () => {
   await fixture(
     async (context) => {
-      const { store } = context;
       const id = nextSession("synthetic-reject");
       const { event } = await deliver(context, id, "ralplan 계획 세워줘");
       expect(event.prompt.text.startsWith("ralplan 계획 세워줘\n\n")).toBe(true);
       expect(event.prompt.text).toContain("<ralplan-notice>");
       expect(event.prompt.text).toContain("[MODE: RALPLAN]");
-      const seeded = await raw(store, id);
-      expect((await store.read(id, RALPLAN_MODE))?.awaiting_confirmation).toBe(true);
 
-      // The grown text fed back in is ignored by G2: no notice, no re-seed.
+      // The grown text fed back in is ignored by G2: no notice.
       const before = context.synthetics.length;
       const again = await deliver(context, id, event.prompt.text);
       expect(again.event.prompt.text).toBe(event.prompt.text);
       expect(context.synthetics.length).toBe(before);
-      expect(await raw(store, id)).toBe(seeded);
     },
     { syntheticRejects: true },
   );
 });
 
-test("a @ralplan mention seeds confirmed state and writes one mention notice", async () => {
+test("a @ralplan mention writes one mention notice", async () => {
   await fixture(async (context) => {
-    const { store } = context;
     const id = nextSession("mention");
     const written = await notices(context, id, "tidy the hooks", {
       skills: ["ralplan"],
@@ -284,43 +261,6 @@ test("a @ralplan mention seeds confirmed state and writes one mention notice", a
     expect(written).toHaveLength(1);
     expect(written[0]).toContain("through the `@ralplan` mention");
     expect(written[0]).toContain("already attached");
-    const state = await store.read(id, RALPLAN_MODE);
-    expect(state?.active).toBe(true);
-    expect(state?.awaiting_confirmation).toBe(false);
-    expect(state?.started_at).toBe(state?.restored_at as string);
-
-    // An inactive leftover is re-armed, confirmed.
-    const inactive = nextSession("mention-inactive");
-    await seed(store, inactive, { active: false, current_phase: "ralplan" });
-    await notices(context, inactive, "again", { skills: ["ralplan"] });
-    const rearmed = await store.read(inactive, RALPLAN_MODE);
-    expect(rearmed?.active).toBe(true);
-    expect(rearmed?.awaiting_confirmation).toBe(false);
-
-    // An active confirmed state is left exactly as it was.
-    const confirmed = nextSession("mention-confirmed");
-    await seed(store, confirmed, { active: true, awaiting_confirmation: false });
-    const kept = await raw(store, confirmed);
-    expect(
-      await notices(context, confirmed, "go on", { skills: ["ralplan"] }),
-    ).toHaveLength(1);
-    expect(await raw(store, confirmed)).toBe(kept);
-  });
-});
-
-test("a stale awaiting seed followed by a @ralplan mention is confirmed, not cleared", async () => {
-  await fixture(async (context) => {
-    const { store } = context;
-    const id = nextSession("mention-stale");
-    await notices(context, id, "랄플랜 정리해줘");
-    const before = await store.read(id, RALPLAN_MODE);
-    expect(before?.awaiting_confirmation).toBe(true);
-
-    expect(
-      await notices(context, id, "this one", { skills: ["ralplan"] }),
-    ).toHaveLength(1);
-    const after = await store.read(id, RALPLAN_MODE);
-    expect(strip(after)).toEqual({ ...strip(before), awaiting_confirmation: false });
   });
 });
 
@@ -361,13 +301,11 @@ test("the three role subagents are denied and everything else proceeds", async (
     const written = await notices(context, undefinedAgent, "랄플랜 정리해줘");
     expect(written).toHaveLength(1);
     expect(written[0]).toContain("[MODE: RALPLAN]");
-    expect((await store.read(undefinedAgent, RALPLAN_MODE))?.active).toBe(true);
 
     const otherAgent = nextSession("other-agent");
     expect(
       await notices(context, otherAgent, "랄플랜 정리해줘", { agent: "build" }),
     ).toHaveLength(1);
-    expect((await store.read(otherAgent, RALPLAN_MODE))?.active).toBe(true);
   });
 });
 
@@ -376,89 +314,16 @@ test("a failed agent lookup proceeds", async () => {
     async (context) => {
       const id = nextSession("get-reject");
       expect(await notices(context, id, "랄플랜 정리해줘")).toHaveLength(1);
-      expect((await context.store.read(id, RALPLAN_MODE))?.active).toBe(true);
     },
     { sessionGetRejects: true },
   );
 });
 
-test("restore fires on a real resume only, never on the turn after seeding", async () => {
-  await fixture(async (context) => {
-    const { store, hooks } = context;
-    const seeded = nextSession("post-seed");
-    await notices(context, seeded, "랄플랜 정리해줘");
-    await skillCall(hooks, seeded, { id: "ralplan" });
-    // `restored_at` equals `started_at`, so this turn is not a resume.
-    expect(await notices(context, seeded, "그럼 다음 단계로 가자")).toHaveLength(0);
-
-    const resumed = nextSession("resume");
-    // `started_at` strictly newer than `restored_at` is the definition of a resume.
-    const startedAt = new Date(Date.now() - 60_000).toISOString();
-    await seed(store, resumed, {
-      active: true,
-      awaiting_confirmation: false,
-      current_phase: "ralplan",
-      started_at: startedAt,
-      restored_at: new Date(Date.now() - 120_000).toISOString(),
-    });
-    context.order.length = 0;
-    const first = await notices(context, resumed, "이어서 진행해줘");
-    expect(first).toHaveLength(1);
-    expect(first[0]).toContain("[RALPLAN MODE RESTORED]");
-    expect(first[0].startsWith("<session-restore>")).toBe(true);
-    expect(first[0]).toContain(startedAt);
-    // `restored_at` is written before the banner (Q3).
-    expect(context.order).toEqual(["state", "synthetic"]);
-
-    const advanced = await store.read(resumed, RALPLAN_MODE);
-    expect(String(advanced?.restored_at) > startedAt).toBe(true);
-
-    // Once per resume: the following message writes nothing.
-    expect(await notices(context, resumed, "한 가지 더")).toHaveLength(0);
-  });
-});
-
-test("the skill tool call confirms a seeded ralplan state and nothing else does", async () => {
-  await fixture(async (context) => {
-    const { store, hooks } = context;
-    const id = nextSession("confirm");
-    await notices(context, id, "랄플랜 정리해줘");
-    const before = await store.read(id, RALPLAN_MODE);
-    expect(before?.awaiting_confirmation).toBe(true);
-
-    await skillCall(hooks, id, { id: "ralplan" });
-    const after = await store.read(id, RALPLAN_MODE);
-    expect(strip(after)).toEqual({ ...strip(before), awaiting_confirmation: false });
-
-    // Every other shape leaves the file byte-identical, including the v1
-    // `name` field.
-    const untouched = await raw(store, id);
-    await seed(store, id, { awaiting_confirmation: true });
-    const reseeded = await raw(store, id);
-    await skillCall(hooks, id, { id: "deep-interview" });
-    await skillCall(hooks, id, { name: "ralplan" });
-    await skillCall(hooks, id, undefined);
-    await hooks.executeBefore({
-      tool: "read",
-      sessionID: id,
-      id: nextCall(),
-      input: { id: "ralplan" },
-    });
-    expect(await raw(store, id)).toBe(reseeded);
-    expect(untouched).not.toBe(reseeded);
-
-    // A session with no ralplan state neither throws nor creates a file.
-    const empty = nextSession("confirm-empty");
-    await skillCall(hooks, empty, { id: "ralplan" });
-    expect(await missing(store, empty)).toBe(true);
-  });
-});
-
-test("a store error inside the prompt hook or the skill confirm resolves", async () => {
+test("a store error inside the prompt hook or the skill call resolves", async () => {
   await fixture(async (context) => {
     const { store, hooks } = context;
     const id = nextSession("store-error");
-    await seed(store, id, { active: true, awaiting_confirmation: true });
+    await plan(store, id);
     const failing = async () => {
       throw new Error("disk full");
     };
@@ -475,76 +340,6 @@ test("a store error inside the prompt hook or the skill confirm resolves", async
       }),
     ).resolves.toBeUndefined();
     await expect(skillCall(hooks, id, { id: "ralplan" })).resolves.toBeUndefined();
-  });
-});
-
-test("a stale seed is cleared by the next non-keyword message without a restore banner", async () => {
-  await fixture(async (context) => {
-    const { store } = context;
-    const stale = nextSession("stale");
-    await seed(store, stale, { active: true, awaiting_confirmation: true });
-    expect(await notices(context, stale, "그건 됐고 다른 걸 해줘")).toHaveLength(0);
-    expect(await missing(store, stale)).toBe(true);
-
-    // Repeating the keyword keeps the seed and re-seeds idempotently.
-    const repeated = nextSession("stale-keyword");
-    await seed(store, repeated, { active: true, awaiting_confirmation: true });
-    const untouched = await raw(store, repeated);
-    const written = await notices(context, repeated, "랄플랜 계속");
-    expect(written).toHaveLength(1);
-    expect(written[0]).toContain("[MODE: RALPLAN]");
-    expect(await raw(store, repeated)).toBe(untouched);
-    expect((await store.read(repeated, RALPLAN_MODE))?.active).toBe(true);
-
-    // A confirmed session survives an ordinary message untouched.
-    const confirmed = nextSession("confirmed");
-    await seed(store, confirmed, { active: true, awaiting_confirmation: false });
-    const kept = await raw(store, confirmed);
-    expect(await notices(context, confirmed, "다른 파일도 봐줘")).toHaveLength(0);
-    expect(await raw(store, confirmed)).toBe(kept);
-  });
-});
-
-test("F1 — a stale seed then a real entry write never raises a restore banner", async () => {
-  await fixture(async (context) => {
-    const { store } = context;
-    const id = nextSession("f1");
-    // 1. Keyword seeds.
-    expect(await notices(context, id, "랄플랜 정리해줘")).toHaveLength(1);
-    expect((await store.read(id, RALPLAN_MODE))?.awaiting_confirmation).toBe(true);
-
-    // 2. An unrelated message clears the stale seed.
-    expect(await notices(context, id, "아니 그거 말고 빌드 로그 좀 봐줘")).toHaveLength(0);
-    expect(await missing(store, id)).toBe(true);
-
-    // 3. The skill's entry write re-creates the state.
-    const stamp = new Date().toISOString();
-    await store.write(
-      id,
-      {},
-      {
-        active: true,
-        current_phase: "ralplan",
-        awaiting_confirmation: false,
-        started_at: stamp,
-        restored_at: stamp,
-      },
-      RALPLAN_MODE,
-    );
-
-    // 4. The next real user message writes nothing.
-    expect(await notices(context, id, "다음 단계 알려줘")).toHaveLength(0);
-
-    // The same, with an entry write that omits both timestamps.
-    const bare = nextSession("f1-bare");
-    await store.write(
-      bare,
-      {},
-      { active: true, current_phase: "ralplan", awaiting_confirmation: false },
-      RALPLAN_MODE,
-    );
-    expect(await notices(context, bare, "다음 단계 알려줘")).toHaveLength(0);
-    expect((await store.read(bare, RALPLAN_MODE))?.restored_at).toBeUndefined();
   });
 });
 
@@ -628,7 +423,7 @@ test("the three role subagents are denied for the deep-interview keyword", async
   });
 });
 
-test("both keywords in one message write ralplan first, then deep-interview, and seed ralplan only", async () => {
+test("both keywords in one message write ralplan first, then deep-interview", async () => {
   await fixture(async (context) => {
     const { store } = context;
     const id = nextSession("di-both");
@@ -640,25 +435,20 @@ test("both keywords in one message write ralplan first, then deep-interview, and
     expect(written[0]).toContain("[MODE: RALPLAN]");
     expect(written[1]).toContain("[MAGIC KEYWORD: DEEP-INTERVIEW]");
 
-    // Only ralplan seeds; deep-interview never writes state.
-    expect((await store.read(id, RALPLAN_MODE))?.active).toBe(true);
+    // Deep-interview never writes state.
     expect(await missing(store, id, DEEP_INTERVIEW_MODE)).toBe(true);
   });
 });
 
 // --- Continuation on durable execution events (Step 5) --------------------
+// Plan S3: one ralplan transaction per decision (C-1.5), the counter in the
+// hook-only `state/ralplan-continuation.json` (R-O3).
 
-const ACTIVE: ExplicitStatePatch = {
-  active: true,
-  awaiting_confirmation: false,
-  current_phase: "ralplan",
-};
-
-test("a succeeded execution writes one resumed continuation and advances the breaker", async () => {
+test("a succeeded execution writes one resumed continuation and counts it in the continuation file", async () => {
   await fixture(async (context) => {
     const { store, hooks, synthetics } = context;
     const id = nextSession("continue");
-    await seed(store, id, ACTIVE);
+    await plan(store, id);
     await succeeded(hooks, id);
 
     expect(synthetics).toHaveLength(1);
@@ -672,35 +462,31 @@ test("a succeeded execution writes one resumed continuation and advances the bre
       "open-gajae: ralplan continuation 1/30",
     );
 
+    // P-AC8: the counter file holds exactly these keys; the state none of them.
+    const file = await counter(store, id);
+    expect(Object.keys(file).sort()).toEqual(["breaker_count", "breaker_updated_at", "run_id"]);
+    expect(file).toMatchObject({ run_id: "run-1", breaker_count: 1 });
     const state = await store.read(id, RALPLAN_MODE);
-    expect(state?.breaker_count).toBe(1);
-    expect(typeof state?.breaker_updated_at).toBe("string");
     expect(state?.active).toBe(true);
+    for (const key of ["breaker_count", "breaker_updated_at", "started_at", "restored_at"])
+      expect(state).not.toHaveProperty(key);
   });
 });
 
-test("awaiting, terminal and inactive states produce no continuation", async () => {
+test("terminal, stuck and inactive states produce no continuation; a finished run's breaker resets", async () => {
   await fixture(async (context) => {
     const { store, hooks } = context;
-    const awaiting = nextSession("awaiting");
-    await seed(store, awaiting, {
-      active: true,
-      awaiting_confirmation: true,
-      current_phase: "ralplan",
-    });
-    await succeeded(hooks, awaiting);
-
     const terminal = nextSession("terminal");
-    await seed(store, terminal, {
-      active: true,
-      awaiting_confirmation: false,
-      current_phase: "handoff:ralph",
-      breaker_count: 7,
-    });
+    await plan(store, terminal, { current_phase: "complete" });
+    await setCounter(store, terminal, { run_id: "run-1", breaker_count: 7, breaker_updated_at: new Date().toISOString() });
     await succeeded(hooks, terminal);
 
+    const stuck = nextSession("stuck");
+    await plan(store, stuck, { current_phase: "critic", planning_stuck: { marker: "PLANNING-STUCK", reason: "r" } });
+    await succeeded(hooks, stuck);
+
     const inactive = nextSession("inactive");
-    await seed(store, inactive, { active: false, current_phase: "ralplan" });
+    await plan(store, inactive, { active: false });
     await succeeded(hooks, inactive);
 
     // No state directory at all is a no-op too.
@@ -708,18 +494,17 @@ test("awaiting, terminal and inactive states produce no continuation", async () 
     await succeeded(hooks, empty);
 
     expect(continuations(context)).toHaveLength(0);
-    // A terminal phase resets the breaker instead of reinforcing.
-    expect((await store.read(terminal, RALPLAN_MODE))?.breaker_count).toBe(0);
-    expect((await store.read(awaiting, RALPLAN_MODE))?.breaker_count).toBeUndefined();
+    expect((await counter(store, terminal))?.breaker_count).toBe(0);
+    expect(await counter(store, inactive)).toBeUndefined();
     expect(await missing(store, empty)).toBe(true);
   });
 });
 
-test("the thirty-first succeeded trips the circuit breaker and deactivates the state", async () => {
+test("the thirty-first succeeded trips the circuit breaker: active false through the runtime writer, one audit row (R-O3)", async () => {
   await fixture(async (context) => {
     const { store, hooks } = context;
     const id = nextSession("breaker");
-    await seed(store, id, ACTIVE);
+    await plan(store, id);
     for (let turn = 0; turn < 31; turn += 1) await succeeded(hooks, id);
 
     const texts = continuations(context);
@@ -729,10 +514,18 @@ test("the thirty-first succeeded trips the circuit breaker and deactivates the s
     expect(texts[30]).not.toContain("REINFORCEMENT");
 
     const state = await store.read(id, RALPLAN_MODE);
-    expect(state?.active).toBe(false);
-    expect(state?.deactivated_reason).toBe("stop_breaker_exhausted");
-    expect(state?.breaker_count).toBe(0);
-    expect(typeof state?.completed_at).toBe("string");
+    expect(state).toMatchObject({ active: false, current_phase: "planner" });
+    for (const key of ["deactivated_reason", "completed_at", "breaker_count"])
+      expect(state).not.toHaveProperty(key);
+    expect((await counter(store, id))?.breaker_count).toBe(0);
+    const dir = await store.resolveSessionDir(id);
+    const audit = (await readFile(join(dir, "state", "audit.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((row) => String(row.mutation_id).includes("breaker-exhausted"));
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ owner: "open-gajae-hook", paths: [await store.statePath(id, RALPLAN_MODE)] });
 
     // A deactivated state is inert on the next succeeded.
     await succeeded(hooks, id);
@@ -740,20 +533,26 @@ test("the thirty-first succeeded trips the circuit breaker and deactivates the s
   });
 });
 
-test("a breaker timestamp past the TTL restarts the count at one", async () => {
+test("a counter past the TTL or of another run restarts the count at one", async () => {
   await fixture(async (context) => {
     const { store, hooks } = context;
-    const id = nextSession("ttl");
-    await seed(store, id, {
-      ...ACTIVE,
+    const stale = nextSession("ttl");
+    await plan(store, stale);
+    await setCounter(store, stale, {
+      run_id: "run-1",
       breaker_count: 30,
       breaker_updated_at: new Date(Date.now() - 46 * 60 * 1000).toISOString(),
     });
-    await succeeded(hooks, id);
+    await succeeded(hooks, stale);
+    const foreign = nextSession("other-run");
+    await plan(store, foreign);
+    await setCounter(store, foreign, { run_id: "run-0", breaker_count: 30, breaker_updated_at: new Date().toISOString() });
+    await succeeded(hooks, foreign);
     const texts = continuations(context);
-    expect(texts).toHaveLength(1);
-    expect(texts[0]).toContain("REINFORCEMENT 1/30");
-    expect((await store.read(id, RALPLAN_MODE))?.breaker_count).toBe(1);
+    expect(texts).toHaveLength(2);
+    for (const text of texts) expect(text).toContain("REINFORCEMENT 1/30");
+    expect(await counter(store, stale)).toMatchObject({ run_id: "run-1", breaker_count: 1 });
+    expect(await counter(store, foreign)).toMatchObject({ run_id: "run-1", breaker_count: 1 });
   });
 });
 
@@ -761,10 +560,10 @@ test("two concurrent succeeded events produce a single continuation", async () =
   await fixture(async (context) => {
     const { store, hooks } = context;
     const id = nextSession("inflight");
-    await seed(store, id, ACTIVE);
+    await plan(store, id);
     await Promise.all([succeeded(hooks, id), succeeded(hooks, id)]);
     expect(continuations(context)).toHaveLength(1);
-    expect((await store.read(id, RALPLAN_MODE))?.breaker_count).toBe(1);
+    expect((await counter(store, id))?.breaker_count).toBe(1);
   });
 });
 
@@ -772,12 +571,12 @@ test("a failed execution does not continue", async () => {
   await fixture(async (context) => {
     const { store, hooks } = context;
     const id = nextSession("failed");
-    await seed(store, id, ACTIVE);
+    await plan(store, id);
     await emit(hooks, "session.execution.failed", id, {
       error: { type: "provider.invalid-request", status: 400 },
     });
     expect(context.synthetics).toHaveLength(0);
-    expect((await store.read(id, RALPLAN_MODE))?.breaker_count).toBeUndefined();
+    expect(await counter(store, id)).toBeUndefined();
   });
 });
 
@@ -786,15 +585,14 @@ test("a user or shutdown interrupt stops continuation until a real prompt (Q9)",
     const { store, hooks } = context;
     for (const reason of ["user", "shutdown"]) {
       const id = nextSession(`interrupt-${reason}`);
-      await seed(store, id, ACTIVE);
+      await plan(store, id);
       await emit(hooks, "session.execution.interrupted", id, { reason });
       // Also a later host resume (subagent completion) that succeeds.
       await succeeded(hooks, id);
       await succeeded(hooks, id);
       expect(continuations(context)).toHaveLength(0);
-      const state = await store.read(id, RALPLAN_MODE);
-      expect(state?.breaker_count).toBeUndefined();
-      expect(state?.active).toBe(true);
+      expect(await counter(store, id)).toBeUndefined();
+      expect((await store.read(id, RALPLAN_MODE))?.active).toBe(true);
 
       // A marker-only prompt (the Q3 fallback shape) does not lift the mark.
       await notices(context, id, `x\n\n${continuationMessage(1)}`);
@@ -815,7 +613,7 @@ test("inactivity and superseded interrupts do not set the mark", async () => {
     const { store, hooks } = context;
     for (const reason of ["inactivity", "superseded"]) {
       const id = nextSession(`interrupt-${reason}`);
-      await seed(store, id, ACTIVE);
+      await plan(store, id);
       await emit(hooks, "session.execution.interrupted", id, { reason });
       await succeeded(hooks, id);
     }
@@ -828,7 +626,7 @@ test("an interrupt of another session does not silence this one", async () => {
     const { store, hooks } = context;
     const stopped = nextSession("interrupt-other");
     const running = nextSession("interrupt-running");
-    await seed(store, running, ACTIVE);
+    await plan(store, running);
     await emit(hooks, "session.execution.interrupted", stopped, { reason: "user" });
     await succeeded(hooks, running);
     expect(continuations(context)).toHaveLength(1);
@@ -842,7 +640,7 @@ test("continuation waits while a child execution runs (Q5)", async () => {
   await fixture(
     async (context) => {
       const { store, hooks } = context;
-      await seed(store, parent, ACTIVE);
+      await plan(store, parent);
       // A background child announced by `session.created`.
       await emit(hooks, "session.created", created, {
         parentID: parent,
@@ -866,7 +664,7 @@ test("continuation waits while a child execution runs (Q5)", async () => {
       });
       await succeeded(hooks, parent);
       expect(continuations(context)).toHaveLength(1);
-      expect((await store.read(parent, RALPLAN_MODE))?.breaker_count).toBe(1);
+      expect((await counter(store, parent))?.breaker_count).toBe(1);
     },
     { parents: { [looked]: parent } },
   );
@@ -878,7 +676,7 @@ test("sessions of another location are ignored (Q10)", async () => {
   await fixture(
     async (context) => {
       const { store, hooks, sessionGets } = context;
-      await seed(store, foreign, ACTIVE);
+      await plan(store, foreign);
       await emit(hooks, "session.execution.interrupted", foreign, { reason: "user" });
       await succeeded(hooks, foreign);
       await succeeded(hooks, foreign);
@@ -887,14 +685,14 @@ test("sessions of another location are ignored (Q10)", async () => {
       expect(sessionGets).toEqual([foreign]);
 
       // `session.created` supplies the location without a lookup.
-      await seed(store, announced, ACTIVE);
+      await plan(store, announced);
       await emit(hooks, "session.created", announced, {
         location: { directory: "/work/project/sub" },
       });
       await succeeded(hooks, announced);
       expect(context.synthetics).toHaveLength(0);
       expect(sessionGets).toEqual([foreign]);
-      expect((await store.read(foreign, RALPLAN_MODE))?.breaker_count).toBeUndefined();
+      expect(await counter(store, foreign)).toBeUndefined();
     },
     { locations: { [foreign]: "/work/project/sub" } },
   );
@@ -905,11 +703,11 @@ test("a rejected synthetic does not escape the event handler", async () => {
     async (context) => {
       const { store, hooks } = context;
       const id = nextSession("synthetic-reject-event");
-      await seed(store, id, ACTIVE);
+      await plan(store, id);
       await expect(succeeded(hooks, id)).resolves.toBeUndefined();
       expect(continuations(context)).toHaveLength(1);
       // The count stays incremented; the next succeeded is the retry.
-      expect((await store.read(id, RALPLAN_MODE))?.breaker_count).toBe(1);
+      expect((await counter(store, id))?.breaker_count).toBe(1);
     },
     { syntheticRejects: true },
   );
@@ -932,10 +730,10 @@ test("store, lookup and envelope errors never escape the event handler", async (
   await fixture(async (context) => {
     const { store, hooks } = context;
     const id = nextSession("event-store-error");
-    await seed(store, id, { ...ACTIVE, current_phase: "handoff:ralph" });
-    store.patch = (async () => {
+    await plan(store, id);
+    store.ralplanTransaction = (async () => {
       throw new Error("disk full");
-    }) as StateStore["patch"];
+    }) as StateStore["ralplanTransaction"];
     await expect(succeeded(hooks, id)).resolves.toBeUndefined();
     expect(context.synthetics).toHaveLength(0);
   });
@@ -954,31 +752,9 @@ test("a corrupt state file does not continue and stays byte-identical", async ()
   });
 });
 
-test("started_at is written once and survives later hook writes", async () => {
-  await fixture(async (context) => {
-    const { store, hooks } = context;
-    const id = nextSession("started-at");
-    await notices(context, id, "ralplan 계획 세워줘");
-    const seeded = await store.read(id, RALPLAN_MODE);
-    // Awaiting: no continuation before the skill loads.
-    await succeeded(hooks, id);
-    expect(continuations(context)).toHaveLength(0);
-    await skillCall(hooks, id, { id: "ralplan" });
-    await succeeded(hooks, id);
-    await notices(context, id, "ralplan 계속 진행");
-
-    const after = await store.read(id, RALPLAN_MODE);
-    expect(after?.started_at).toBe(seeded?.started_at as string);
-    expect(after?.breaker_count).toBe(1);
-    expect(continuations(context)).toHaveLength(1);
-  });
-});
-
-
 // --- D2c session-scoped artifact guard ------------------------------------
-// The static `edit` rules in src/config.ts pin planner writes to
-// `.open-gajae/_session-*/(plans|drafts)/`; only this hook can pin the session.
-// A block replaces the input with `{}` (the host's decode then fails) and
+// Only this hook can pin a session's plans and drafts to its own folder. A
+// block replaces the input with `{}` (the host's decode then fails) and
 // `execute.after` rewrites that failure into guidance (Phase 0 P3/P8).
 
 /** The session folder the store resolves for `sessionID`. */
@@ -1103,7 +879,7 @@ test("a subdirectory launch cannot reach another session's plans through ../ (A3
   await fixture(async ({ root, store }) => {
     const sub = join(root, "sub");
     await mkdir(sub);
-    const { session } = fakeSession(store, {}, sub);
+    const { session } = fakeSession({}, sub);
     const hooks = createHooks(store, session, PACKAGE_ROOT, sub, root);
     const id = nextSession("guard-sub");
     const folder = await folderOf(store, id);
@@ -1139,27 +915,35 @@ test("an unresolvable session lineage blocks the write", async () => {
   );
 });
 
-test("the guard judges only session plans and drafts", async () => {
+test("(m) with the lineage lookup failing, the planning guard lets calls through; runtime-owned and session paths stay refused", async () => {
   await fixture(
-    async ({ root, hooks, sessionGets }) => {
+    async ({ root, store, hooks }) => {
       const id = nextSession("guard-other-paths");
-      // `session.get` rejects here, so any lookup at all would block.
+      // An active planning run that would block these if the root resolved.
+      await plan(store, id);
       for (const path of [
         join(root, "src/x.ts"),
         join(root, ".open-gajae/open-gajae.jsonc"),
         join(root, ".open-gajae", OTHER, "specs/spec.md"),
-        join(root, ".open-gajae", OTHER, "state/ralplan-state.json"),
         "src/x.ts",
         "/etc/passwd",
       ])
         expect((await writeCall(hooks, id, path)).input).not.toEqual({});
-      // Tools that write no file are not inspected either.
+      for (const path of [
+        join(root, ".open-gajae", OTHER, "state/ralplan-state.json"),
+        join(root, ".open-gajae", OTHER, "state/ralplan-continuation.json"),
+        join(root, ".open-gajae", OTHER, "plans/ralplan/run-1/index.jsonl"),
+      ]) {
+        const call = await writeCall(hooks, id, path);
+        expect(call.input).toEqual({});
+        expect(((await failed(hooks, call)).error as ToolError).message).toContain("runtime-owned");
+      }
+      expect((await writeCall(hooks, id, join(root, ".open-gajae", OTHER, "plans/p.md"))).input).toEqual({});
+      // Tools that write no file are not inspected, and their failures are left alone.
       const read = await toolCall(hooks, id, "read", {
         path: join(root, ".open-gajae", OTHER, "plans/p.md"),
       });
       expect(read.input).not.toEqual({});
-      expect(sessionGets).toHaveLength(0);
-      // And their failures are left alone.
       const error = new Error("some other failure");
       expect((await failed(hooks, read, "open-gajae", error)).error).toBe(error);
     },
@@ -1167,64 +951,15 @@ test("the guard judges only session plans and drafts", async () => {
   );
 });
 
-test("a planner permission block is rewritten; other failures are left alone (C11)", async () => {
-  await fixture(async ({ store, hooks }) => {
-    const id = nextSession("guard-planner");
-    const folder = await folderOf(store, id);
-    const blockedError = () => ({
-      _tag: "Tool.Error",
-      message: "Unable to write outside/x.md",
-      error: { _tag: "Permission.BlockedError", message: "Permission denied: edit" },
-    });
-    const call = { tool: "write", sessionID: id, id: nextCall() };
-    const rewritten = await failed(
-      hooks,
-      call,
-      "open-gajae-planner",
-      blockedError(),
-    );
-    expect(rewritten.error).toBeInstanceOf(ToolError);
-    expect((rewritten.error as ToolError).message).toContain(
-      `(.open-gajae/${folder}/plans|drafts/)`,
-    );
-    // Another agent's permission block, a planner error of another kind, and a
-    // non-artifact tool keep the host's error.
-    const other = blockedError();
-    expect((await failed(hooks, call, "open-gajae-critic", other)).error).toBe(
-      other,
-    );
-    const plain = { _tag: "Tool.Error", message: "File not found" };
-    expect((await failed(hooks, call, "open-gajae-planner", plain)).error).toBe(
-      plain,
-    );
-    const shell = blockedError();
-    expect(
-      (
-        await failed(
-          hooks,
-          { ...call, tool: "shell" },
-          "open-gajae-planner",
-          shell,
-        )
-      ).error,
-    ).toBe(shell);
-  });
-});
-
 test("store and lookup errors inside execute.before and execute.after resolve (C10)", async () => {
   await fixture(
     async ({ root, store, hooks }) => {
       const id = nextSession("guard-errors");
-      // Lookup failure: the planner rewrite still happens, with a generic folder.
-      const after = await failed(
-        hooks,
-        { tool: "edit", sessionID: id, id: nextCall() },
-        "open-gajae-planner",
-        { error: { _tag: "Permission.BlockedError" } },
-      );
-      expect((after.error as ToolError).message).toContain(
-        "(.open-gajae/_session-*/plans|drafts/)",
-      );
+      // A host permission block with no recorded block keeps the host's error.
+      const permission = { error: { _tag: "Permission.BlockedError" } };
+      expect(
+        (await failed(hooks, { tool: "edit", sessionID: id, id: nextCall() }, "open-gajae-planner", permission)).error,
+      ).toBe(permission);
       // A store failure while guarding blocks the call and resolves.
       store.resolveSessionDir = async () => {
         throw new Error("store failed");
@@ -1242,23 +977,6 @@ test("store and lookup errors inside execute.before and execute.after resolve (C
     },
     { sessionGetRejects: true },
   );
-});
-
-test("the guard leaves the ralplan skill confirmation path intact", async () => {
-  await fixture(async (context) => {
-    const { root, store, hooks } = context;
-    const id = nextSession("guard-skill");
-    await notices(context, id, "랄플랜 정리해줘");
-    expect((await store.read(id, RALPLAN_MODE))?.awaiting_confirmation).toBe(
-      true,
-    );
-    const folder = await folderOf(store, id);
-    await writeCall(hooks, id, join(root, ".open-gajae", folder, "plans/p.md"));
-    await skillCall(hooks, id, { id: "ralplan" });
-    expect((await store.read(id, RALPLAN_MODE))?.awaiting_confirmation).toBe(
-      false,
-    );
-  });
 });
 
 test("each notice carries a one-line TUI description naming its skill", async () => {
@@ -1282,13 +1000,14 @@ test("each notice carries a one-line TUI description naming its skill", async ()
 });
 
 // ---------------------------------------------------------------------------
-// Ultragoal (plan §5, §6). Added cases only; the ralplan cases above are
-// unchanged.
+// Ultragoal (plan §5, §6), then the plan S3 guard, gate and compaction cases.
 // ---------------------------------------------------------------------------
 
+import { RALPLAN_RUNNING_REFUSAL } from "../src/ralplan-runtime/store";
 import { createTools } from "../src/tools";
 import {
   CHAIN_GUARD_REFUSAL,
+  isRalplanRunning,
   ralplanMentionNotice,
   ralplanRunningNotice,
   seedUltragoalState,
@@ -1329,7 +1048,7 @@ test("ultragoal keyword seeds awaiting, the skill load confirms, the mention see
   });
 });
 
-test("with no gate, a vague ultragoal starts ultragoal; a prompt that also asks for ralplan starts only ralplan", async () => {
+test("with no gate, a vague ultragoal starts ultragoal; a prompt that also asks for ralplan does not", async () => {
   await fixture(async (context) => {
     const { store } = context;
     const cases: [{ skills?: string[] }, boolean][] = [[{}, true], [{ skills: ["ultragoal"] }, false]];
@@ -1344,22 +1063,6 @@ test("with no gate, a vague ultragoal starts ultragoal; a prompt that also asks 
     const both = nextSession("both");
     await notices(context, both, "ralplan then ultragoal add auth");
     expect(await missing(store, both, UG)).toBe(true);
-    expect((await store.read(both, RALPLAN_MODE))?.active).toBe(true);
-  });
-});
-
-test("ralplan's Execute via ultragoal handoff seeds once and is consumed", async () => {
-  await fixture(async (context) => {
-    const { store, hooks } = context;
-    const id = nextSession("r17");
-    await seed(store, id, { active: false, current_phase: "handoff", plan_path: "p.md" });
-    const load = () => hooks.executeBefore({ tool: "skill", sessionID: id, agent: "open-gajae", id: nextCall(), input: { id: "ultragoal" } });
-    await load();
-    expect(await ugState(store, id)).toMatchObject({ active: true, awaiting_confirmation: false });
-    expect(await store.read(id, RALPLAN_MODE)).toMatchObject({ current_phase: "handoff-consumed", plan_path: "p.md" });
-    await store.clear(id, UG);
-    await load();
-    expect(await missing(store, id, UG)).toBe(true);
   });
 });
 
@@ -1440,10 +1143,11 @@ test("reject ceiling pauses, a user prompt resets the target; an ultragoal turn 
     const { store, hooks, synthetics } = context;
     const id = nextSession("ceiling");
     await ugSeed(store, id, { reject_counts: { G001: 3 } });
-    await seed(store, id, { active: true, current_phase: "handoff", breaker_count: 5 });
+    await plan(store, id, { current_phase: "handoff" });
+    await setCounter(store, id, { run_id: "run-1", breaker_count: 5, breaker_updated_at: new Date().toISOString() });
     await succeeded(hooks, id);
     expect(synthetics.at(-1)!.text).toContain("Goal G001 was rejected 3 times in a row");
-    expect((await store.read(id, RALPLAN_MODE))?.breaker_count).toBe(0);
+    expect((await counter(store, id))?.breaker_count).toBe(0);
     await notices(context, id, "try again");
     const state = await ugState(store, id);
     expect(state?.reject_counts).toBeUndefined();
@@ -1471,14 +1175,9 @@ test("one mode at a time: chain guard, @ralplan notice, silent ralplan keyword, 
     expect(allowed.input).toEqual({ id: "ralplan" });
 
     const planning = nextSession("q1");
-    await seed(store, planning, { active: true, current_phase: "ralplan", awaiting_confirmation: false });
+    await plan(store, planning);
     expect(await notices(context, planning, "force: ultragoal fix it")).toEqual([ralplanRunningNotice()]);
     expect(await missing(store, planning, UG)).toBe(true);
-    // A stale awaiting ralplan seed is cleared first, so it does not block.
-    const stale = nextSession("q1-stale");
-    await seed(store, stale, { active: true, current_phase: "ralplan", awaiting_confirmation: true });
-    await notices(context, stale, "force: ultragoal fix it");
-    expect((await ugState(store, stale))?.active).toBe(true);
   });
 });
 
@@ -1525,5 +1224,236 @@ test("ultragoal files are blocked for write tools and compaction carries the run
     await hooks.compaction(event);
     expect(event.system).toHaveLength(1);
     expect(event.system[0].text).toStartWith("<ultragoal-compaction-context>");
+  });
+});
+
+/** `ralplan` tool calls as the primary, over the fixture's hook lineage. */
+function ralplanCalls(context: Fixture) {
+  const tool = createTools(context.store, { locationDir: context.root, projectDir: context.root }, {
+    parentSession: context.hooks.parentSession,
+    rootSession: context.hooks.rootSession,
+  }).find((t) => t.name === "ralplan")!;
+  return async (sessionID: string, args: Record<string, unknown>) =>
+    (await tool.execute(tool.input.parse(args) as never, { agent: "open-gajae", sessionID, signal: new AbortController().signal })).content;
+}
+
+const skillLoad = (sessionID: string, id = "ultragoal") => ({
+  tool: "skill",
+  sessionID,
+  agent: "open-gajae",
+  id: nextCall(),
+  input: { id } as unknown,
+});
+
+const GOAL = { title: "g", description: "d", priority: 1, acceptanceCriteria: ["works"] };
+
+test("(a) R-O7: while ultragoal runs at the root the planning guard steps aside; runtime-owned paths stay refused", async () => {
+  const id = nextSession("a-root");
+  const child = nextSession("a-executor");
+  await fixture(
+    async ({ root, store, hooks }) => {
+      const folder = await folderOf(store, id);
+      await plan(store, id);
+      await ugSeed(store, id);
+      for (const session of [id, child]) {
+        expect((await writeCall(hooks, session, join(root, "src/x.ts"))).input).not.toEqual({});
+        for (const path of [
+          `.open-gajae/${folder}/plans/ralplan/run-1/stage-01-planner.md`,
+          `.open-gajae/${folder}/state/ralplan-state.json`,
+          `.open-gajae/${folder}/ultragoal/goals.json`,
+        ])
+          expect((await writeCall(hooks, session, path)).input).toEqual({});
+      }
+      await store.patch(id, { active: false, current_phase: "handoff" }, UG);
+      for (const session of [id, child])
+        expect((await writeCall(hooks, session, join(root, "src/x.ts"))).input).toEqual({});
+    },
+    { parents: { [child]: id } },
+  );
+});
+
+test("(b) R-O9: a running ultragoal passes the entry gate without touching ralplan; otherwise ralplan planning refuses it", async () => {
+  await fixture(async ({ root, store, hooks }) => {
+    const id = nextSession("b");
+    const call = ultragoalTool(store, root);
+    await plan(store, id);
+    await ugSeed(store, id);
+    const before = await raw(store, id);
+    const load = skillLoad(id);
+    await hooks.executeBefore(load);
+    expect(load.input).toEqual({ id: "ultragoal" });
+    expect(await call(id, { op: "create", description: "task", goals: [GOAL] })).toStartWith("Created");
+    expect(await raw(store, id)).toBe(before);
+    await store.patch(id, { active: false, current_phase: "handoff" }, UG);
+    const refused = skillLoad(id);
+    await hooks.executeBefore(refused);
+    expect(refused.input).toEqual({});
+    expect(await call(id, { op: "create", description: "task", goals: [GOAL], replace: true })).toBe(`Error: ${RALPLAN_RUNNING_REFUSAL}`);
+    expect(await raw(store, id)).toBe(before);
+  });
+});
+
+test("(c) clear, then a write on the same run, leaves it finished: edits pass, no continuation (DR-3, R-OD9)", async () => {
+  await fixture(async (context) => {
+    const { root, store, hooks } = context;
+    const id = nextSession("c");
+    const ralplan = ralplanCalls(context);
+    await ralplan(id, { op: "start", task: "t" });
+    expect((await toolCall(hooks, id, "edit", { path: join(root, "src/x.ts") })).input).toEqual({});
+    await ralplan(id, { op: "clear" });
+    expect(await ralplan(id, { op: "write", stage: "planner", stage_n: 1, content: "# p\n" })).not.toStartWith("Error:");
+    const state = await store.read(id, RALPLAN_MODE);
+    expect(state).toMatchObject({ active: false, current_phase: "complete" });
+    expect(isRalplanRunning(state)).toBe(false);
+    expect((await toolCall(hooks, id, "edit", { path: join(root, "src/x.ts") })).input).not.toEqual({});
+    await succeeded(hooks, id);
+    expect(continuations(context)).toHaveLength(0);
+  });
+});
+
+test("(d) an active final or handoff keeps blocking edits outside a temp path; an active complete releases (C-2 R)", async () => {
+  await fixture(async ({ root, store, hooks }) => {
+    for (const phase of ["final", "handoff"]) {
+      const id = nextSession(`d-${phase}`);
+      await plan(store, id, { current_phase: phase });
+      const call = await toolCall(hooks, id, "edit", { path: join(root, "src/x.ts") });
+      expect(call.input).toEqual({});
+      const message = ((await failed(hooks, call)).error as ToolError).message;
+      expect(message).toContain("Ralplan planning phase boundary");
+      expect(message).toContain("`ralplan clear`");
+      expect((await writeCall(hooks, id, join(tmpdir(), `open-gajae-scratch-${phase}.md`))).input).not.toEqual({});
+    }
+    const released = nextSession("d-complete");
+    await plan(store, released, { current_phase: "complete" });
+    expect((await toolCall(hooks, released, "edit", { path: join(root, "src/x.ts") })).input).not.toEqual({});
+  });
+});
+
+test("(e) a legacy ralplan state is unreadable: no guard, no continuation, the gate passes (DR-21)", async () => {
+  await fixture(async (context) => {
+    const { root, store, hooks } = context;
+    const id = nextSession("e");
+    await seed(store, id, { active: true, current_phase: "ralplan" });
+    const before = await raw(store, id);
+    expect((await toolCall(hooks, id, "edit", { path: join(root, "src/x.ts") })).input).not.toEqual({});
+    await succeeded(hooks, id);
+    expect(continuations(context)).toHaveLength(0);
+    const load = skillLoad(id);
+    await hooks.executeBefore(load);
+    expect(load.input).toEqual({ id: "ultragoal" });
+    expect(await raw(store, id)).toBe(before);
+  });
+});
+
+test("(f) compaction adds the ralplan recovery contract of an active run only (AC19)", async () => {
+  await fixture(async (context) => {
+    const { store, hooks } = context;
+    const id = nextSession("f");
+    const ralplan = ralplanCalls(context);
+    await ralplan(id, { op: "start", task: "t" });
+    await ralplan(id, {
+      op: "write",
+      stage: "final",
+      stage_n: 1,
+      content: "# Plan\n\nShip the cache layer.\n\n## Scope\n- cache reads\n\n## Non-goals\n- cache writes\n\n## Acceptance criteria\n- hit rate logged\n\n## Intent Reconciliation\n- confirm the TTL\n",
+    });
+    const compact = async () => {
+      const event = { sessionID: id, system: [] as { type: "text"; text: string }[] };
+      await hooks.compaction(event);
+      return event.system.map((part) => part.text);
+    };
+    const [text, ...rest] = await compact();
+    expect(rest).toHaveLength(0);
+    expect(text).toStartWith("<ralplan-compaction-context>");
+    for (const line of [
+      "Workflow contract (ralplan): Ship the cache layer.",
+      "Accepted scope: cache reads",
+      "Non-goals: cache writes",
+      "Acceptance criteria: hit rate logged",
+      "Intent Reconciliation: confirm the TTL",
+      "Next action: awaiting-approval",
+    ])
+      expect(text).toContain(line);
+    await ralplan(id, { op: "state", patch: { active: false } });
+    expect(await compact()).toEqual([]);
+    await ralplan(id, { op: "state", patch: { active: true } });
+    expect(await compact()).toHaveLength(1);
+    const stage = join(await store.resolveSessionDir(id), "plans", "ralplan", id, "stage-01-final.md");
+    await writeFile(stage, "# Plan\n\nSomething else.\n");
+    expect(await compact()).toEqual([]);
+  });
+});
+
+test("(i) an @ultragoal mention hands off a finished ralplan, and gets only the notice while it plans (C-4)", async () => {
+  await fixture(async (context) => {
+    const { store } = context;
+    const id = nextSession("i");
+    const ralplan = ralplanCalls(context);
+    await ralplan(id, { op: "start", task: "t" });
+    expect(await notices(context, id, "run it", { skills: ["ultragoal"] })).toEqual([ralplanRunningNotice()]);
+    expect(await missing(store, id, UG)).toBe(true);
+    await ralplan(id, { op: "write", stage: "final", stage_n: 1, content: "# f\n" });
+    const [notice] = await notices(context, id, "run it", { skills: ["ultragoal"] });
+    expect(notice).toContain("[MODE: ULTRAGOAL]");
+    const state = await store.read(id, RALPLAN_MODE);
+    expect(state).toMatchObject({ active: false, current_phase: "handoff", handoff_to: "ultragoal" });
+    expect(await Bun.file(join(await store.resolveSessionDir(id), "state", "active", "ralplan.json")).exists()).toBe(false);
+    expect(await ugState(store, id)).toMatchObject({ active: true, awaiting_confirmation: false, handoff_from: "ralplan", handoff_at: state?.handoff_at });
+  });
+});
+
+test("(j) a keyword's awaiting seed, then `skill ultragoal` over a finished ralplan: handed off, confirmed, meta merged", async () => {
+  await fixture(async (context) => {
+    const { store, hooks } = context;
+    const id = nextSession("j");
+    const ralplan = ralplanCalls(context);
+    await ralplan(id, { op: "start", task: "t" });
+    await ralplan(id, { op: "write", stage: "final", stage_n: 1, content: "# f\n" });
+    expect(await notices(context, id, "force: ultragoal fix it")).toHaveLength(1);
+    expect(await ugState(store, id)).toMatchObject({ active: true, awaiting_confirmation: true });
+    expect(await store.read(id, RALPLAN_MODE)).toMatchObject({ active: true, current_phase: "final" });
+    const load = skillLoad(id);
+    await hooks.executeBefore(load);
+    expect(load.input).toEqual({ id: "ultragoal" });
+    expect(await store.read(id, RALPLAN_MODE)).toMatchObject({ active: false, current_phase: "handoff" });
+    expect(await ugState(store, id)).toMatchObject({ active: true, awaiting_confirmation: false, handoff_from: "ralplan" });
+  });
+});
+
+test("(k) through gate ④, `ultragoal start` logs START and starts, and `resume` logs RESUME", async () => {
+  await fixture(async (context) => {
+    const { root, store } = context;
+    const ralplan = ralplanCalls(context);
+    const call = ultragoalTool(store, root);
+    const progress = async (id: string) =>
+      readFile(join(await store.resolveSessionDir(id), "ultragoal", "progress.txt"), "utf8");
+    const a = nextSession("k-start");
+    await ralplan(a, { op: "start", task: "t" });
+    await ralplan(a, { op: "write", stage: "final", stage_n: 1, content: "# f\n" });
+    expect(await call(a, { op: "start", reason: "run the plan" })).toContain("Ultragoal started");
+    expect(await store.read(a, RALPLAN_MODE)).toMatchObject({ active: false, current_phase: "handoff" });
+    expect(await ugState(store, a)).toMatchObject({ active: true, handoff_from: "ralplan" });
+    expect(await progress(a)).toContain("- START");
+
+    const b = nextSession("k-resume");
+    await ugSeed(store, b);
+    await call(b, { op: "create", description: "task", goals: [GOAL] });
+    expect(await call(b, { op: "handoff", to: "ralplan", reason: "replan" })).toContain("ralplan started");
+    await ralplan(b, { op: "write", stage: "final", stage_n: 1, content: "# f\n" });
+    expect(await call(b, { op: "resume", reason: "back" })).toContain("Resumed");
+    expect(await store.read(b, RALPLAN_MODE)).toMatchObject({ active: false, current_phase: "handoff" });
+    expect(await progress(b)).toContain("- RESUME");
+  });
+});
+
+test("(l) the C-4 refusal blocks `skill ultragoal` by invalidating its input, and the failure is rewritten", async () => {
+  await fixture(async ({ store, hooks }) => {
+    const id = nextSession("l");
+    await plan(store, id);
+    const load = skillLoad(id);
+    await hooks.executeBefore(load);
+    expect(load.input).toEqual({});
+    expect(((await failed(hooks, load)).error as ToolError).message).toBe(RALPLAN_RUNNING_REFUSAL);
+    expect(await missing(store, id, UG)).toBe(true);
   });
 });

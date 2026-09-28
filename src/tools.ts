@@ -4,13 +4,11 @@ import { z } from "zod";
 import {
   DEEP_INTERVIEW_MODE,
   type ExplicitStatePatch,
-  RALPLAN_MODE,
-  type StateMode,
   StateStore,
-  ULTRAGOAL_MODE,
 } from "./state.js";
-import { isUltragoalRunning, RALPLAN_ACTIVATION_REFUSAL } from "./ultragoal.js";
 import { ultragoalTool, type UltragoalToolDeps } from "./ultragoal-tool.js";
+import { seedUltragoal } from "./ultragoal-hooks.js";
+import { startRun, ultragoalEntryGate } from "./ralplan-runtime/store.js";
 import {
   DEFAULT_RALPLAN_SETTINGS,
   ralplanTool,
@@ -71,34 +69,31 @@ const explicitShape = {
   restored_at: z.string().max(100).optional(),
 };
 
-// Ultragoal state is reached only through the `ultragoal` tool (decision 21).
-const modeArg = z
-  .enum([DEEP_INTERVIEW_MODE, RALPLAN_MODE])
-  .default(DEEP_INTERVIEW_MODE);
+// Ultragoal state is reached only through the `ultragoal` tool (decision 21),
+// and ralplan state only through the `ralplan` tool (plan S3, D-W1/AC15).
+const modeArg = z.enum([DEEP_INTERVIEW_MODE]).default(DEEP_INTERVIEW_MODE);
 
-type ToolMode = typeof DEEP_INTERVIEW_MODE | typeof RALPLAN_MODE;
+type ToolMode = typeof DEEP_INTERVIEW_MODE;
 
 /** Direct callers may omit `mode`; only host-parsed args carry the schema default. */
 function resolveMode(mode: ToolMode | undefined): ToolMode {
   return mode ?? DEEP_INTERVIEW_MODE;
 }
 
-async function pathResult(
-  store: StateStore,
-  sessionID: string,
-  mode: StateMode,
-) {
-  const { statePath, specsDir, plansDir, draftsDir } =
-    await store.resolveSessionPaths(sessionID, mode);
-  return { statePath, specsDir, plansDir, draftsDir };
+/** Plan DR-16 (D-T4): no `plansDir`/`draftsDir`; ralplan plans are the tool's. */
+async function pathResult(store: StateStore, sessionID: string, mode: ToolMode) {
+  const { statePath, specsDir } = await store.resolveSessionPaths(sessionID, mode);
+  return { statePath, specsDir };
 }
 
 /**
- * Host lookups and setup-time settings. `rootSession` and `ralplanSettings`
- * are optional so harnesses that pass only `parentSession` still build: a
- * missing `rootSession` fails closed and only the `ralplan` tool refuses.
+ * Host lookups and setup-time settings only; the store-bound ralplan entry
+ * points the `ultragoal` tool uses are bound here (plan S2/S3). `rootSession`
+ * and `ralplanSettings` are optional so harnesses that pass only
+ * `parentSession` still build: a missing `rootSession` fails closed and only
+ * the `ralplan` tool refuses.
  */
-export type ToolDeps = UltragoalToolDeps &
+export type ToolDeps = Pick<UltragoalToolDeps, "parentSession"> &
   Partial<Pick<RalplanToolDeps, "rootSession">> & {
     ralplanSettings?: RalplanToolDeps["settings"];
   };
@@ -122,7 +117,15 @@ export function createTools(
   return [
     astGrepSearchTool(paths),
     ...lspTools(paths),
-    ultragoalTool(store, deps),
+    // C-4 before any ultragoal transaction and R-O1's `startRun` (plan C-1.3,
+    // C-1.4), bound to this store.
+    ultragoalTool(store, {
+      parentSession: deps.parentSession,
+      entryGate: (sessionID) => ultragoalEntryGate(store, sessionID),
+      startRalplan: (sessionID, input) =>
+        startRun(store, sessionID, input, { projectDir: paths.projectDir }),
+      seedUltragoal: (sessionID, input) => seedUltragoal(store, sessionID, input),
+    }),
     ralplanTool(store, {
       rootSession: deps.rootSession ?? noHostLookup,
       settings: deps.ralplanSettings ?? DEFAULT_RALPLAN_SETTINGS,
@@ -132,7 +135,7 @@ export function createTools(
       name: "state_read",
       permission: "state_read",
       description:
-        "Read the current session's deep-interview or ralplan state. It never aggregates or inherits another session's state.",
+        "Read the current session's deep-interview state. It never aggregates or inherits another session's state; ralplan state is read with the `ralplan` tool.",
       input: z.object({
         mode: modeArg,
         workingDirectory: z.string().optional(),
@@ -155,7 +158,7 @@ export function createTools(
       name: "state_write",
       permission: "state_write",
       description:
-        "Replace the current session's deep-interview or ralplan model snapshot. Explicit arguments take priority and every write regenerates metadata.",
+        "Replace the current session's deep-interview model snapshot. Explicit arguments take priority and every write regenerates metadata. Ralplan state is changed only with the `ralplan` tool.",
       input: z.object({
         mode: modeArg,
         workingDirectory: z.string().optional(),
@@ -166,16 +169,6 @@ export function createTools(
       async execute(args, context) {
         scope(store, context, args.workingDirectory, "state_write");
         const mode = resolveMode(args.mode);
-        // Q-2: one mode at a time. Only a running ultragoal refuses it; a
-        // handed-off, completed, awaiting or missing one leaves this as before.
-        if (
-          mode === RALPLAN_MODE &&
-          (args.active === true || args.state?.active === true) &&
-          isUltragoalRunning(
-            await store.read(context.sessionID, ULTRAGOAL_MODE).catch(() => undefined),
-          )
-        )
-          throw new Error(RALPLAN_ACTIVATION_REFUSAL);
         const paths = await pathResult(store, context.sessionID, mode);
         const {
           mode: _mode,
@@ -197,7 +190,7 @@ export function createTools(
       name: "state_clear",
       permission: "state_clear",
       description:
-        "Delete only the current session's deep-interview or ralplan state file. Session documents are preserved.",
+        "Delete only the current session's deep-interview state file. Session documents are preserved. Ralplan state is cleared with `ralplan clear`.",
       input: z.object({
         mode: modeArg,
         workingDirectory: z.string().optional(),

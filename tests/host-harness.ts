@@ -12,7 +12,7 @@
 // `#ACTION {"tag": ..., "steps": [...]}` scripts the turn: step k is answered
 // on the k-th request after that message (a tool call, a text, a delayed text,
 // or an HTTP error). A `<ralplan-continuation>` message is answered with
-// `state_clear(mode="ralplan")` once its reinforcement count reaches the
+// `ralplan clear` (plan DR-17) once its reinforcement count reaches the
 // thread's `clearAfter` (default 1), so a continuation loop always ends. An
 // `<ultragoal-continuation>` is answered the same way with `ultragoal cancel`
 // once `iteration - 1` reaches `clearAfter`. A `{{request_id}}` inside scripted
@@ -265,7 +265,7 @@ function classify(messages: any[]) {
     const count = Number(continuation[1]);
     const clear = count >= (thread?.clearAfter ?? 1);
     const steps: Action[] = clear
-      ? [{ tool: "state_clear", args: { mode: "ralplan" } }, { text: "cleared" }]
+      ? [{ tool: "ralplan", args: { op: "clear" } }, { text: "cleared" }]
       : [{ text: `continuing ${count}` }];
     return { kind: "continuation" as const, step, thread, steps, count };
   }

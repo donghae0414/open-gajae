@@ -1,12 +1,14 @@
-// Session-scoped artifact guard, the dynamic half of the planner's write scope.
-// The static permission rules in `src/config.ts` pin writes to
-// `.open-gajae/_session-*/(plans|drafts)/`, but no static rule can name the
-// current session. These pure helpers say which session folder a write would
-// land in; the `execute.before` hook in `src/hooks.ts` compares that with the
-// caller's root session.
+// Session-scoped artifact guard. These pure helpers say which session folder a
+// write would land in; the `execute.before` hook in `src/hooks.ts` compares
+// that with the caller's root session, so a session writes plans and drafts
+// only into its own folder. The rule applies to every session and agent; since
+// plan S3 (D-T4) no role has a static `edit` allow for these folders, and the
+// planner records its plan through the `ralplan` tool instead.
 //
-// The rule is applied to every session, not just the planner's: "write only
-// into your own session folder" is correct for the leader too.
+// Plan S3 also adds two always-blocked, runtime-owned path sets (gajae-code
+// 5c52314 `skill-state/workflow-mutation-guard.ts:1683-1690`, where every
+// `.gjc/**` target is blocked for mutation tools): the ralplan run folders
+// `plans/ralplan/**` and the session `state/**` tree (AC18, AC21).
 
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
@@ -93,9 +95,8 @@ export function projectPrefix(locationDir: string, projectDir: string): string {
 
 /**
  * The `_session-…` folder that owns `p`, or `undefined` when the path is not a
- * session plan or draft. Paths outside the project are `undefined` too: the
- * static permission rules already refuse them, and this guard judges only
- * which session a session artifact belongs to.
+ * session plan or draft. Paths outside the project are `undefined` too: this
+ * guard judges only which session a session artifact belongs to.
  */
 export function sessionArtifactOwner(
   locationDir: string,
@@ -121,4 +122,31 @@ export function isUltragoalOwned(
 ): boolean {
   const path = projectRelative(locationDir, projectDir, p);
   return path !== undefined && ULTRAGOAL_OWNED.test(path);
+}
+
+/** The ralplan run folders, written only by the `ralplan` tool (spec D-W1). */
+const RALPLAN_OWNED = /^\.open-gajae\/_session-[^/]+\/plans\/ralplan(?:\/|$)/;
+
+export function isRalplanOwned(
+  locationDir: string,
+  projectDir: string,
+  p: string,
+): boolean {
+  const path = projectRelative(locationDir, projectDir, p);
+  return path !== undefined && RALPLAN_OWNED.test(path);
+}
+
+/**
+ * The session `state/` tree: mode states, the ralplan continuation counter,
+ * the audit log and the active rows (plan R-O3, DR-18).
+ */
+const SESSION_STATE = /^\.open-gajae\/_session-[^/]+\/state(?:\/|$)/;
+
+export function isSessionState(
+  locationDir: string,
+  projectDir: string,
+  p: string,
+): boolean {
+  const path = projectRelative(locationDir, projectDir, p);
+  return path !== undefined && SESSION_STATE.test(path);
 }

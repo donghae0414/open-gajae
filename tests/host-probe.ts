@@ -68,11 +68,11 @@ await runProbe("open-gajae-host-probe", async (report, scratch) => {
       );
       const hidden = ["question", "state_write", "state_clear"].filter((t) => request?.tools.includes(t));
       report.check(`${agent}: question/state_write/state_clear hidden`, !!request && hidden.length === 0, hidden);
+      // Plan S3 (D-T4): the planner records through `ralplan write`, so it has
+      // no `write` either.
       report.check(
-        `${agent}: ${agent === "open-gajae-planner" ? "write offered (own plans only)" : "write/edit hidden"}`,
-        agent === "open-gajae-planner"
-          ? !!request?.tools.includes("write")
-          : !!request && !request.tools.includes("write") && !request.tools.includes("edit"),
+        `${agent}: write/edit hidden`,
+        !!request && !request.tools.includes("write") && !request.tools.includes("edit"),
         request?.tools,
       );
       const reviewer = agent === "open-gajae-architect" || agent === "open-gajae-critic";

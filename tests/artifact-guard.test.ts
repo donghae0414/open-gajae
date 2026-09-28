@@ -2,6 +2,8 @@ import { test, expect } from "bun:test";
 import { join } from "node:path";
 import {
   artifactPathsOf,
+  isRalplanOwned,
+  isSessionState,
   isUltragoalOwned,
   projectRelative,
   sessionArtifactOwner,
@@ -149,5 +151,25 @@ test("ultragoal files and state are owned by the ultragoal tool from any locatio
   for (const [location, path, owned] of table)
     expect(`${path}: ${isUltragoalOwned(location, PROJECT, path)}`).toBe(
       `${path}: ${owned}`,
+    );
+});
+
+test("ralplan run folders and the session state tree are runtime-owned from any location (AC18, AC21)", () => {
+  const table: [string, string, boolean, boolean][] = [
+    [PROJECT, `.open-gajae/${OWNER}/plans/ralplan/run/stage-01-planner.md`, true, false],
+    [PROJECT, `.open-gajae/${OWNER}/plans/ralplan`, true, false],
+    [SUB, `../.open-gajae/${OWNER}/plans/ralplan/run/index.jsonl`, true, false],
+    [PROJECT, `.open-gajae/${OWNER}/state/ralplan-state.json`, false, true],
+    [PROJECT, `.open-gajae/${OWNER}/state/ralplan-continuation.json`, false, true],
+    [PROJECT, join(PROJECT, `.open-gajae/${OWNER}/state/active/ralplan.json`), false, true],
+    [PROJECT, `.open-gajae/${OWNER}/plans/plan.md`, false, false],
+    [PROJECT, `.open-gajae/${OWNER}/plans/ralplan-notes.md`, false, false],
+    [PROJECT, `.open-gajae/${OWNER}/specs/spec.md`, false, false],
+    [PROJECT, "src/state/x.ts", false, false],
+    [SUB, `.open-gajae/${OWNER}/state/ralplan-state.json`, false, false],
+  ];
+  for (const [location, path, ralplan, state] of table)
+    expect(`${path}: ${isRalplanOwned(location, PROJECT, path)} ${isSessionState(location, PROJECT, path)}`).toBe(
+      `${path}: ${ralplan} ${state}`,
     );
 });

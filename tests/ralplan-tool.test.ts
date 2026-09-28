@@ -7,6 +7,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Settings } from "../src/config";
+import { createHooks } from "../src/hooks";
 import { ultragoalEntryGate } from "../src/ralplan-runtime/store";
 import { StateStore } from "../src/state";
 import { createTools } from "../src/tools";
@@ -389,5 +390,40 @@ test("ultragoal entry gate: running ultragoal ①, refusal ③, handoff ④, sta
     expect(await Bun.file(file("state", "active", "ralplan.json")).exists()).toBe(false);
     await store.ralplanTransaction(ROOT, (tx) => tx.writeState({ active: true, current_phase: "ralplan" }, "ralplan_tool"));
     expect(await ultragoalEntryGate(store, ROOT)).toEqual({ status: "pass" });
+  });
+});
+
+test("C-1.6: ralplan handoff, a gated ultragoal create and one continuation run together all settle (no deadlock)", async () => {
+  await fixture(async ({ call, write, json, store, root }) => {
+    await call({ op: "start", task: "t" });
+    await write("final", 1, "f");
+    const ultragoal = createTools(store, { locationDir: root, projectDir: root }, {
+      async parentSession() {
+        return undefined;
+      },
+    }).find((t) => t.name === "ultragoal")!;
+    const hooks = createHooks(
+      store,
+      { get: async () => ({ location: { directory: root } }), synthetic: async () => ({}) },
+      root,
+      root,
+      root,
+    );
+    const create = { op: "create", description: "task", goals: [{ title: "g", description: "d", priority: 1, acceptanceCriteria: ["works"] }] };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settled = await Promise.race([
+      Promise.allSettled([
+        call({ op: "handoff", to: "ultragoal" }),
+        ultragoal.execute(ultragoal.input.parse(create) as never, { agent: "open-gajae", sessionID: ROOT, signal: new AbortController().signal }),
+        hooks.onEvent({ type: "session.execution.succeeded", data: { sessionID: ROOT } }),
+      ]),
+      new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), 5000);
+      }),
+    ]);
+    clearTimeout(timer);
+    expect(settled).not.toBe("timeout");
+    expect(await json("state", "ralplan-state.json")).toMatchObject({ active: false, current_phase: "handoff" });
+    expect(await store.read(ROOT, "ultragoal")).toMatchObject({ active: true, handoff_from: "ralplan" });
   });
 });

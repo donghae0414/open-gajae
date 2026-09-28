@@ -1150,13 +1150,16 @@ export async function startRun(
 /**
  * gjc `gjc state ralplan write`: a merge patch (`null` deletes), a phase
  * change checked against the table (AC12), the row refreshed from the
- * resulting state. `{active: false}` is Stop here.
+ * resulting state. `{active: false}` is Stop here. `mutationTag` marks the
+ * audit row's `mutation_id` (the continuation breaker's `breaker-exhausted`,
+ * plan R-O3).
  */
 export async function patchStateTx(
   tx: RalplanTx,
   sessionId: string,
   patch: Record<string, unknown>,
   owner: AuditOwner = RUNTIME_OWNER,
+  mutationTag?: string,
 ): Promise<Json> {
   let existing: Json;
   try {
@@ -1168,7 +1171,7 @@ export async function patchStateTx(
     );
   }
   const at = now();
-  const mutationId = `${SKILL}:${at}`;
+  const mutationId = mutationTag ? `${SKILL}:${mutationTag}:${at}` : `${SKILL}:${at}`;
   const { _meta, ...payload } = patch;
   const incomingPhase = trimmed(payload.current_phase) ?? trimmed(payload.phase);
   const merged: Json = { ...existing };

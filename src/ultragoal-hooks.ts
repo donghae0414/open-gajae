@@ -5,13 +5,16 @@
 //
 // Source: oh-my-claudecode v5.4.0 (MIT) — `scripts/persistent-mode.mjs` ralph
 // branch (iteration, extension, hard max), `keyword-detector.mjs` activation,
-// `bridge.ts` confirmSkillModeStates and session restore. Reviewer integration
-// references oh-my-openagent d1557a4b48fdbec06a7144fdc4afa3e65c6523ed
+// `bridge.ts` confirmSkillModeStates and session restore. The ralplan handoff
+// into ultragoal follows gajae-code 5c5231418930673e42cc5d08ebe4376e03187533
+// (plan R-O2, C-4): the ralplan runtime seeds ultragoal, with no consumed
+// mark. Reviewer integration references oh-my-openagent
+// d1557a4b48fdbec06a7144fdc4afa3e65c6523ed
 // (Sustainable Use License), modified for open-gajae. The reviewer-brief append
 // is a local adapter; see THIRD-PARTY-NOTICES.md and licenses/OMO-SUL.txt.
 
 import { randomUUID } from "node:crypto";
-import { RALPLAN_MODE, ULTRAGOAL_MODE, type StateStore } from "./state.js";
+import { ULTRAGOAL_MODE, type StateStore } from "./state.js";
 import {
   compactionContext,
   continuationMessage,
@@ -153,7 +156,10 @@ export function createUltragoalHooks(
     });
   }
 
-  /** Restore, once per resume (`src/hooks.ts` ralplan rule). */
+  /**
+   * Restore, once per resume: a `started_at` newer than `restored_at` (the rule
+   * OMC bridge.ts applied to ralplan, whose notice plan S3 removed, R-O11).
+   */
   async function restore(
     sessionID: string,
     state: UltragoalStateSnapshot,
@@ -183,40 +189,27 @@ export function createUltragoalHooks(
   /** Seed (plan §6.4), delegated to the standalone `seedUltragoal`. */
   async function seed(
     sessionID: string,
-    { awaiting, task }: { awaiting: boolean; task?: string },
+    input: Parameters<typeof seedUltragoal>[2],
   ): Promise<void> {
-    await seedUltragoal(store, sessionID, { awaiting, task });
+    await seedUltragoal(store, sessionID, input);
   }
 
   /**
-   * `skill` id `ultragoal` loaded by the primary (plan §6.5, Architect D1): it
-   * confirms an awaiting seed, or seeds from ralplan's `Execute via ultragoal`
-   * handoff and consumes that handoff. Nothing else seeds, so a gated turn
-   * cannot be bypassed by loading the skill.
+   * `skill` id `ultragoal` loaded by the primary (plan §6.5, Architect D1),
+   * after the ralplan entry gate in `src/hooks.ts` (plan C-4): it confirms an
+   * awaiting seed. A finished ralplan is handed off by that gate or by the
+   * `ralplan handoff` op, which seed ultragoal themselves (plan R-O2), so
+   * nothing here seeds and no handoff is consumed.
    */
   async function onSkillLoad(sessionID: string): Promise<void> {
-    const ralplan = await store.read(sessionID, RALPLAN_MODE).catch(() => undefined);
-    const fromHandoff =
-      ralplan?.active !== true && ralplan?.current_phase === "handoff";
-    const seeded = await store.ultragoalTransaction(sessionID, async (tx) => {
+    await store.ultragoalTransaction(sessionID, async (tx) => {
       const state = await tx.readState();
-      if (state?.active === true) {
-        if (state.awaiting_confirmation === true)
-          await tx.writeState(
-            mergeState(state, { awaiting_confirmation: false }),
-            "ultragoal_hook",
-          );
-        return false;
-      }
-      if (!fromHandoff) return false;
-      await tx.writeState(
-        seedUltragoalState(state, new Date().toISOString(), { awaiting: false })!,
-        "ultragoal_hook",
-      );
-      return true;
+      if (state?.active === true && state.awaiting_confirmation === true)
+        await tx.writeState(
+          mergeState(state, { awaiting_confirmation: false }),
+          "ultragoal_hook",
+        );
     });
-    if (seeded)
-      await store.patch(sessionID, { current_phase: "handoff-consumed" }, RALPLAN_MODE);
   }
 
   /**

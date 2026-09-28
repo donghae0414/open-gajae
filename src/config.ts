@@ -248,7 +248,7 @@ const descriptions: Record<AgentName, string> = {
   "open-gajae-document-specialist":
     "Research local and external documentation with verifiable citations.",
   "open-gajae-planner":
-    "Draft and revise consensus work plans; never implements.",
+    "Draft and revise consensus work plans and record them with the ralplan tool; never implements.",
   "open-gajae-architect":
     "Read-only architectural review with steelman antithesis and tradeoff tension.",
   "open-gajae-critic":
@@ -276,15 +276,11 @@ const readonlyDenies = [
 
 /**
  * Role rules pushed after the host defaults; host `agents.<id>` rules are
- * applied after the plugin and win (R4). No `shell` rule (R5/R6). The planner
- * writes its own plans and delegates its own research, as in OMC. Its rules go
- * deny-`*`-then-allow: the host evaluates with `findLast` and hides a tool only
- * when its last rule is a `*` deny (`core/src/tool.ts:231,291-294`).
- * `plannerPrefix` is the POSIX path from the location to the project
- * directory, with a trailing `/` when non-empty, because the host's `edit`
- * resource is relative to `location.directory` (`core/src/file-access.ts:108`).
+ * applied after the plugin and win (R4). No `shell` rule (R5/R6). Allow rules
+ * follow their `*` deny: the host evaluates with `findLast` and hides a tool
+ * only when its last rule is a `*` deny (`core/src/tool.ts:231,291-294`).
  */
-export function roleRules(id: string, plannerPrefix: string): Rule[] {
+export function roleRules(id: string): Rule[] {
   if (id === "open-gajae") return [];
   // Ultragoal reviewers keep the `ultragoal` tool for `status` and their own
   // `record_verdict`; every other owned role is denied it (plan §4).
@@ -304,14 +300,12 @@ export function roleRules(id: string, plannerPrefix: string): Rule[] {
       // the ultragoal reviewers, who keep it with no extra rule).
       deny("ralplan"),
     ];
+  // The planner delegates its own research, as in OMC, and records its plan
+  // only through `ralplan write` with `content` (plan S3, D-T4, R-O4): no
+  // `edit` allow, not even for a temp directory.
   if (id === "open-gajae-planner")
     return [
       deny("edit"),
-      ...["plans", "drafts"].map((dir): Rule => ({
-        action: "edit",
-        resource: `${plannerPrefix}.open-gajae/_session-*/${dir}/*`,
-        effect: "allow",
-      })),
       deny("subagent"),
       ...["open-gajae-explore", "open-gajae-document-specialist"].map(
         (resource): Rule => ({ action: "subagent", resource, effect: "allow" }),
@@ -350,11 +344,9 @@ export async function registerAgents(
   {
     settings,
     prompts,
-    plannerPrefix,
   }: {
     settings: Settings;
     prompts: Record<AgentName, string>;
-    plannerPrefix: string;
   },
 ): Promise<void> {
   const runtimeSettings = JSON.stringify({
@@ -384,7 +376,7 @@ ${runtimeSettings}
             ...(configured.variant ? { variant: configured.variant } : {}),
           };
         }
-        draft.permissions.push(...roleRules(id, plannerPrefix));
+        draft.permissions.push(...roleRules(id));
       });
   });
 }

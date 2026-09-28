@@ -5,6 +5,7 @@ import * as ralplan from "../src/ralplan";
 import {
   breakerMessage,
   compactHookText,
+  compactionMessage,
   continuationMessage,
   deepInterviewMessage,
   detectDeepInterviewKeyword,
@@ -13,15 +14,11 @@ import {
   INJECTION_MARKERS,
   keywordMessage,
   mentionMessage,
-  normalizeRalplanPhase,
   RALPLAN_KEYWORD,
   RALPLAN_STOP_BLOCKER_MAX,
   RALPLAN_STOP_BLOCKER_TTL_MS,
-  RALPLAN_TERMINAL_PHASES,
   removeCodeBlocks,
-  restoreMessage,
   sanitizeForKeywordDetection,
-  seedState,
   shouldContinue,
 } from "../src/ralplan";
 
@@ -54,95 +51,27 @@ test("ultragoal is detected only on an explicit invocation, and ralph is not ult
     );
 });
 
-test("phase normalization collapses every handoff variant", () => {
-  expect(normalizeRalplanPhase({ current_phase: "handoff:ralph" })).toBe("handoff");
-  expect(normalizeRalplanPhase({ current_phase: "Handoff-Team" })).toBe("handoff");
-  expect(normalizeRalplanPhase({ current_phase: "HANDOFF" })).toBe("handoff");
-  expect(normalizeRalplanPhase({ phase: "  Completed  " })).toBe("completed");
-  expect(normalizeRalplanPhase({ status: "pending approval" })).toBe(
-    "pending approval",
-  );
-  // `current_phase ?? phase ?? status`, in that order.
-  expect(
-    normalizeRalplanPhase({ current_phase: "ralplan", phase: "completed" }),
-  ).toBe("ralplan");
-  expect(normalizeRalplanPhase(null)).toBeNull();
-  expect(normalizeRalplanPhase(undefined)).toBeNull();
-  expect(normalizeRalplanPhase({})).toBeNull();
-  expect(normalizeRalplanPhase({ current_phase: 7 })).toBeNull();
-  expect(normalizeRalplanPhase({ current_phase: "   " })).toBeNull();
-});
+test("shouldContinue truth table (AC17)", () => {
+  // T (8), `planning_stuck` and `active: false` skip; T and stuck reset.
+  for (const phase of ["final", "handoff", "complete", "completed", "failed", "cancelled", "canceled", "inactive"])
+    expect(shouldContinue({ active: true, current_phase: phase }, undefined, NOW)).toEqual({ kind: "skip", resetBreaker: true });
+  const stuck = { marker: "PLANNING-STUCK", reason: "r" };
+  expect(shouldContinue({ active: true, current_phase: "critic", planning_stuck: stuck }, undefined, NOW)).toEqual({ kind: "skip", resetBreaker: true });
+  expect(shouldContinue({ active: false, current_phase: "planner" }, undefined, NOW)).toEqual({ kind: "skip" });
+  expect(shouldContinue(undefined, undefined, NOW)).toEqual({ kind: "skip" });
+  // DR-21: a phase outside the known set is an unreadable state.
+  expect(shouldContinue({ active: true, current_phase: "ralplan" }, undefined, NOW)).toEqual({ kind: "skip" });
+  for (const phase of ["planner", "intent", "architect", "critic", "disposition", "revision", "post-interview", "adr"])
+    expect(shouldContinue({ active: true, current_phase: phase }, undefined, NOW)).toEqual({ kind: "continue", count: 1 });
 
-test("the terminal phase set names the resting states", () => {
-  for (const phase of ["completed", "handoff", "pending approval"])
-    expect(RALPLAN_TERMINAL_PHASES.has(phase)).toBe(true);
-  expect(RALPLAN_TERMINAL_PHASES.has("ralplan")).toBe(false);
-});
-
-test("shouldContinue truth table", () => {
-  const base = { active: true, current_phase: "ralplan" };
-
-  expect(shouldContinue({ ...base, awaiting_confirmation: false }, NOW)).toEqual({
-    kind: "continue",
-    count: 1,
-  });
-  expect(shouldContinue(base, NOW)).toEqual({ kind: "continue", count: 1 });
-
-  // `awaiting_confirmation` is a plain boolean: no clock, no TTL, no fallback.
-  expect(shouldContinue({ ...base, awaiting_confirmation: true }, NOW)).toEqual({
-    kind: "skip",
-  });
-  for (const stamp of [
-    "started_at",
-    "restored_at",
-    "breaker_updated_at",
-    "completed_at",
-  ])
-    expect(
-      shouldContinue(
-        { ...base, awaiting_confirmation: true, [stamp]: iso(-10 * 60 * 1000) },
-        NOW,
-      ),
-    ).toEqual({ kind: "skip" });
-
-  expect(shouldContinue({ active: true, current_phase: "completed" }, NOW)).toEqual(
-    { kind: "skip", resetBreaker: true },
-  );
-  expect(
-    shouldContinue({ active: true, current_phase: "handoff:ralph" }, NOW),
-  ).toEqual({ kind: "skip", resetBreaker: true });
-
-  expect(shouldContinue({ active: false, current_phase: "ralplan" }, NOW)).toEqual({
-    kind: "skip",
-  });
-  expect(shouldContinue(null, NOW)).toEqual({ kind: "skip" });
-  expect(shouldContinue(undefined, NOW)).toEqual({ kind: "skip" });
-
-  expect(
-    shouldContinue(
-      { ...base, breaker_count: RALPLAN_STOP_BLOCKER_MAX, breaker_updated_at: iso(0) },
-      NOW,
-    ),
-  ).toEqual({ kind: "breaker" });
-
+  // The breaker comes from the continuation file (R-O3).
+  const base = { active: true, current_phase: "planner" };
+  expect(shouldContinue(base, { breaker_count: 4, breaker_updated_at: iso(-1000) }, NOW)).toEqual({ kind: "continue", count: 5 });
+  expect(shouldContinue(base, { breaker_count: RALPLAN_STOP_BLOCKER_MAX, breaker_updated_at: iso(0) }, NOW)).toEqual({ kind: "breaker" });
   // 46 minutes is past the 45-minute TTL, so the count restarts at one.
-  expect(
-    shouldContinue(
-      {
-        ...base,
-        breaker_count: RALPLAN_STOP_BLOCKER_MAX,
-        breaker_updated_at: iso(-46 * 60 * 1000),
-      },
-      NOW,
-    ),
-  ).toEqual({ kind: "continue", count: 1 });
+  expect(shouldContinue(base, { breaker_count: RALPLAN_STOP_BLOCKER_MAX, breaker_updated_at: iso(-46 * 60 * 1000) }, NOW)).toEqual({ kind: "continue", count: 1 });
   expect(RALPLAN_STOP_BLOCKER_TTL_MS).toBe(45 * 60 * 1000);
   expect(RALPLAN_STOP_BLOCKER_MAX).toBe(30);
-
-  // A fresh, non-exhausted count advances by one.
-  expect(
-    shouldContinue({ ...base, breaker_count: 4, breaker_updated_at: iso(-1000) }, NOW),
-  ).toEqual({ kind: "continue", count: 5 });
 });
 
 test("the continuation message carries the reinforcement header and no OMC exit", () => {
@@ -150,7 +79,7 @@ test("the continuation message carries the reinforcement header and no OMC exit"
   expect(message).toContain("[RALPLAN - CONSENSUS PLANNING | REINFORCEMENT 1/30]");
   expect(message.startsWith("<ralplan-continuation>")).toBe(true);
   expect(message).not.toContain("/oh-my-claudecode:cancel");
-  expect(message).toContain('state_clear(mode="ralplan")');
+  expect(message).toContain("`ralplan clear`");
   expect(continuationMessage(30)).toContain("REINFORCEMENT 30/30");
 });
 
@@ -160,7 +89,7 @@ const BUILDERS: Record<string, () => string> = {
   breakerMessage: () => breakerMessage(),
   keywordMessage: () => keywordMessage(),
   mentionMessage: () => mentionMessage(),
-  restoreMessage: () => restoreMessage({ active: true, started_at: iso(0) }),
+  compactionMessage: () => compactionMessage(["Workflow contract (ralplan): x"]),
   deepInterviewMessage: () =>
     deepInterviewMessage({
       skillPath: "/x/skills/deep-interview/SKILL.md",
@@ -183,45 +112,8 @@ test("every exported message builder emits a marked block", () => {
   expect(breakerMessage()).toContain("[RALPLAN CIRCUIT BREAKER]");
   expect(keywordMessage()).toContain("[MODE: RALPLAN]");
   expect(mentionMessage()).toContain("[MODE: RALPLAN]");
-  expect(restoreMessage({ active: true })).toContain("[RALPLAN MODE RESTORED]");
   expect(BUILDERS.deepInterviewMessage!()).toContain(
     "[MAGIC KEYWORD: DEEP-INTERVIEW]",
-  );
-});
-
-test("restoreMessage reports the stored origin, phase and confirmation status", () => {
-  const restored = restoreMessage({
-    started_at: "2026-09-18T09:00:00.000Z",
-    current_phase: "handoff:ralph",
-    awaiting_confirmation: true,
-  });
-  expect(restored).toContain("2026-09-18T09:00:00.000Z");
-  expect(restored).toContain("Current phase: handoff");
-  expect(restored).toContain("Status: awaiting skill confirmation");
-  const bare = restoreMessage({ active: true });
-  expect(bare).toContain("an earlier turn");
-  expect(bare).toContain("Current phase: ralplan");
-  expect(bare).toContain("Status: active");
-});
-
-test("seedState activates once and never re-seeds an active state", () => {
-  const now = iso(0);
-  expect(seedState(undefined, now)).toEqual({
-    active: true,
-    current_phase: "ralplan",
-    started_at: now,
-    awaiting_confirmation: true,
-    restored_at: now,
-    breaker_count: 0,
-  });
-  // n2: equal timestamps mean the turn after seeding cannot read as a resume.
-  const patch = seedState(null, now);
-  expect(patch?.started_at).toBe(patch?.restored_at);
-  expect(seedState({ active: true }, now)).toBeUndefined();
-  expect(seedState({ active: false }, now)).toBeDefined();
-  // The `@ralplan` mention seed is already confirmed.
-  expect(seedState(undefined, now, { awaiting: false })?.awaiting_confirmation).toBe(
-    false,
   );
 });
 

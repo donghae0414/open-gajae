@@ -1,23 +1,28 @@
 // The `ultragoal` tool: the only writer of goals.json, progress.txt and the
 // ultragoal state (plan §4). Every op body runs inside one
 // `StateStore.ultragoalTransaction`, so ops and hook patches never interleave;
-// parent-session lookups and the ralplan seed after `handoff` run outside it.
+// parent-session lookups, the ralplan entry gate and the ralplan start after
+// `handoff` run outside it, one transaction after another (plan C-1.3, C-1.4).
 //
 // Source: oh-my-claudecode v5.4.0 (MIT) `src/hooks/ralph/prd.ts` (story
 // completion, criterion amendments) and `verifier.ts` (reviewer approval),
 // with approval recorded by the reviewer through `record_verdict` instead of a
-// parsed tag (D-R12). gajae-code (reference only) for `handoff`.
+// parsed tag (D-R12). gajae-code 5c5231418930673e42cc5d08ebe4376e03187533
+// (MIT) for `handoff`: the caller state of `state-runtime.ts:1739-1763`, whose
+// callee start here is the ralplan `start` run in the same call (plan R-O1,
+// deviation 24), and the entry gate of `tools/skill.ts:192-220` for
+// `start`/`resume`/`create` (plan C-4, deviation 29).
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { seedState as seedRalplanState } from "./ralplan.js";
-import {
-  RALPLAN_MODE,
-  type InterviewState,
-  type StateStore,
-  type UltragoalTx,
-} from "./state.js";
+import type {
+  StartRunInput,
+  StartRunSummary,
+  UltragoalEntryGateResult,
+} from "./ralplan-runtime/store.js";
+import { type StateStore, ULTRAGOAL_MODE, type UltragoalTx } from "./state.js";
 import { defineTool, type ToolCallContext } from "./tools/define.js";
+import type { seedUltragoal } from "./ultragoal-hooks.js";
 import {
   addProgressPattern,
   appendProgressEntry,
@@ -33,7 +38,6 @@ import {
   governingRevision,
   initialProgress,
   isCompleteFile,
-  isRalplanRunning,
   isRequestCurrent,
   isSubstantive,
   isUltragoalRunning,
@@ -44,6 +48,7 @@ import {
   parseGoals,
   prdRevision,
   derivePhase,
+  RALPLAN_ACTIVATION_REFUSAL,
   requestOf,
   seedUltragoalState,
   serializeGoals,
@@ -59,7 +64,19 @@ const CRITIC = "open-gajae-critic";
 export type UltragoalToolDeps = {
   /** `src/hooks.ts` `parentSession`: fail-closed parent lookup (plan §4). */
   parentSession(sessionID: string): Promise<string | undefined>;
+  /** The ralplan side of ultragoal entry (plan C-4), bound in `createTools`. */
+  entryGate(sessionID: string): Promise<UltragoalEntryGateResult>;
+  /** `ralplan start` for `handoff(to="ralplan")` (plan R-O1). */
+  startRalplan(sessionID: string, input: StartRunInput): Promise<StartRunSummary>;
+  /** The standalone ultragoal seed (`src/ultragoal-hooks.ts`). */
+  seedUltragoal(
+    sessionID: string,
+    input: Parameters<typeof seedUltragoal>[2],
+  ): Promise<void>;
 };
+
+/** Gate ④'s handoff meta, recorded on the ultragoal state (plan C-1.3). */
+type HandoffMeta = { handoff_from: string; handoff_at: string };
 
 const goalInput = z.object({
   title: z.string(),
@@ -388,17 +405,15 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
   /**
    * The model's own way in (decision P-6), as OMC's ralph starts from a model
    * `state_write`: a confirmed seed, or the confirmation of a pending one.
+   * Running ralplan planning is refused by the entry gate before this
+   * (plan C-4); after its handoff ④ the meta rides along.
    */
   async function start(
     tx: UltragoalTx,
     args: Args,
-    ralplan: InterviewState | undefined,
+    handoff: HandoffMeta | undefined,
   ): Promise<string> {
     const reason = checkReason(args.reason);
-    if (isRalplanRunning(ralplan))
-      throw new Error(
-        'ralplan planning is running; finish it first: choose "Execute via ultragoal" at its approval step, or stop ralplan and call start again',
-      );
     const state = await tx.readState();
     if (isUltragoalRunning(state))
       throw new Error("ultragoal is already running in this session");
@@ -406,8 +421,8 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
     await appendNote(tx, "START", reason, at);
     await tx.writeState(
       state?.active === true
-        ? mergeState(state, { awaiting_confirmation: false })
-        : seedUltragoalState(undefined, at, { awaiting: false, task: reason })!,
+        ? mergeState(state, { awaiting_confirmation: false, ...handoff })
+        : seedUltragoalState(undefined, at, { awaiting: false, task: reason, ...handoff })!,
       "ultragoal_tool",
     );
     return "Ultragoal started. Next: call `ultragoal status`, then `create` the goals (or `resume` an unfinished goals.json).";
@@ -416,13 +431,9 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
   async function resume(
     tx: UltragoalTx,
     args: Args,
-    ralplan: InterviewState | undefined,
+    handoff: HandoffMeta | undefined,
   ): Promise<string> {
     const reason = checkReason(args.reason);
-    if (isRalplanRunning(ralplan))
-      throw new Error(
-        'ralplan planning is running; finish it first: choose "Execute via ultragoal" at its approval step, or stop ralplan and call resume again',
-      );
     const goals = await readGoals(tx);
     if (goals.kind !== "valid")
       throw new Error(
@@ -459,6 +470,7 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
         paused_reason: undefined,
         paused_target: undefined,
         deactivated_reason: undefined,
+        ...handoff,
       }),
       "ultragoal_tool",
     );
@@ -760,7 +772,14 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
     return `Verdict recorded: ${verdict} for ${target}.`;
   }
 
-  async function handoff(tx: UltragoalTx, args: Args): Promise<string> {
+  /**
+   * The ultragoal side of `handoff(to="ralplan")` (plan R-O1 ①): the gjc
+   * caller state; goals.json is untouched and progress gets the HANDOFF note.
+   */
+  async function handoff(
+    tx: UltragoalTx,
+    args: Args,
+  ): Promise<{ at: string; reason: string }> {
     if (args.to !== "ralplan") throw new Error('to must be "ralplan"');
     const reason = checkReason(args.reason);
     const state = await tx.readState();
@@ -778,7 +797,7 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
       }),
       "ultragoal_tool",
     );
-    return at;
+    return { at, reason };
   }
 
   async function cancel(tx: UltragoalTx, args: Args): Promise<string> {
@@ -798,21 +817,47 @@ export function ultragoalTool(store: StateStore, deps: UltragoalToolDeps) {
     input,
     async execute(args, context) {
       const session = await targetSession(context, args.op);
-      if (args.op === "resume" || args.op === "start") {
-        const ralplan = await store.read(session, RALPLAN_MODE).catch(() => undefined);
-        const op = args.op === "start" ? start : resume;
-        return store.ultragoalTransaction(session, (tx) => op(tx, args, ralplan));
+      // Plan C-4 before any transaction (C-1.4): refuse while ralplan plans;
+      // after a finished ralplan (④) the gate has demoted it.
+      let handoffMeta: HandoffMeta | undefined;
+      if (args.op === "start" || args.op === "resume" || args.op === "create") {
+        const gate = await deps.entryGate(session);
+        if (gate.status === "refused") throw new Error(gate.message);
+        if (gate.status === "handoff")
+          handoffMeta = { handoff_from: gate.handoff_from, handoff_at: gate.handoff_at };
       }
+      if (args.op === "resume" || args.op === "start") {
+        const op = args.op === "start" ? start : resume;
+        return store.ultragoalTransaction(session, (tx) => op(tx, args, handoffMeta));
+      }
+      // ④ for `create`: the confirmed seed first, then its own transaction.
+      if (args.op === "create" && handoffMeta)
+        await deps.seedUltragoal(session, { awaiting: false, ...handoffMeta });
       if (args.op === "handoff") {
-        const at = await store.ultragoalTransaction(session, (tx) => handoff(tx, args));
-        // After the transaction: the ralplan queue is a different key. Seeded
-        // confirmed, as gajae-code's handoff raises the callee's state.
-        await store.patch(
-          session,
-          seedRalplanState(undefined, at, { awaiting: false })!,
-          RALPLAN_MODE,
+        // R-O1 (C-1.3): ① demote ultragoal, ② check it no longer runs, ③
+        // start ralplan on the existing run_id (R-O8), one after another.
+        const { at, reason } = await store.ultragoalTransaction(session, (tx) =>
+          handoff(tx, args),
         );
-        return "Handed off to ralplan: ultragoal is paused (goals and progress kept) and ralplan is active. Load the `ralplan` skill now. When the plan is approved, choose Execute via ultragoal and call resume.";
+        let runId: string;
+        try {
+          const ultragoal = await store.read(session, ULTRAGOAL_MODE).catch(() => undefined);
+          if (isUltragoalRunning(ultragoal)) throw new Error(RALPLAN_ACTIVATION_REFUSAL);
+          runId = (
+            await deps.startRalplan(session, {
+              task: reason,
+              handoff_from: "ultragoal",
+              handoff_at: at,
+            })
+          ).run_id;
+        } catch (error) {
+          // R-10: ultragoal stays in `handoff` (resumable); ralplan did not start.
+          throw new Error(
+            `ultragoal was handed off (inactive, phase handoff; goals and progress kept) but ralplan could not be started: ${error instanceof Error ? error.message : String(error)}. Call \`ralplan start\` with the task to plan, or \`ultragoal resume\` to go back.`,
+            { cause: error },
+          );
+        }
+        return `Handed off to ralplan: ultragoal is paused (goals and progress kept) and ralplan started (run_id ${runId}). Load the \`ralplan\` skill now. To plan in a fresh run folder with a fresh budget, call \`ralplan start\` with a new \`run_id\`. When the plan is approved, choose Approve execution via ultragoal and call resume.`;
       }
       return store.ultragoalTransaction(session, async (tx) => {
         switch (args.op) {

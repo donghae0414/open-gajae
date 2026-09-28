@@ -1,5 +1,5 @@
-// Ralplan pure logic: injected-message builders and the continuation/seed
-// decisions. No `fs`, no client, no host imports beyond types.
+// Ralplan pure logic: injected-message builders and the continuation
+// decision. No `fs`, no client, no host imports beyond types.
 //
 // n6/a3: no bare marker token is added. Every injected message is wrapped in an
 // OMC-style tag, and `wrapInjected` is the ONLY way this module produces text,
@@ -10,13 +10,23 @@
 // Source: oh-my-claudecode v5.4.0 (MIT). `<ralplan-continuation>` and
 // `<session-restore>` are OMC's own wrappers; `<ralplan-notice>` is a host
 // addition that wraps the keyword and breaker notices OMC emitted bare.
+// Plan S3 (gajae-code 5c5231418930673e42cc5d08ebe4376e03187533): the ralplan
+// keyword and mention seed nothing (D-F13, R-O6) and the OMC ralplan restore
+// notice is gone (R-O11); continuation stops on the gjc terminal set T (C-2)
+// from `./ralplan-runtime/manifest.ts`, on `PLANNING-STUCK` and on
+// `active: false` (deviation 10), with its breaker counter kept in the
+// hook-only `state/ralplan-continuation.json` (R-O3, deviation 26).
 
-import type { ExplicitStatePatch } from "./state.js";
+import { isKnownPhase, TERMINAL_PHASES } from "./ralplan-runtime/manifest.js";
 
 export const INJECTION_MARKERS = [
   "<ralplan-continuation>", // OMC src/hooks/persistent-mode/index.ts:2147
-  "<session-restore>", // OMC src/hooks/bridge.ts:2074
+  // OMC src/hooks/bridge.ts:2074; now only the ultragoal restore notice uses it.
+  "<session-restore>",
   "<ralplan-notice>", // host addition: wraps the keyword and breaker notices
+  // Host addition (plan D-H2/AC19): the ralplan compaction recovery context,
+  // rendered by `./ralplan-runtime/recovery.ts`.
+  "<ralplan-compaction-context>",
   // Host addition: wraps OMC's `[MAGIC KEYWORD: DEEP-INTERVIEW]` guide, which
   // OMC emitted bare as `additionalContext` (scripts/keyword-detector.mjs:1544).
   "<deep-interview-notice>",
@@ -62,31 +72,6 @@ export const DEEP_INTERVIEW_SKILL_NAME = "deep-interview";
 /** OMC scripts/keyword-detector.mjs:37. */
 const SKILL_INVOCATION_USER_REQUEST_MAX = 1200;
 
-/**
- * The full terminal-phase set from OMC persistent-mode/index.ts:806-824.
- * A ralplan session in any of these phases is finished: the continuation hook
- * stops reinforcing and resets the breaker instead.
- */
-export const RALPLAN_TERMINAL_PHASES = new Set([
-  "completed",
-  "complete",
-  "failed",
-  "cancelled",
-  "canceled",
-  "aborted",
-  "terminated",
-  "done",
-  "handoff",
-  "pending approval",
-  "pending-approval",
-  "pending_approval",
-  "awaiting approval",
-  "awaiting-approval",
-  "awaiting_approval",
-  "approval-required",
-  "approval_required",
-]);
-
 function wrapInjected(tag: InjectionMarker, body: string): string {
   const name = tag.slice(1, -1);
   return `<${name}>\n\n${body}\n\n</${name}>\n\n---\n\n`;
@@ -97,30 +82,8 @@ export function wrapUltragoalInjected(tag: UltragoalMarker, body: string) {
   return wrapInjected(tag, body);
 }
 
-/**
- * OMC persistent-mode/index.ts:2030-2050. `current_phase ?? phase ?? status`,
- * trimmed and lowercased, with every `handoff`, `handoff:*` and `handoff-*`
- * variant collapsed to `"handoff"`.
- */
-export function normalizeRalplanPhase(
-  state: RalplanStateSnapshot,
-): string | null {
-  if (!state || typeof state !== "object") return null;
-  const rawPhase = state.current_phase ?? state.phase ?? state.status;
-  if (typeof rawPhase !== "string") return null;
-  const phase = rawPhase.trim().toLowerCase();
-  if (!phase) return null;
-  if (
-    phase === "handoff" ||
-    phase.startsWith("handoff:") ||
-    phase.startsWith("handoff-")
-  )
-    return "handoff";
-  return phase;
-}
-
 // OMC persistent-mode/index.ts:2147-2160, with the final sentence replaced:
-// this port exits through `state_clear(mode="ralplan")`, not an OMC command.
+// this port exits through `ralplan clear` (plan DR-17), not an OMC command.
 export function continuationMessage(count: number): string {
   return wrapInjected(
     "<ralplan-continuation>",
@@ -129,7 +92,7 @@ export function continuationMessage(count: number): string {
 The ralplan consensus workflow is active. Continue the Planner/Architect/Critic planning loop only.
 Ralplan is read-only/planning mode: do not implement, invoke execution skills, edit source, commit, push, or open PRs from this continuation.
 When consensus is reached, stop at a pending-approval handoff and require explicit user approval before execution.
-When done, call \`state_clear(mode="ralplan")\` to cleanly exit.`,
+When done, call \`ralplan clear\` to cleanly exit.`,
   );
 }
 
@@ -158,27 +121,15 @@ export function mentionMessage(): string {
   );
 }
 
-// OMC bridge.ts:2074-2086, with the session_id comparison dropped: session
-// isolation is structural here, since each session owns its state directory.
-export function restoreMessage(state: RalplanStateSnapshot): string {
-  const startedAt =
-    typeof state?.started_at === "string" && state.started_at
-      ? state.started_at
-      : "an earlier turn";
-  const phase = normalizeRalplanPhase(state) ?? "ralplan";
-  const status =
-    state?.awaiting_confirmation === true
-      ? "awaiting skill confirmation"
-      : "active";
+// Host addition (plan D-H2/AC19): the gjc recovery lines
+// (`renderRalplanRecoveryContext`) the `compaction` hook adds while a ralplan
+// run is active, as ultragoal adds its `<ultragoal-compaction-context>`.
+export function compactionMessage(lines: readonly string[]): string {
   return wrapInjected(
-    "<session-restore>",
-    `[RALPLAN MODE RESTORED]
+    "<ralplan-compaction-context>",
+    `[RALPLAN RUN ACTIVE] Keep this workflow contract in the summary; the durable ralplan state and plan files are authoritative over summary prose.
 
-You have an active ralplan consensus planning session from ${startedAt}.
-Current phase: ${phase}
-Status: ${status}
-
-Treat this as prior-session context only. Prioritize the user's newest request, and resume ralplan only if the user explicitly asks to continue it.`,
+${lines.join("\n")}`,
   );
 }
 
@@ -196,54 +147,35 @@ export type RalplanDecision =
   | { kind: "continue"; count: number }
   | { kind: "breaker" };
 
+/** The breaker fields of `state/ralplan-continuation.json` (plan R-O3). */
+export type RalplanBreaker = {
+  breaker_count?: unknown;
+  breaker_updated_at?: unknown;
+};
+
+/**
+ * Plan AC17: `active: false`, a phase in T (C-2) and `planning_stuck` skip;
+ * the last two also reset the breaker. A phase outside the known set is an
+ * unreadable state (DR-21) and skips too. `breaker` is the current run's
+ * counter, or `undefined` when the file is missing or names another run.
+ */
 export function shouldContinue(
   state: RalplanStateSnapshot,
+  breaker: RalplanBreaker | undefined,
   now: number,
 ): RalplanDecision {
   if (!state || state.active !== true) return { kind: "skip" };
-
-  // A plain boolean, with no clock and no fallback: OMC clears this on an
-  // observed skill load, not on a timer, and this port reproduces that with
-  // the `skill` call in `execute.before` and the `@ralplan` mention.
-  if (state.awaiting_confirmation === true) return { kind: "skip" };
-
-  const phase = normalizeRalplanPhase(state);
-  if (phase !== null && RALPLAN_TERMINAL_PHASES.has(phase))
+  const phase = state.current_phase;
+  if (!isKnownPhase(phase)) return { kind: "skip" };
+  if (TERMINAL_PHASES.has(phase) || state.planning_stuck)
     return { kind: "skip", resetBreaker: true };
 
   const fresh =
-    typeof state.breaker_updated_at === "string" &&
-    now - Date.parse(state.breaker_updated_at) <= RALPLAN_STOP_BLOCKER_TTL_MS;
-  const count = (fresh ? Number(state.breaker_count) || 0 : 0) + 1;
+    typeof breaker?.breaker_updated_at === "string" &&
+    now - Date.parse(breaker.breaker_updated_at) <= RALPLAN_STOP_BLOCKER_TTL_MS;
+  const count = (fresh ? Number(breaker?.breaker_count) || 0 : 0) + 1;
   if (count > RALPLAN_STOP_BLOCKER_MAX) return { kind: "breaker" };
   return { kind: "continue", count };
-}
-
-/**
- * OMC bridge.ts:700-712 and 754-765. Returns the patch that activates ralplan,
- * or `undefined` when the state is already active and there is nothing to write.
- *
- * n2: `restored_at` is stamped together with `started_at` so the turn this
- * plugin just seeded cannot immediately raise a restore banner.
- * n4: `started_at` is written exactly once, at activation; re-stamping it would
- * re-arm the restore predicate.
- * `awaiting: false` is the `@ralplan` mention seed: the host has already
- * attached the skill, so there is no load left to confirm.
- */
-export function seedState(
-  existing: RalplanStateSnapshot,
-  now: string,
-  { awaiting = true }: { awaiting?: boolean } = {},
-): ExplicitStatePatch | undefined {
-  if (existing?.active === true) return undefined;
-  return {
-    active: true,
-    current_phase: "ralplan",
-    started_at: now,
-    awaiting_confirmation: awaiting,
-    restored_at: now,
-    breaker_count: 0,
-  };
 }
 
 // ---------------------------------------------------------------------------

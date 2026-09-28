@@ -1,9 +1,21 @@
-// Ralplan host hooks: continuation on durable execution events, keyword/mention/
-// restore on the v2 `prompt` hook, and the `skill` tool call that replaces OMC's
-// awaiting-confirmation timer. Ultragoal shares this one engine and these hooks
-// through `src/ultragoal-hooks.ts`, one mode at a time (plan §5). The prompt
-// hook also carries the deep-interview keyword and `@deep-interview` mention,
-// which only inject OMC's magic-keyword guide and seed no state at all.
+// Ralplan host hooks: continuation on durable execution events, keyword/mention
+// notices on the v2 `prompt` hook, the mutation guards and the ultragoal entry
+// gate on `execute.before`, and the compaction recovery context. Ultragoal
+// shares this one engine and these hooks through `src/ultragoal-hooks.ts`, one
+// mode at a time (plan §5). The prompt hook also carries the deep-interview
+// keyword and `@deep-interview` mention, which only inject OMC's magic-keyword
+// guide and seed no state at all.
+//
+// Plan S3 (gajae-code 5c5231418930673e42cc5d08ebe4376e03187533, MIT): the
+// ralplan keyword and mention only add a notice (D-F13, R-O6) and the OMC
+// restore notice is gone (R-O11); `execute.before` blocks the runtime-owned
+// paths for everyone and, while a ralplan run plans, every mutation outside a
+// neutral temp path (`skill-state/workflow-mutation-guard.ts:22-27,264-351,
+// 1767-1866`; deviations 11, 23, 28), and runs the ultragoal entry gate for
+// `skill ultragoal` and the `@ultragoal` mention (C-4; `tools/skill.ts:
+// 192-220`, deviation 29); continuation keeps OMC's loop over the gjc terminal
+// set with a hook-only counter file (deviations 10, 26); compaction adds the
+// gjc recovery contract (`session/agent-session.ts:667-710`, deviation 20).
 //
 // Notices are `session.synthetic({ resume: false })` messages. The host places
 // them before the user message of the same turn, while OMC and v1 appended after
@@ -20,16 +32,19 @@
 // `succeeded` (Phase 0 Q9).
 //
 // Source: oh-my-claudecode v5.4.0 (MIT) — `persistent-mode/index.ts` checkRalplan,
-// `bridge.ts` session restore, keyword seeding and confirmSkillModeStates — and
+// `bridge.ts` session restore, keyword seeding and confirmSkillModeStates (for
+// ultragoal only since plan S3) — and
 // oh-my-openagent d1557a4b48fdbec06a7144fdc4afa3e65c6523ed (Sustainable Use
 // License) for OpenCode-side in-flight, lineage and injection patterns, modified
 // for open-gajae. See THIRD-PARTY-NOTICES.md and licenses/OMO-SUL.txt.
 
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { Error as ToolError } from "@opencode/plugin/promise/tool";
 import {
   ARTIFACT_TOOLS,
   artifactPathsOf,
+  isRalplanOwned,
+  isSessionState,
   isUltragoalOwned,
   projectPrefix,
   projectRelative,
@@ -37,6 +52,7 @@ import {
 } from "./artifact-guard.js";
 import {
   breakerMessage,
+  compactionMessage,
   continuationMessage,
   DEEP_INTERVIEW_SKILL_NAME,
   deepInterviewMessage,
@@ -47,13 +63,25 @@ import {
   mentionMessage,
   RALPLAN_SKILL_NAME,
   RALPLAN_STOP_BLOCKER_MAX,
-  restoreMessage,
-  seedState,
+  type RalplanBreaker,
   shouldContinue,
   detectUltragoalKeyword,
   ULTRAGOAL_SKILL_NAME,
 } from "./ralplan.js";
-import { RALPLAN_MODE, type StateStore } from "./state.js";
+import { RALPLAN_INDEX_FILE } from "./ralplan-runtime/ledger.js";
+import { GUARD_RELEASE_PHASES, isKnownPhase } from "./ralplan-runtime/manifest.js";
+import {
+  projectRalplanRun,
+  ralplanRecoveryRunFromState,
+  renderRalplanRecoveryContext,
+} from "./ralplan-runtime/recovery.js";
+import {
+  HOOK_OWNER,
+  patchStateTx,
+  ultragoalEntryGate,
+} from "./ralplan-runtime/store.js";
+import { isNeutralTempPath } from "./ralplan-runtime/temp-paths.js";
+import { RALPLAN_MODE, type RalplanTx, type StateStore } from "./state.js";
 import {
   CHAIN_GUARD_REFUSAL,
   isRalplanRunning,
@@ -126,7 +154,10 @@ export type RalplanHooks = {
   /** Fail-closed lineage root, shared with the `ralplan` tool (plan DR-1). */
   rootSession(sessionID: string): Promise<string>;
   prompt(event: PromptEvent): Promise<void>;
-  /** The `compaction` session hook: ultragoal context while it runs (plan §7). */
+  /**
+   * The `compaction` session hook: ultragoal context while it runs (plan §7),
+   * then the active ralplan run's recovery contract (plan D-H2/AC19).
+   */
   compaction(event: CompactionEvent): Promise<void>;
   executeBefore(event: ExecuteBeforeEvent): Promise<void>;
   executeAfter(event: ExecuteAfterEvent): Promise<void>;
@@ -155,6 +186,22 @@ const ROLE_SUBAGENTS = new Set([
  * reason-less interrupt (`core/src/session/execution.ts:53`).
  */
 const STOP_REASONS = new Set(["user", "shutdown"]);
+
+/**
+ * gajae-code 5c52314 `skill-state/workflow-mutation-guard.ts:24-25`
+ * (`WORKFLOW_STATE_MUTATION_BLOCK_MESSAGE` + `Use:` line) with the host's
+ * runtime-owned paths and tools substituted (plan S3, AC18).
+ */
+const WORKFLOW_STATE_MUTATION_BLOCK_MESSAGE =
+  ".open-gajae workflow state and ralplan artifacts are runtime-owned. Agent mutation tools cannot edit `.open-gajae/_session-*/state/**` or `.open-gajae/_session-*/plans/ralplan/**`; use the sanctioned tool instead.\nUse: `ralplan` for ralplan state and plans, `state_write`/`state_clear` for deep-interview state.";
+
+/**
+ * gajae-code 5c52314 `skill-state/workflow-mutation-guard.ts:26-27`
+ * (`RALPLAN_MUTATION_BLOCK_MESSAGE`), `gjc ralplan --write` → `ralplan write`,
+ * plus the recovery line for a stale or accidental run (plan R-AE1).
+ */
+const RALPLAN_MUTATION_BLOCK_MESSAGE =
+  'Ralplan planning phase boundary: keep refining the consensus plan and persist plan artifacts through `ralplan write` (stage scratch files under a temp dir if needed). Product-code mutation tools and patch execution are blocked while ralplan is active; mutate only after the plan is approved and execution begins.\nIf this ralplan run is stale or was started by mistake, stop it with `ralplan state` {"active": false} or `ralplan clear`.';
 
 const KEYWORD_NOTICE_MARKER = "[MODE: RALPLAN]";
 const ULTRAGOAL_NOTICE_MARKER = "[MODE: ULTRAGOAL]";
@@ -205,24 +252,6 @@ export function createHooks(
     } catch (error) {
       log("ralplan state unreadable; treating session as inactive", error);
       return undefined;
-    }
-  }
-
-  /**
-   * The port of OMC's PreToolUse `Skill` branch (`confirmSkillModeStates`):
-   * clear `awaiting_confirmation` once the host observes the skill being loaded.
-   */
-  async function confirmRalplan(sessionID: string): Promise<void> {
-    try {
-      const state = await readState(sessionID);
-      if (!state || state.awaiting_confirmation !== true) return;
-      await store.patch(
-        sessionID,
-        { awaiting_confirmation: false },
-        RALPLAN_MODE,
-      );
-    } catch (error) {
-      log("could not confirm ralplan skill load", error);
     }
   }
 
@@ -290,6 +319,94 @@ export function createHooks(
     }
   }
 
+  /**
+   * The current run's breaker counter from the hook-only
+   * `state/ralplan-continuation.json` (plan R-O3), or `undefined` when the file
+   * is missing, unreadable or names another run, which resets the count.
+   */
+  async function readBreaker(
+    tx: RalplanTx,
+    runId: string | undefined,
+  ): Promise<RalplanBreaker | undefined> {
+    let parsed: unknown;
+    try {
+      const text = await tx.readText(tx.paths.continuationPath);
+      if (text === undefined) return undefined;
+      parsed = JSON.parse(text);
+    } catch (error) {
+      log("ralplan continuation counter unreadable; starting over", error);
+      return undefined;
+    }
+    return isRecord(parsed) && parsed.run_id === runId ? parsed : undefined;
+  }
+
+  /**
+   * Plan C-1.5: one ralplan transaction reads the state and the counter,
+   * decides, and writes the counter `{run_id, breaker_count,
+   * breaker_updated_at}`. Breaker exhaustion writes only `active: false` to
+   * the state, through the runtime writer with one audit row whose
+   * `mutation_id` carries `breaker-exhausted` (R-O3). A turn ultragoal handled
+   * only resets a finished run's breaker. A subagent's own session holds no
+   * ralplan state, so it skips at the first clause. Returns the message to
+   * inject after the transaction.
+   */
+  async function decideRalplan(
+    sessionID: string,
+    ultragoalHandled: boolean,
+  ): Promise<Notice | undefined> {
+    return store.ralplanTransaction(sessionID, async (tx) => {
+      let state: Record<string, unknown> | undefined;
+      try {
+        state = await tx.readState();
+      } catch (error) {
+        log("ralplan state unreadable; treating session as inactive", error);
+        return undefined;
+      }
+      const runId = typeof state?.run_id === "string" ? state.run_id : undefined;
+      const breaker = await readBreaker(tx, runId);
+      const decision = shouldContinue(state, breaker, Date.now());
+      const writeBreaker = (count: number) =>
+        tx.writeText(
+          tx.paths.continuationPath,
+          `${JSON.stringify(
+            {
+              run_id: runId,
+              breaker_count: count,
+              breaker_updated_at: new Date().toISOString(),
+            },
+            null,
+            2,
+          )}\n`,
+        );
+      if (decision.kind === "skip") {
+        if (decision.resetBreaker && (Number(breaker?.breaker_count) || 0) !== 0)
+          await writeBreaker(0);
+        return undefined;
+      }
+      if (ultragoalHandled) return undefined;
+      if (decision.kind === "breaker") {
+        await patchStateTx(
+          tx,
+          sessionID,
+          { active: false },
+          HOOK_OWNER,
+          "breaker-exhausted",
+        );
+        await writeBreaker(0);
+        return {
+          text: breakerMessage(),
+          description:
+            "open-gajae: ralplan continuation stopped (breaker limit reached)",
+        };
+      }
+      await writeBreaker(decision.count);
+      return {
+        text: continuationMessage(decision.count),
+        description: `open-gajae: ralplan continuation ${decision.count}/${RALPLAN_STOP_BLOCKER_MAX}`,
+      };
+    });
+  }
+
   async function continueSession(sessionID: string): Promise<void> {
     if (inFlight.has(sessionID)) {
       log(`continuation already in flight for ${sessionID}`);
@@ -312,58 +429,20 @@ export function createHooks(
         return;
       }
 
-      // A subagent runs in its own session with its own directory, so this read
-      // returns undefined and the decision is `skip` at the first clause.
-      const state = await readState(sessionID);
-      const decision = shouldContinue(state, Date.now());
-
       // One engine, one mode per turn: ultragoal first (OMC ralph priority,
-      // persistent-mode/index.ts:2471-2477). A turn ultragoal handled still
-      // resets a finished ralplan's breaker, as the skip path does.
-      if (await ultragoal.continueLoop(sessionID, toolCallsOf(sessionID))) {
-        if (decision.kind === "skip" && decision.resetBreaker)
-          await store.patch(sessionID, { breaker_count: 0 }, RALPLAN_MODE);
-        return;
-      }
-
-      if (decision.kind === "skip") {
-        if (decision.resetBreaker)
-          await store.patch(sessionID, { breaker_count: 0 }, RALPLAN_MODE);
-        return;
-      }
-
-      if (decision.kind === "breaker") {
-        await store.patch(
-          sessionID,
-          {
-            active: false,
-            breaker_count: 0,
-            deactivated_reason: "stop_breaker_exhausted",
-            completed_at: new Date().toISOString(),
-          },
-          RALPLAN_MODE,
-        );
-        await inject(
-          sessionID,
-          breakerMessage(),
-          "open-gajae: ralplan continuation stopped (breaker limit reached)",
-        );
-        return;
-      }
-
-      await store.patch(
+      // persistent-mode/index.ts:2471-2477), in its own transaction; the
+      // ralplan transaction starts only after it (plan C-1.2, C-1.5).
+      const handled = await ultragoal.continueLoop(
         sessionID,
-        {
-          breaker_count: decision.count,
-          breaker_updated_at: new Date().toISOString(),
-        },
-        RALPLAN_MODE,
+        toolCallsOf(sessionID),
       );
-      await inject(
-        sessionID,
-        continuationMessage(decision.count),
-        `open-gajae: ralplan continuation ${decision.count}/${RALPLAN_STOP_BLOCKER_MAX}`,
-      );
+      let action: Notice | undefined;
+      try {
+        action = await decideRalplan(sessionID, handled);
+      } catch (error) {
+        log("ralplan continuation failed", error);
+      }
+      if (action) await inject(sessionID, action.text, action.description);
     } finally {
       inFlight.delete(sessionID);
     }
@@ -444,10 +523,11 @@ export function createHooks(
 
   /**
    * D2c: a session may only write plans and drafts under its own session
-   * folder. The static `edit` rules in `src/config.ts` pin the shape of the
-   * path; only this can pin the session. Returns the model-facing guidance
-   * when the call must be blocked, `undefined` when it may run. Any failure to
-   * decide blocks (fail closed).
+   * folder; only this can pin the session. Ahead of it, the runtime-owned
+   * paths — ultragoal files, the ralplan run folders and the session `state/`
+   * tree — are refused for every agent and session (plan S3 ①, AC18). Returns
+   * the model-facing guidance when the call must be blocked, `undefined` when
+   * it may run. Any failure to decide blocks (fail closed).
    */
   async function guardSessionArtifacts(
     tool: string,
@@ -459,6 +539,13 @@ export function createHooks(
       if (isUltragoalOwned(locationDir, projectDir, path)) {
         const shown = projectRelative(locationDir, projectDir, path) ?? path;
         return `open-gajae: ${shown} is ultragoal-owned; change it only through the ultragoal tool`;
+      }
+      if (
+        isRalplanOwned(locationDir, projectDir, path) ||
+        isSessionState(locationDir, projectDir, path)
+      ) {
+        const shown = projectRelative(locationDir, projectDir, path) ?? path;
+        return `open-gajae: ${shown}: ${WORKFLOW_STATE_MUTATION_BLOCK_MESSAGE}`;
       }
       const owner = sessionArtifactOwner(locationDir, projectDir, path);
       // Not a session plan or draft: the static permission rules decide.
@@ -475,6 +562,47 @@ export function createHooks(
       return `open-gajae: ${shown} belongs to another session's plans/drafts. ${guidance(tool, allowed)}`;
     }
     return undefined;
+  }
+
+  /**
+   * Plan DR-10 (gjc `getActivePlanningSkill`, `isBlockingPlanningPhase`,
+   * `planningBlockedTargets`): while the lineage root's ralplan state is
+   * readable, active and on a phase outside R — final and handoff keep
+   * blocking — and ultragoal is not running at that root (R-O7), a
+   * `write`/`edit`/`patch` from any agent of the lineage is refused unless
+   * every target is a neutral temp path (DR-11). A call without a target is
+   * refused, as gjc refuses an unknown target. Returns the message, or
+   * `undefined`. Fails open on its own errors: a missing, unreadable or
+   * unknown-phase state (DR-21) or a failed lineage lookup releases the guard
+   * (gjc `:320`), unlike the fail-closed artifact guard.
+   */
+  async function guardPlanning(
+    tool: string,
+    sessionID: string,
+    input: unknown,
+  ): Promise<string | undefined> {
+    if (!ARTIFACT_TOOLS.has(tool)) return undefined;
+    try {
+      const root = await rootSession(sessionID);
+      const state = await store.read(root, RALPLAN_MODE);
+      const phase = state?.current_phase;
+      if (
+        state?.active !== true ||
+        !isKnownPhase(phase) ||
+        GUARD_RELEASE_PHASES.has(phase)
+      )
+        return undefined;
+      if (isUltragoalRunning(await ultragoal.read(root))) return undefined;
+      const paths = artifactPathsOf(tool, input);
+      if (paths.length === 0) return RALPLAN_MUTATION_BLOCK_MESSAGE;
+      for (const path of paths)
+        if (!(await isNeutralTempPath(resolve(locationDir, path), projectDir)))
+          return RALPLAN_MUTATION_BLOCK_MESSAGE;
+      return undefined;
+    } catch (error) {
+      log("ralplan planning guard could not decide; allowing the call", error);
+      return undefined;
+    }
   }
 
   /** Guidance per blocked tool call id, consumed by `execute.after`. */
@@ -533,8 +661,6 @@ export function createHooks(
         log("could not release the ultragoal pause", error);
       }
 
-      // A mention is checked before the keyword and counts as detected, so a
-      // stale seed followed by `@ralplan` is confirmed rather than cleared.
       const skills = event.prompt.skills ?? [];
       const ralplanMention = skills.some((s) => s.id === RALPLAN_SKILL_NAME);
       const deepInterviewMention = skills.some(
@@ -544,30 +670,16 @@ export function createHooks(
       // OMC's guard (inside the detectors): a mention in prose, a question, a
       // quoted example or a pasted skill body is not an invocation.
       const keyword = detectRalplanKeyword(text) !== null;
-      const detected = ralplanMention || keyword ? ["ralplan"] : [];
+      const ralplanDetected = ralplanMention || keyword;
       const ultragoalKeyword =
         !ultragoalMention && detectUltragoalKeyword(text) !== null;
       const ultragoalDetected = ultragoalMention || ultragoalKeyword;
-      let state = await readState(sessionID);
       let ultragoalState = await ultragoal.read(sessionID);
       const notices: Notice[] = [];
 
       // Stale-seed cleanup, the sole replacement for the deleted TTL. A keyword
       // the model never acted on cannot leave a permanently active-but-silent
-      // state. Clearing here, before the restore check, also means such a seed
-      // can never raise a restore banner on a later turn.
-      if (
-        state?.active === true &&
-        state.awaiting_confirmation === true &&
-        detected.length === 0
-      ) {
-        try {
-          await store.clear(sessionID, RALPLAN_MODE);
-        } catch (error) {
-          log("could not clear stale ralplan seed", error);
-        }
-        state = undefined;
-      }
+      // state, and such a seed can never raise a restore banner.
       if (
         ultragoalState?.active === true &&
         ultragoalState.awaiting_confirmation === true &&
@@ -581,25 +693,6 @@ export function createHooks(
         ultragoalState = undefined;
       }
 
-      // Restore, once per resume. The `started_at`-present clause is
-      // load-bearing: a state re-created after a stale seed was cleared must
-      // not read as a resume.
-      if (state?.active === true && typeof state.started_at === "string") {
-        const restoredAt = state.restored_at;
-        const isResume =
-          typeof restoredAt !== "string" || restoredAt < state.started_at;
-        if (isResume) {
-          await store.patch(
-            sessionID,
-            { restored_at: new Date().toISOString() },
-            RALPLAN_MODE,
-          );
-          notices.push({
-            text: restoreMessage(state),
-            description: "open-gajae: ralplan restore notice added",
-          });
-        }
-      }
       const restored = await ultragoal.restore(sessionID, ultragoalState);
       if (restored) notices.push(restored);
 
@@ -608,24 +701,17 @@ export function createHooks(
       // vague one into goals.
       const ultragoalRunning = isUltragoalRunning(ultragoalState);
 
-      // Ralplan seed. The mention already attached the skill, so it seeds
-      // confirmed; the keyword seeds awaiting the `skill` call. Both carry a
-      // notice so the user sees the insertion (user decision, 2026-09-24).
-      // While ultragoal runs (plan §5.6), `@ralplan` only gets the handoff
-      // notice (decision 1b) and the keyword gets nothing (Q-3).
+      // Ralplan: a notice only, no state (plan S3, D-F13, R-O6); `ralplan
+      // start` is the documented entry. Both carry a notice so the user sees
+      // the insertion (user decision, 2026-09-24). While ultragoal runs (plan
+      // §5.6), `@ralplan` only gets the handoff notice (decision 1b) and the
+      // keyword gets nothing (Q-3).
       if (ralplanMention && ultragoalRunning) {
         notices.push({
           text: ralplanMentionNotice(),
           description: "open-gajae: ultragoal handoff notice added",
         });
       } else if (ralplanMention) {
-        if (state?.active !== true) {
-          const patch = seedState(state, new Date().toISOString(), {
-            awaiting: false,
-          });
-          if (patch) await store.patch(sessionID, patch, RALPLAN_MODE);
-        } else if (state.awaiting_confirmation === true)
-          await confirmRalplan(sessionID);
         notices.push({
           text: mentionMessage(),
           description: "open-gajae: ralplan mention notice added",
@@ -635,25 +721,40 @@ export function createHooks(
         !ultragoalRunning &&
         !text.includes(KEYWORD_NOTICE_MARKER)
       ) {
-        const patch = seedState(state, new Date().toISOString());
-        if (patch) await store.patch(sessionID, patch, RALPLAN_MODE);
-        else log("ralplan state already active; skipped re-seed");
         notices.push({
           text: keywordMessage(),
           description: "open-gajae: ralplan keyword notice added",
         });
       }
 
-      // Ultragoal seed (R16), unless the same prompt asks for ralplan. Ralplan
-      // planning in progress keeps it from starting (Q-1).
-      if (ultragoalDetected && detected.length === 0) {
-        if (isRalplanRunning(state)) {
+      // Ultragoal seed (R16), unless the same prompt asks for ralplan. The
+      // mention attaches the skill without a `skill` call, so the ralplan
+      // entry gate runs here before its seed (plan C-4, Architect 2nd-round
+      // MINOR-1): refused → the notice only; a finished ralplan is handed off
+      // and its meta rides the seed. The keyword's awaiting seed changes no
+      // ralplan state; the later `skill ultragoal` load passes the gate, and
+      // until then running planning keeps it from starting (Q-1).
+      if (ultragoalDetected && !ralplanDetected) {
+        const gate = ultragoalMention
+          ? await ultragoalEntryGate(store, sessionID, HOOK_OWNER)
+          : undefined;
+        if (
+          gate
+            ? gate.status === "refused"
+            : isRalplanRunning(await readState(sessionID))
+        ) {
           notices.push({
             text: ralplanRunningNotice(),
             description: "open-gajae: ralplan-running notice added",
           });
         } else if (ultragoalMention) {
-          await ultragoal.seed(sessionID, { awaiting: false, task: text });
+          await ultragoal.seed(sessionID, {
+            awaiting: false,
+            task: text,
+            ...(gate?.status === "handoff"
+              ? { handoff_from: gate.handoff_from, handoff_at: gate.handoff_at }
+              : {}),
+          });
           notices.push({
             text: ultragoalMentionMessage(),
             description: "open-gajae: ultragoal mention notice added",
@@ -716,6 +817,13 @@ export function createHooks(
         return;
       }
     }
+    // ② The planning guard fails open inside itself (plan DR-10).
+    const planning = await guardPlanning(event.tool, event.sessionID, event.input);
+    if (planning !== undefined) {
+      blocked.set(event.id, planning);
+      event.input = {};
+      return;
+    }
     try {
       if (event.tool === "subagent") {
         await ultragoal.attachBrief(event);
@@ -724,56 +832,93 @@ export function createHooks(
       if (event.tool !== "skill" || !isRecord(event.input)) return;
       // v2 `skill` input is `{ id }` (core/src/tool/plugin/skill.ts:12-14).
       if (event.input.id === ULTRAGOAL_SKILL_NAME) {
-        if (event.agent === "open-gajae")
-          await ultragoal.onSkillLoad(event.sessionID);
+        if (event.agent !== "open-gajae") return;
+        // ③ The ultragoal entry gate (plan C-4) before the skill's confirm: a
+        // refusal invalidates the input like every block here (a throw would
+        // be swallowed and fail open); a finished ralplan is handed off and
+        // ultragoal seeded with its meta (R-O2).
+        const gate = await ultragoalEntryGate(store, event.sessionID, HOOK_OWNER);
+        if (gate.status === "refused") {
+          blocked.set(event.id, gate.message);
+          event.input = {};
+          return;
+        }
+        if (gate.status === "handoff")
+          await ultragoal.seed(event.sessionID, {
+            awaiting: false,
+            handoff_from: gate.handoff_from,
+            handoff_at: gate.handoff_at,
+          });
+        await ultragoal.onSkillLoad(event.sessionID);
         return;
       }
       if (event.input.id !== RALPLAN_SKILL_NAME) return;
-      // Chain guard (decision 1a): ralplan only after an explicit handoff.
+      // ④ Chain guard (decision 1a): ralplan only after an explicit handoff.
       if (isUltragoalRunning(await ultragoal.read(event.sessionID))) {
         blocked.set(event.id, CHAIN_GUARD_REFUSAL);
         event.input = {};
-        return;
       }
-      await confirmRalplan(event.sessionID);
     } catch (error) {
       log("execute.before handler failed", error);
     }
   };
 
   /**
-   * Rewrite a failed `edit`/`write`/`patch` into model-facing guidance when it
-   * failed because of this plugin's guard (a recorded block), or because the
-   * planner's static `edit` rules refused it. The permission block is detected
-   * by its inner `_tag`, not `instanceof`: the plugin's error classes are not
-   * the host's (Phase 0 P8).
+   * Rewrite a failed call into model-facing guidance when it failed because
+   * of a block recorded by `execute.before`. Since plan S3 no role has a static
+   * `edit` allow to explain, so a host permission block is left as it is.
    */
   const executeAfter: RalplanHooks["executeAfter"] = async (event) => {
     try {
       const recorded = blocked.get(event.id);
       if (recorded !== undefined) blocked.delete(event.id);
-      if (event.status !== "error") return;
-      if (!ARTIFACT_TOOLS.has(event.tool) && recorded === undefined) return;
-      let message = recorded;
-      if (
-        message === undefined &&
-        event.agent === "open-gajae-planner" &&
-        isRecord(event.error) &&
-        isRecord(event.error.error) &&
-        event.error.error._tag === "Permission.BlockedError"
-      ) {
-        let folder = "_session-*";
-        try {
-          folder = await ownFolder(event.sessionID);
-        } catch (error) {
-          log("session folder unresolved for the rewrite", error);
-        }
-        message = `open-gajae: ${event.tool} was refused by the planner's write scope. ${guidance(event.tool, folder)}`;
-      }
-      if (message === undefined) return;
-      event.error = new ToolError({ message });
+      if (event.status !== "error" || recorded === undefined) return;
+      event.error = new ToolError({ message: recorded });
     } catch (error) {
       log("execute.after handler failed", error);
+    }
+  };
+
+  /**
+   * Plan D-H2/AC19: after ultragoal's context, the active ralplan run's
+   * recovery contract — gjc's projection of the newest final (else
+   * planner/revision) stage file, verified against its ledger sha256, and
+   * render (`./ralplan-runtime/recovery.ts`). Nothing is added for a missing,
+   * unreadable, inactive or unknown-phase state (DR-21) or a failed
+   * projection. Stage files are read through the transaction, confined to
+   * the run folder.
+   */
+  const compaction: RalplanHooks["compaction"] = async (event) => {
+    await ultragoal.compaction(event);
+    try {
+      const text = await store.ralplanTransaction(event.sessionID, async (tx) => {
+        const state = await tx.readState().catch(() => undefined);
+        if (state?.active !== true || !isKnownPhase(state.current_phase))
+          return undefined;
+        const run = ralplanRecoveryRunFromState(state);
+        if (!run) return undefined;
+        const runDir = tx.paths.runDir(run.runId);
+        const projection = await projectRalplanRun({
+          ...run,
+          runDir,
+          indexText: await tx.readText(join(runDir, RALPLAN_INDEX_FILE)),
+          readArtifact: async (candidate, dir) => {
+            const inside = relative(dir, candidate);
+            if (!inside || inside.startsWith("..") || isAbsolute(inside))
+              return undefined;
+            const artifact = await tx.readText(candidate).catch(() => undefined);
+            return artifact === undefined
+              ? undefined
+              : new TextEncoder().encode(artifact);
+          },
+        });
+        return projection
+          ? compactionMessage(renderRalplanRecoveryContext(projection))
+          : undefined;
+      });
+      if (text !== undefined) event.system.push({ type: "text", text });
+    } catch (error) {
+      log("ralplan compaction context failed", error);
     }
   };
 
@@ -829,7 +974,7 @@ export function createHooks(
     parentSession,
     rootSession,
     prompt,
-    compaction: ultragoal.compaction,
+    compaction,
     executeBefore,
     executeAfter,
     onEvent,

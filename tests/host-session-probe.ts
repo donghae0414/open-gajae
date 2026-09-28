@@ -34,7 +34,7 @@ const continuations = (host: Host, tag: string) =>
   host.provider.thread(tag).filter((e) => e.kind === "continuation");
 
 async function keywordEntry(report: Report, host: Host) {
-  // Keyword → awaiting seed + notice; the `skill` call confirms it; the
+  // Keyword → notice only (D-F13); `ralplan start` is the entry; the
   // `succeeded` that follows re-enters through a synthetic resume.
   const s = await host.createSession({ agent: "open-gajae" });
   const since = Date.now();
@@ -44,8 +44,9 @@ async function keywordEntry(report: Report, host: Host) {
       tag: "kw",
       clearAfter: 2,
       steps: [
-        { tool: "state_read", args: { mode: "ralplan" } },
+        { tool: "ralplan", args: { op: "status" } },
         { tool: "skill", args: { id: "ralplan" } },
+        { tool: "ralplan", args: { op: "start", task: "the cache layer" } },
       ],
     })}`,
   );
@@ -60,11 +61,11 @@ async function keywordEntry(report: Report, host: Host) {
     notice >= 0 && user >= 0 && occurrences(first, RALPLAN_NOTICE) === 1,
     { notice, user },
   );
-  const seeded = parse(thread.find((e) => e.step === 1 && e.kind === "directive")?.toolResults.at(-1))?.state;
+  const status = parse(thread.find((e) => e.step === 1 && e.kind === "directive")?.toolResults.at(-1));
   report.check(
-    "keyword: seed is active and awaiting the skill call",
-    seeded?.active === true && seeded?.awaiting_confirmation === true,
-    seeded,
+    "keyword: notice only, no ralplan state seeded",
+    status?.skill === "ralplan" && !!status.state && Object.keys(status.state).length === 0,
+    status,
   );
   const skillResult = thread.find((e) => e.step === 2 && e.kind === "directive")?.toolResults.at(-1) ?? "";
   report.check(
@@ -72,6 +73,8 @@ async function keywordEntry(report: Report, host: Host) {
     !/"error"|Invalid arguments/.test(skillResult) && skillResult.includes("ralplan"),
     skillResult.slice(0, 300),
   );
+  const started = parse(thread.find((e) => e.step === 3 && e.kind === "directive")?.toolResults.at(-1));
+  report.check("keyword: ralplan start starts the run", started?.ok === true && started?.run_id === s, started);
   const [c1, c2] = [1, 2].map((n) => continuations(host, "kw").find((e) => e.count === n && e.step === 0));
   report.check(
     "continuation re-enters after a synthetic resume on succeeded (1/30, then 2/30)",
@@ -80,39 +83,52 @@ async function keywordEntry(report: Report, host: Host) {
   );
   const types = host.sessionEvents(s, since).map((e) => e.type);
   report.check(
-    "continuation: each succeeded is followed by a new execution until state_clear",
+    "continuation: each succeeded is followed by a new execution until ralplan clear",
     types.filter((t) => t === "session.execution.started").length >= 3 &&
       !continuations(host, "kw").some((e) => (e.count ?? 0) > 2),
     types,
   );
-  report.check("continuation: ralplan state cleared by state_clear", host.ralplanState(s) === undefined, host.ralplanState(s));
+  // DR-6: clear keeps the state file as {active: false, current_phase: "complete"}.
+  const cleared = host.ralplanState(s);
+  report.check(
+    "continuation: ralplan clear leaves {active: false, current_phase: \"complete\"}",
+    cleared?.active === false && cleared?.current_phase === "complete",
+    cleared,
+  );
 }
 
 async function ralplanMention(report: Report, host: Host) {
   const s = await host.createSession({ agent: "open-gajae" });
   await host.prompt(
     s,
-    `@ralplan plan the cache layer\n${directive({ tag: "mention", steps: [{ tool: "state_read", args: { mode: "ralplan" } }] })}`,
+    `@ralplan plan the cache layer\n${directive({
+      tag: "mention",
+      steps: [
+        { tool: "ralplan", args: { op: "status" } },
+        { tool: "ralplan", args: { op: "start", task: "plan the cache layer" } },
+      ],
+    })}`,
     mention("ralplan"),
   );
   await waitFor("mention continuation", () => continuations(host, "mention").some((e) => e.step >= 1), 60_000);
   await host.settle(s);
   const thread = host.provider.thread("mention");
   const first = thread.find((e) => e.kind === "directive" && e.step === 0);
-  const seeded = parse(thread.find((e) => e.kind === "directive" && e.step === 1)?.toolResults.at(-1))?.state;
+  const status = parse(thread.find((e) => e.kind === "directive" && e.step === 1)?.toolResults.at(-1));
   report.check(
     "@ralplan mention: host attached the ralplan skill",
     (first?.messages ?? []).some((m) => m.text.includes('<skill_content name="ralplan"')),
   );
   report.check(
-    "@ralplan mention: seed is confirmed (active, not awaiting) with exactly one mention notice",
-    seeded?.active === true &&
-      seeded?.awaiting_confirmation === false &&
+    "@ralplan mention: notice only (no ralplan state seeded) with exactly one mention notice",
+    status?.skill === "ralplan" &&
+      !!status.state &&
+      Object.keys(status.state).length === 0 &&
       occurrences(first, RALPLAN_NOTICE) === 1 &&
       (first?.messages ?? []).some((m) => m.text.includes("through the `@ralplan` mention")),
-    { seeded, notices: occurrences(first, RALPLAN_NOTICE) },
+    { status, notices: occurrences(first, RALPLAN_NOTICE) },
   );
-  report.check("@ralplan mention: continuation runs without a skill call", continuations(host, "mention").length >= 1);
+  report.check("@ralplan mention: continuation runs after ralplan start, without a skill call", continuations(host, "mention").length >= 1);
 }
 
 async function deepInterviewEntries(report: Report, host: Host) {
@@ -159,18 +175,8 @@ async function bridge(report: Report, host: Host) {
           },
         },
         { tool: "skill", args: { id: "ralplan" } },
-        { tool: "state_read", args: { mode: "ralplan" } },
-        {
-          tool: "state_write",
-          args: {
-            mode: "ralplan",
-            active: true,
-            current_phase: "ralplan",
-            awaiting_confirmation: false,
-            started_at: new Date().toISOString(),
-            restored_at: new Date().toISOString(),
-          },
-        },
+        { tool: "ralplan", args: { op: "start", task: "build a todo app" } },
+        { tool: "ralplan", args: { op: "status" } },
       ],
     })}`,
     mention("deep-interview"),
@@ -196,11 +202,11 @@ async function bridge(report: Report, host: Host) {
     uniqueSkillCalls === 1 && !/"error"|Invalid arguments/.test(skillResult) && skillResult.includes("ralplan"),
     { uniqueSkillCalls, skillResult: skillResult.slice(0, 300) },
   );
-  const written = parse(thread.find((e) => e.kind === "directive" && e.step === 4)?.toolResults.at(-1))?.state;
+  const started = parse(thread.find((e) => e.kind === "directive" && e.step === 4)?.toolResults.at(-1))?.state;
   report.check(
-    "bridge: ralplan entry write confirmed (active, not awaiting) and continuation follows",
-    written?.active === true && written?.awaiting_confirmation === false && continuations(host, "bridge").length >= 1,
-    written,
+    "bridge: ralplan start activates the run (active, planner) and continuation follows",
+    started?.active === true && started?.current_phase === "planner" && continuations(host, "bridge").length >= 1,
+    started,
   );
   report.check(
     "bridge: the answered question ended in succeeded, not interrupted",
@@ -223,10 +229,17 @@ async function interruptDuringBackground(report: Report, host: Host) {
   const since = Date.now();
   await host.prompt(
     s,
-    `@ralplan plan the queue\n${directive({ tag: "int", steps: [background("int-child", 6_000), { sleep: 30_000, text: "parent-late" }] })}`,
+    `@ralplan plan the queue\n${directive({
+      tag: "int",
+      steps: [
+        { tool: "ralplan", args: { op: "start", task: "plan the queue" } },
+        background("int-child", 6_000),
+        { sleep: 30_000, text: "parent-late" },
+      ],
+    })}`,
     mention("ralplan"),
   );
-  await waitFor("int step 1 in flight", () => host.provider.thread("int").find((e) => e.step === 1), 30_000);
+  await waitFor("int step 2 in flight", () => host.provider.thread("int").find((e) => e.step === 2), 30_000);
   const interrupt = await host.api("POST", `/api/session/${s}/interrupt?resume=true`);
   await waitFor(
     "host resumes the parent after the child completes",
@@ -263,7 +276,14 @@ async function backgroundChildPending(report: Report, host: Host) {
   // resume produces a later succeeded, which continues.
   const s = await host.createSession({ agent: "open-gajae" });
   const since = Date.now();
-  await host.prompt(s, `@ralplan plan the cache\n${directive({ tag: "q5", steps: [background("q5-child", 6_000)] })}`, mention("ralplan"));
+  await host.prompt(
+    s,
+    `@ralplan plan the cache\n${directive({
+      tag: "q5",
+      steps: [{ tool: "ralplan", args: { op: "start", task: "plan the cache" } }, background("q5-child", 6_000)],
+    })}`,
+    mention("ralplan"),
+  );
   await waitFor("q5 continuation", () => continuations(host, "q5").some((e) => e.step >= 1), 60_000).catch(() => undefined);
   await host.settle(s);
   const thread = host.provider.thread("q5");
@@ -366,7 +386,7 @@ async function ultragoalVerification(report: Report, host: Host) {
 
 async function ultragoalStartWithoutGate(report: Report, host: Host) {
   // P-6/P-8: a vague ultragoal request starts ultragoal (no gate), and start
-  // brings a handed-off run back up.
+  // brings a handed-off run back up once ralplan is stopped (Stop here).
   const s = await host.createSession({ agent: "open-gajae" });
   await host.prompt(
     s,
@@ -375,7 +395,7 @@ async function ultragoalStartWithoutGate(report: Report, host: Host) {
       steps: [
         { tool: "skill", args: { id: "ultragoal" } },
         ug({ op: "handoff", to: "ralplan", reason: "probe" }),
-        { tool: "state_write", args: { mode: "ralplan", active: false, current_phase: "complete" } },
+        { tool: "ralplan", args: { op: "state", patch: { active: false } } },
         ug({ op: "start", reason: "probe restart" }),
       ],
     })}`,
@@ -436,7 +456,8 @@ async function ultragoalIdleAndCompaction(report: Report, host: Host) {
 }
 
 async function ultragoalHandoff(report: Report, host: Host) {
-  // ⑥ chain guard → handoff → ralplan → Execute via ultragoal → resume.
+  // ⑥ chain guard → handoff (starts ralplan) → ralplan → final (the approval
+  // point) → skill ultragoal hands off through the entry gate (C-4) → resume.
   const s = await host.createSession({ agent: "open-gajae" });
   await host.prompt(
     s,
@@ -447,7 +468,7 @@ async function ultragoalHandoff(report: Report, host: Host) {
         { tool: "skill", args: { id: "ralplan" } },
         ug({ op: "handoff", to: "ralplan", reason: "user asked to replan" }),
         { tool: "skill", args: { id: "ralplan" } },
-        { tool: "state_write", args: { mode: "ralplan", active: false, current_phase: "handoff", plan_path: "plan.md" } },
+        { tool: "ralplan", args: { op: "write", stage: "final", stage_n: 1, content: "# Final plan\n\nParse the flag.\n" } },
         { tool: "skill", args: { id: "ultragoal" } },
         ug({ op: "resume", reason: "plan approved" }),
         ug({ op: "status" }),
@@ -464,14 +485,29 @@ async function ultragoalHandoff(report: Report, host: Host) {
       resultOf(host, "ug-handoff", 2).includes("before loading ralplan"),
     resultOf(host, "ug-handoff", 2).slice(0, 300),
   );
-  report.check("⑥ handoff activates ralplan", resultOf(host, "ug-handoff", 3).includes("Handed off to ralplan"), resultOf(host, "ug-handoff", 3));
+  report.check("⑥ handoff starts ralplan", resultOf(host, "ug-handoff", 3).includes("ralplan started"), resultOf(host, "ug-handoff", 3));
   report.check(
     "⑥ skill ralplan loads after the handoff",
     !/"error"|Invalid arguments/.test(resultOf(host, "ug-handoff", 4)) && resultOf(host, "ug-handoff", 4).includes('<skill_content name="ralplan">'),
     resultOf(host, "ug-handoff", 4).slice(0, 300),
   );
+  report.check(
+    "⑥ ralplan write final records the plan for approval",
+    resultOf(host, "ug-handoff", 5).includes("pending-approval.md") && !resultOf(host, "ug-handoff", 5).includes('"error"'),
+    resultOf(host, "ug-handoff", 5).slice(0, 600),
+  );
+  report.check(
+    "⑥ skill ultragoal loads through the entry gate",
+    !/"error"|Invalid arguments/.test(resultOf(host, "ug-handoff", 6)) && resultOf(host, "ug-handoff", 6).includes('<skill_content name="ultragoal">'),
+    resultOf(host, "ug-handoff", 6).slice(0, 300),
+  );
   report.check("⑥ resume keeps G001", resultOf(host, "ug-handoff", 7).includes("Resumed") && resultOf(host, "ug-handoff", 7).includes("G001"), resultOf(host, "ug-handoff", 7));
-  report.check("⑥ the ralplan handoff is consumed", host.ralplanState(s)?.current_phase === "handoff-consumed", host.ralplanState(s));
+  const ralplan = host.ralplanState(s);
+  report.check(
+    "⑥ the gate handed ralplan off to ultragoal (inactive, phase handoff)",
+    ralplan?.active === false && ralplan?.current_phase === "handoff" && ralplan?.handoff_to === "ultragoal",
+    ralplan,
+  );
   const progress = host.sessionFile(s, "ultragoal/progress.txt") ?? "";
   report.check("⑥ progress records HANDOFF and RESUME with reasons", ["- HANDOFF", "user asked to replan", "- RESUME", "plan approved"].every((p) => progress.includes(p)), progress.slice(-600));
 }

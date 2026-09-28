@@ -13,6 +13,7 @@
 
 import { createHash } from "node:crypto";
 import { wrapUltragoalInjected } from "./ralplan.js";
+import { isKnownPhase, TERMINAL_PHASES } from "./ralplan-runtime/manifest.js";
 import type { ExplicitStatePatch } from "./state.js";
 
 /** An ultragoal state snapshot as read from disk; every field is untrusted. */
@@ -541,8 +542,16 @@ export function isUltragoalRunning(state: UltragoalStateSnapshot): boolean {
   );
 }
 
+/**
+ * Plan C-2 (gajae-code 5c52314 `tools/skill.ts:42-61`): ralplan planning runs
+ * while the state is active on a phase outside T. A phase outside the known
+ * set is an unreadable state (DR-21) and does not run.
+ */
 export function isRalplanRunning(state: UltragoalStateSnapshot): boolean {
-  return state?.active === true && state.awaiting_confirmation !== true;
+  const phase = state?.current_phase;
+  return (
+    state?.active === true && isKnownPhase(phase) && !TERMINAL_PHASES.has(phase)
+  );
 }
 
 /** The state after `changes`, where an `undefined` value removes a field. */
@@ -890,11 +899,11 @@ export function ralplanMentionNotice(): string {
   );
 }
 
-/** Q-1: ultragoal requested while ralplan runs. */
+/** Q-1: ultragoal requested while ralplan runs (gjc approval label, R-O5). */
 export function ralplanRunningNotice(): string {
   return wrapUltragoalInjected(
     "<ultragoal-notice>",
-    '[RALPLAN ACTIVE] ultragoal was not started because ralplan planning is running. Finish ralplan first: choose "Execute via ultragoal" at the approval step, or choose "Stop here" and invoke ultragoal again.',
+    '[RALPLAN ACTIVE] ultragoal was not started because ralplan planning is running. Finish ralplan first: choose "Approve execution via ultragoal" at the approval step, or choose "Stop here" and invoke ultragoal again.',
   );
 }
 
@@ -902,11 +911,14 @@ export function ralplanRunningNotice(): string {
 export const CHAIN_GUARD_REFUSAL =
   'open-gajae: ultragoal is running in this session; call ultragoal handoff(to="ralplan", reason) before loading ralplan.';
 
-/** Q-2: `state_write(mode="ralplan", active=true)` while ultragoal runs. */
+/** Q-2: `ralplan start` while ultragoal runs (plan S2/S3). */
 export const RALPLAN_ACTIVATION_REFUSAL =
-  'ralplan cannot be activated while ultragoal is running; call ultragoal handoff(to="ralplan", reason) first.';
+  'ralplan cannot be started while ultragoal is running; call ultragoal handoff(to="ralplan", reason) instead, which starts the ralplan run.';
 
-/** `src/ralplan.ts` restoreMessage, for ultragoal. */
+/**
+ * OMC bridge.ts:2074-2086 session restore notice, for ultragoal (the ralplan
+ * one was removed in plan S3, R-O11).
+ */
 export function restoreMessage(state: UltragoalStateSnapshot): string {
   const startedAt =
     typeof state?.started_at === "string" && state.started_at

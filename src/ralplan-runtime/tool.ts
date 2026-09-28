@@ -122,7 +122,10 @@ const input = z.object({
     ),
   fallback_attempted_id: z.string().optional().describe("write: the session id that could not be resumed."),
   fallback_stage_n: z.number().optional().describe("write: the stage_n of the failed resume."),
-  fallback_receipt_path: z.string().optional().describe("write: the receipt path of the failed resume."),
+  fallback_receipt_path: z
+    .string()
+    .optional()
+    .describe("write: the fresh role's stage artifact path (gjc --fallback-receipt-path)."),
   fields: z
     .array(z.enum(STATE_FIELD_ALLOWLIST))
     .optional()
