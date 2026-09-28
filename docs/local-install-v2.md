@@ -43,7 +43,7 @@ bun test
 
 ### `~/.config/opencode/cli.json` (선택: ralplan 사이드바)
 
-ralplan 진행 칩을 TUI 사이드바에 보려면, TUI 설정 파일 `~/.config/opencode/cli.json`의 `plugins`에 저장소 안 `tui-plugin` **디렉터리**를 절대 경로로 넣습니다. 이 파일은 `opencode.jsonc`와 별개인 TUI 전용 설정입니다(`opencode/packages/cli/src/config/config.ts:31`).
+ralplan 진행 칩을 TUI 사이드바에 보려면, TUI 설정 파일 `~/.config/opencode/cli.json`의 `plugins`에 저장소 안 `tui-plugin` **디렉터리**를 절대 경로로 넣습니다. 이 파일은 `opencode.jsonc`와 별개인 TUI 전용 설정입니다(`opencode/packages/cli/src/config/config.ts:31`). `tui-plugin/sidebar.ts`는 저장소의 `src/ralplan-runtime/manifest.ts`를 가져오므로 `tui-plugin/`만 따로 복사하지 말고 저장소 안의 디렉터리를 등록합니다.
 
 ```json
 {

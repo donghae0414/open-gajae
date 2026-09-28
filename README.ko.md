@@ -161,7 +161,7 @@ continuation은 ralplan state가 active이고 종료 phase가 아니며 `plannin
 
 host가 ralplan state가 active인 세션을 압축하면, 플러그인은 현재 plan의 목표, 범위, 비목표, 수용 기준, Intent Reconciliation, 다음 행동을 담은 `<ralplan-compaction-context>` 블록 하나를 압축 프롬프트에 추가합니다. state가 비활성이거나 손상되었거나 산출물의 sha256이 원장 줄과 맞지 않으면 추가하지 않습니다. state는 세션별이므로 세션 간 복원은 없고, ralplan restore 안내도 없습니다.
 
-**알려진 동작(GJC와 같음).** 잠긴 phase에서 write하면 — `final` 이후의 다듬기, 또는 Stop here나 `clear` 뒤의 write — 활성 행의 phase는 방금 쓴 단계가 되고 state의 phase는 `final` 또는 `complete`로 남습니다. 이때 원본 행 파일을 읽는 `ralplan doctor`는 GJC처럼 `stale_active_state`를 보고하고 해결 명령으로 `ralplan clear`를 제시합니다. `clear`는 잠긴 state의 phase를 행의 phase 대신 읽으므로 그 `force` 없는 `ralplan clear`는 GJC처럼 성공합니다. 예상된 동작이므로 이 보고만으로 `ralplan clear`를 호출하지 마세요. clear는 run을 끝냅니다.
+**알려진 동작(GJC와 같음).** 잠긴 phase에서 write하면 — `final` 이후의 다듬기, 또는 Stop here나 `clear` 뒤의 write — 활성 행의 phase는 방금 쓴 단계가 되고 state의 phase는 `final` 또는 `complete`로 남습니다. 이때 원본 행 파일을 읽는 `ralplan doctor`는 GJC처럼 `stale_active_state`를 보고하고 해결 명령으로 `ralplan clear`를 제시합니다. `final`에서 다듬은 뒤라면 `clear`가 잠긴 state의 phase를 행의 phase 대신 읽으므로 그 `force` 없는 `ralplan clear`는 GJC처럼 성공합니다(`clear` 뒤라면 state가 이미 종료라 `force` 없는 clear는 거부됩니다). 예상된 동작이므로 이 보고만으로 `ralplan clear`를 호출하지 마세요. clear는 run을 끝냅니다.
 
 **알려진 동작(GJC와 같음): 전환 감사 행.** 현재 phase에서 표의 간선이 아닌 단계를 write해도 성공하며, `state/audit.jsonl`에 `invalid_transition_detected` 행 하나만 추가됩니다(spec D-T11). 표에 `planner→critic`, `critic→architect` 간선이 없고 두 리뷰 레인은 어느 순서로든 기록되므로, 1회차 병렬 리뷰에서도 이런 행이 흔히 생깁니다.
 
