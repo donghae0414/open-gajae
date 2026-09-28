@@ -166,11 +166,13 @@ export type RalplanHooks = {
 };
 
 /**
- * G1's deny-list. These three are the read-only ralplan role subagents from
- * `src/config.ts`; a `subagent` turn runs in a child session carrying the
- * child's agent, and these roles have `state_write` denied, so seeding state
- * into their sessions would create a file they could never clear. Every other
- * value — including `undefined` or a failed lookup — proceeds.
+ * G1's deny-list: the five owned role subagents from `src/config.ts`. A
+ * `subagent` turn runs in a child session carrying the child's agent, and a
+ * role's brief can quote a workflow keyword, so the prompt hook skips these
+ * roles: no keyword or mention notices, and no ultragoal seed (the only state
+ * this hook seeds; ralplan gets a notice only) in a session whose agent has
+ * `state_clear` denied. Every other value — including `undefined` or a failed
+ * lookup — proceeds.
  */
 const ROLE_SUBAGENTS = new Set([
   "open-gajae-planner",

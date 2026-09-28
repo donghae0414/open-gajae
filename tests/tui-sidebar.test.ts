@@ -54,9 +54,10 @@ test("sidebar finds the session folder from a subdirectory and follows the snaps
     ]),
   );
 
-  // The first lookup is a TUI cache miss; later ones place the root session in
-  // a subdirectory of the repository.
+  // The first lookup is a TUI cache miss (one host load requested); later ones
+  // place the root session in a subdirectory of the repository.
   let lookups = 0;
+  const synced: string[] = [];
   const color = RGBA.fromInts(200, 200, 200);
   const feedback = { base: color, muted: color };
   const ctx = {
@@ -79,6 +80,9 @@ test("sidebar finds the session folder from a subdirectory and follows the snaps
           lookups++ === 0
             ? undefined
             : { id, location: { directory: location } },
+        sync: async (id: string) => {
+          synced.push(id);
+        },
       },
     },
   } as unknown as SidebarOptions["ctx"];
@@ -102,6 +106,7 @@ test("sidebar finds the session folder from a subdirectory and follows the snaps
   try {
     await app.renderOnce();
     expect(lookups).toBe(1);
+    expect(synced).toEqual([ROOT]);
     expect(app.captureCharFrame()).not.toContain("ralplan");
 
     let frame = await frameUntil((text) => text.includes("ralplan"));

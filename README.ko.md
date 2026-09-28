@@ -109,7 +109,7 @@ ambiguity 임계값에 도달해 spec을 저장한 뒤에는 인터뷰를 마칠
 | `doctor` | primary | `schema_violation`과 `stale_active_state`를 보고하며 아무것도 고치지 않습니다. |
 | `state(patch)` | primary, planner, architect, critic | patch를 병합합니다(`null`은 필드 삭제). phase 변경은 GJC 전환 규칙표를 따라야 합니다. Stop here는 `patch={"active": false}`입니다. |
 | `handoff(to="ultragoal")` | primary | 승인된 plan을 ultragoal에 넘깁니다(아래). |
-| `clear(force?)` | primary | `{active: false, current_phase: "complete"}`로 두고 파일과 `run_id`는 유지합니다. 손상된 state는 `force`가 필요합니다. |
+| `clear(force?)` | primary | `{active: false, current_phase: "complete"}`로 두고 파일과 `run_id`는 유지합니다. `force` 없이는 GJC처럼 손상된 state, 이미 종료 해제 phase(`complete` 등)인 state, 활성 행 phase가 state phase와 다른 state를 거부합니다. |
 
 모든 op는 호출 세션의 계보 루트를 대상으로 하므로, 역할의 하위 세션도 루트 세션 폴더에 기록합니다. run 폴더는 명시한 `run_id`, 그다음 state의 `run_id`, 그다음 루트 세션의 native ID(예: `ses_f4b081a27ffe…`)입니다. 명시하는 `run_id`는 `A-Z a-z 0-9 . _ -` 1~64자이고, `.`으로 시작하거나 `..`을 포함할 수 없습니다. `open-gajae-explore`, `open-gajae-document-specialist`, `open-gajae-executor`, `open-gajae-cleaner`에서는 이 도구가 거부되고 숨겨집니다. `build`/`general` 같은 host agent와 사용자 정의 agent에는 보일 수 있지만 호출하면 거부됩니다.
 
@@ -161,7 +161,7 @@ continuation은 ralplan state가 active이고 종료 phase가 아니며 `plannin
 
 host가 ralplan state가 active인 세션을 압축하면, 플러그인은 현재 plan의 목표, 범위, 비목표, 수용 기준, Intent Reconciliation, 다음 행동을 담은 `<ralplan-compaction-context>` 블록 하나를 압축 프롬프트에 추가합니다. state가 비활성이거나 손상되었거나 산출물의 sha256이 원장 줄과 맞지 않으면 추가하지 않습니다. state는 세션별이므로 세션 간 복원은 없고, ralplan restore 안내도 없습니다.
 
-**알려진 동작(GJC와 같음).** 잠긴 phase에서 write하면 — `final` 이후의 다듬기, 또는 Stop here나 `clear` 뒤의 write — 활성 행의 phase는 방금 쓴 단계가 되고 state의 phase는 `final` 또는 `complete`로 남습니다. 이때 `ralplan doctor`는 GJC처럼 `stale_active_state`를 보고하고 해결 명령으로 `ralplan clear`를 제시합니다. 예상된 동작이므로 이 보고만으로 `ralplan clear`를 호출하지 마세요. clear는 run을 끝냅니다.
+**알려진 동작(GJC와 같음).** 잠긴 phase에서 write하면 — `final` 이후의 다듬기, 또는 Stop here나 `clear` 뒤의 write — 활성 행의 phase는 방금 쓴 단계가 되고 state의 phase는 `final` 또는 `complete`로 남습니다. 이때 `ralplan doctor`는 GJC처럼 `stale_active_state`를 보고하고 해결 명령으로 `ralplan clear`를 제시하며, 두 phase가 다른 동안에는 그 `force` 없는 `ralplan clear`도 GJC처럼 거부됩니다. 예상된 동작이므로 이 보고만으로 clear를 강제하지 마세요. clear는 run을 끝냅니다.
 
 **알려진 동작(GJC와 같음): 전환 감사 행.** 현재 phase에서 표의 간선이 아닌 단계를 write해도 성공하며, `state/audit.jsonl`에 `invalid_transition_detected` 행 하나만 추가됩니다(spec D-T11). 표에 `planner→critic`, `critic→architect` 간선이 없고 두 리뷰 레인은 어느 순서로든 기록되므로, 1회차 병렬 리뷰에서도 이런 행이 흔히 생깁니다.
 
@@ -269,7 +269,7 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
 | 6 | `autoresearch` 자동 인계 대상 없음. | `gjc-runtime/ralplan-runtime.ts:103-112` | autoresearch skill이 없음 | `autoHandoff`는 `off` 또는 `ultragoal` |
 | 7 | `--architect/--critic openai-code` 없음. | `gjc-runtime/ralplan-runtime.ts:614-615` | 역할 모델은 `agents` 설정으로 지정 | run별로 리뷰어 모델을 바꿀 수 없음 |
 | 8 | 승인 질문에 `workflowGate` 표식 없음. | `SKILL.md:110` | OpenCode `question`에 해당 필드가 없고(`core/src/tool/plugin/question.ts:23-25`) 시간초과 자동 선택도 없음 | 원격 workflow-gate 이벤트 없음 |
-| 9 | HUD가 파일 폴링으로 그리는 TUI `sidebar.content` 블록이 되고, `stages` 칩은 단계 전체 이름을 씁니다. | `skill-state/workflow-hud.ts:188-245`, `gjc-runtime/ledger-event-renderer.ts:156-166`, `modes/components/skill-hud/render.ts:43-64` | host UI 차이, 관리자 선택 | 최대 약 1초 지연, 원격 attach 미지원. 칩은 한 줄에 하나씩 그리며, `success` severity(`CLEAR`/`OKAY`/`APPROVE`)는 success 색으로 그림(GJC renderer는 dim으로 둠) |
+| 9 | HUD가 파일 폴링으로 그리는 TUI `sidebar.content` 블록이 되고, `stages` 칩은 단계 전체 이름을 씁니다. | `skill-state/workflow-hud.ts:188-245`, `gjc-runtime/ledger-event-renderer.ts:156-166`, `modes/components/skill-hud/render.ts:43-64` | host UI 차이, 관리자 선택 | 최대 약 1초 지연, 원격 attach 미지원. `stages` 칩은 여섯 단어가 칩 값 80자 제한을 넘으면 더 적은 단어를 보이며 단어를 자르지 않음. 칩은 한 줄에 하나씩 그리며, `success` severity(`CLEAR`/`OKAY`/`APPROVE`)는 success 색으로 그림(GJC renderer는 dim으로 둠) |
 | 10 | OMC continuation을 유지하며, 종료 phase·`PLANNING-STUCK`·`active: false`에서 멈춥니다. | (GJC에 없음) | 관리자 선택 | 멈춘 계획 턴이 breaker 한도 안에서 자동 재개 |
 | 11 | 계획 가드가 `shell`의 변경 명령을 판별하지 않습니다. | `skill-state/workflow-mutation-guard.ts:1475-1610` | 명령 판별의 비용과 정확도 | 계획 중 `shell`을 통한 수정은 프롬프트로만 억제 |
 | 12 | `repository_binding`은 가능한 값만 기록하고 강제하지 않습니다. | `gjc-runtime/ralplan-runtime.ts:905-978` | 플러그인이 경로를 직접 해석 | 다른 worktree에서의 쓰기를 거부하지 않음 |
@@ -278,7 +278,7 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
 | 15 | 역할 프롬프트는 GJC, ultragoal 리뷰어 brief는 OMC 기반 유지(OQ1). | `prompts/agents/*.md` | 관리자 결정: 단계적 개정 | 알려진 충돌 5개(필수 후속 개발 참고) |
 | 16 | 사이드바는 `cli.json`에 등록하는 별도 `tui-plugin/` 디렉터리입니다: 자동 결합 없음, 빌드 없음, OMO 폴링 패턴(OQ2). | GJC 내장 TUI | host는 서버 플러그인 디렉터리 안의 `tui` 진입을 자동 결합함(`plugin/src/host.ts:17-44`). 관리자가 별도 등록을 선택 | 사용자 등록 1단계 |
 | 17 | state 봉투에 GJC `receipt`·checksum·`state_revision`이 없고 StateStore `_meta`를 유지합니다. 활성 행의 `source_state_revision`, 스냅숏의 `state_revision`, GJC revision·stale-skip 로직도 생략합니다(R-OD6). | `gjc-runtime/state-writer.ts:1003-1067`, `skill-state/workflow-state-contract.ts:23-40`; revision `gjc-runtime/state-writer.ts:446-472,852-857,1354-1360`, `skill-state/active-state.ts:85,858,943` | 13과 같은 이유와 StateStore 소유자 검사. ralplan 쓰기는 모두 한 프로세스의 소유 세션 큐 하나를 거치므로 순서가 뒤바뀌지 않음(여러 프로세스는 알려진 한계) | state·행·스냅숏 key 일부가 다름(형식 호환 범위 밖). `doctor`의 `stale_active_state`는 revision이 아니라 phase와 active 플래그를 비교하므로 영향 없음 |
-| 19 | `clear`가 활성 행을 제거합니다. | `gjc-runtime/state-runtime.ts:1464-1473`(비활성 행 기록) | spec AC14 | `clear`에서 사이드바가 숨음 |
+| 19 | `ralplan handoff`가 ralplan 활성 행을 제거합니다(`clear`도 GJC처럼 제거). | `skill-state/active-state.ts:868,969-1014`(GJC handoff는 `handoff_to`를 담은 비활성 호출자 행을 남김) | spec AC14 | handoff에서 사이드바가 숨고, 인계 대상은 행이 아니라 ralplan state(`handoff_to`)에 남음 |
 | 20 | 압축 복구 텍스트에 `Intent Reconciliation:` 줄을 추가하고(DR-14), ultragoal 압축 문맥처럼 한 줄 머리말을 붙인 `<ralplan-compaction-context>` 블록 하나로 넣습니다. | `session/agent-session.ts:667-710` | spec AC19; host 압축 hook은 marker로 감싼 system 텍스트를 받음 | 복구 문맥이 약간 길어짐 |
 | 21 | 감사 `owner` 값은 `open-gajae-runtime`과 `open-gajae-hook`입니다. | `gjc-runtime/state-writer.ts:517-532` | host 이름 | 필드는 같고 값만 다름 |
 | 22 | SKILL 9단계의 state 쓰기 + skill 도구 인계가 `ralplan handoff` op 하나가 됩니다(DR-12). | `SKILL.md:118-124`, `tools/skill.ts:200-218` | GJC 자신의 전환 규칙표가 `final`에서의 그 state 쓰기를 거부함(`gjc-runtime/workflow-manifest.ts:241-265`, `gjc-runtime/state-runtime.ts:1335-1341`) | 인계가 op 호출 1회 |
@@ -326,6 +326,7 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
    5. **plan-only critic 정체성:** GJC critic은 실행 전에 plan이 실행 가능한지 판정하는 역할인데, ultragoal은 구현된 run의 최종 리뷰에 이를 씁니다.
 3. **승인 라벨 정렬.** `skills/ultragoal/SKILL.md`는 ralplan 승인 선택지를 여전히 **Execute via ultragoal**로 부릅니다. GJC의 **Approve execution via ultragoal**로 바꿉니다(R-O5, deviation 27).
 4. **알려진 한계(기록만, 일정 없음).** 한 worktree에서 여러 OpenCode 프로세스가 동시에 작업하면 서로 직렬화되지 않습니다: 플러그인은 한 프로세스 안에서만 쓰기를 큐에 넣고, GJC는 파일 잠금을 씁니다. 사이드바는 로컬 파일을 읽으므로 원격 서버에 attach한 TUI는 지원하지 않습니다.
+5. **항상 차단 경로의 대소문자.** 항상 차단 경로 검사(`.open-gajae/_session-*/state/**`, `plans/ralplan/**`, ultragoal 파일)는 대소문자를 구분해 비교하므로, 대소문자를 구분하지 않는 파일 시스템(macOS 기본)에서는 `.OPEN-GAJAE/…`처럼 대소문자만 다른 경로가 계획 가드가 없는 때 이 검사를 빠져나갑니다. 이 검사들의 대소문자를 정규화합니다(관리자 결정 R-OD13).
 
 ## 검증 근거와 한계
 

@@ -20,7 +20,8 @@
 //   `:2033-2261` (`handleArtifactWrite`, DR-2 order), `:2263-2310`
 //   (`buildDeduplicatedResult`), `:2382-2475` (`seedRalplanState`,
 //   `handleConsensusHandoff`)
-// - `gjc-runtime/state-runtime.ts:317-600` (doctor), `:826-839`
+// - `gjc-runtime/state-runtime.ts:244-270` (`readActivePhaseForSkill`,
+//   `describeStaleClearState`), `:317-600` (doctor), `:826-839`
 //   (`mergeWithNullDelete`), `:973-999` (`syncWorkflowSkillState`),
 //   `:1156-1222` (`handleRead`), `:1235-1400` (`handleWrite`), `:1402-1490`
 //   (`handleClear`), `:1739-1763` (handoff caller state)
@@ -47,7 +48,10 @@
 // - 17: no gjc envelope receipt, checksum or `state_revision`; the StateStore
 //   `_meta` stays. Rows and the snapshot carry no `source_state_revision` /
 //   `state_revision` and there is no stale-skip (R-OD6).
-// - 19: `clear` removes the active row (AC14).
+// - 19: `handoff` removes the ralplan row, where gjc keeps an inactive caller
+//   row with `handoff_to` (`active-state.ts:868,969-1014`) (AC14). `clear`
+//   removes the row as gjc does (`syncWorkflowSkillState({active: false})` →
+//   `persistActiveEntry` → `removeActiveEntry`, `active-state.ts:849-866`).
 // - 21: audit `owner` is `open-gajae-runtime` / `open-gajae-hook`.
 // - 25: `ralplanHandoff` seeds ultragoal state (R-O2).
 // - 34: the handoff requires a phase in T (DR-7).
@@ -114,6 +118,7 @@ import {
 } from "./ledger.js";
 import {
   advanceCurrentPhase,
+  GUARD_RELEASE_PHASES,
   isKnownPhase,
   isValidTransition,
   RALPLAN_INITIAL_STATE,
@@ -1234,9 +1239,41 @@ export async function patchStateTx(
 }
 
 /**
- * gjc `gjc state ralplan clear` (DR-6): `{active: false, current_phase:
- * "complete"}` over the kept fields (run_id stays), files kept; a corrupt
- * state needs `force`. The row is removed (deviation 19).
+ * gjc `describeStaleClearState` (`state-runtime.ts:255-270`): a mode-state
+ * phase in R other than `inactive`, or a visible active ralplan phase that
+ * differs from it. The active phase is gjc `readActivePhaseForSkill`
+ * (`:244-253`) over the snapshot: the active ralplan entry, else the top-level
+ * snapshot when it names ralplan; a missing or unparsable snapshot has none.
+ */
+async function describeStaleClearTx(
+  tx: RalplanTx,
+  existing: Json,
+): Promise<string | undefined> {
+  const phase = trimmed(existing.current_phase);
+  if (phase && GUARD_RELEASE_PHASES.has(phase) && phase !== "inactive")
+    return `mode-state is already terminal (${phase})`;
+  const { value: snapshot } = await readRawJsonTx(tx, tx.paths.snapshotPath);
+  if (!isRecord(snapshot)) return undefined;
+  const entries = Array.isArray(snapshot.active_skills)
+    ? (snapshot.active_skills as unknown[]).filter(activeFlag)
+    : [];
+  // gjc has no visible active state when nothing in it is active.
+  if (entries.length === 0 && snapshot.active !== true) return undefined;
+  const activePhase = rowPhase(
+    entries.find((entry) => isRecord(entry) && entry.skill === SKILL) ??
+      (snapshot.skill === SKILL ? snapshot : undefined),
+  );
+  if (activePhase && phase && activePhase !== phase)
+    return `active-state phase ${activePhase} differs from mode-state phase ${phase}`;
+  return undefined;
+}
+
+/**
+ * gjc `gjc state ralplan clear` (`handleClear`, `state-runtime.ts:1402-1490`;
+ * R-OD11, gjc as-is, replacing the DR-6 reading that only a corrupt state
+ * needs `force`): without `force`, a corrupt state and then a stale one are
+ * refused. Then `{active: false, current_phase: "complete"}` over the kept
+ * fields (run_id stays), files kept, and the row removed as in gjc.
  */
 export async function clearStateTx(
   tx: RalplanTx,
@@ -1254,6 +1291,11 @@ export async function clearStateTx(
         { cause: error },
       );
   }
+  const staleReason = force ? undefined : await describeStaleClearTx(tx, existing);
+  if (staleReason)
+    throw new Error(
+      `existing state for ralplan is stale (${staleReason}); use force: true to clear`,
+    );
   const at = now();
   const mutationId = `${SKILL}:clear:${at}`;
   const cleared: Json = {
@@ -1568,7 +1610,8 @@ export type RalplanHandoffMeta = {
  * The ralplan side of a handoff to ultragoal, in one transaction: the phase
  * must be in T (DR-7, deviation 34), then the gjc caller state `{active:
  * false, current_phase: "handoff", handoff_to, handoff_at}` over the kept
- * fields, the row removed and the snapshot rebuilt.
+ * fields, the row removed (deviation 19: gjc keeps an inactive caller row with
+ * `handoff_to`) and the snapshot rebuilt.
  */
 export async function demoteRalplanForUltragoalEntry(
   store: StateStore,

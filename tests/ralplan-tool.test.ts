@@ -280,7 +280,7 @@ test("state op checks the table, write only audits a skipped edge, a locked phas
     await write("final", 2, "f");
     await write("revision", 3, "r3");
     expect((await json("state", "ralplan-state.json")).current_phase).toBe("final");
-    await call({ op: "clear" });
+    await call({ op: "clear", force: true });
     const allowed = ["ts", "skill", "category", "verb", "owner", "mutation_id", "from_phase", "to_phase", "forced", "paths"];
     const rows = await audit();
     const kinds = new Set(rows.map((r) => `${r.category}:${r.verb}`));
@@ -294,7 +294,7 @@ test("state op checks the table, write only audits a skipped edge, a locked phas
   });
 });
 
-test("rows follow the stage just written, doctor reports drift, Stop here, clear and corrupt states (AC14, AC24, DR-6)", async () => {
+test("rows follow the stage just written, doctor reports drift, Stop here, clear, stale and corrupt states (AC14, AC24, DR-6, R-OD11)", async () => {
   await fixture(async ({ call, write, json, file, run, store }) => {
     await call({ op: "start", task: "t" });
     await write("planner", 1, "p");
@@ -311,6 +311,10 @@ test("rows follow the stage just written, doctor reports drift, Stop here, clear
     expect(drift.problems.filter((p: any) => p.type === "stale_active_state").map((p: any) => p.path).sort()).toEqual(
       [file("state", "active", "ralplan.json"), file("state", "skill-active-state.json")].sort(),
     );
+    // R-OD11: an unforced clear refuses a stale state (row phase differs, then a terminal phase in R).
+    expect(await call({ op: "clear" })).toBe(
+      "Error: existing state for ralplan is stale (active-state phase revision differs from mode-state phase final); use force: true to clear",
+    );
     // Stop here removes the row; a later refine write leaves the state inactive (phase locked).
     expect(JSON.parse(await call({ op: "state", patch: { active: false } }))).toMatchObject({ active: false, current_phase: "final" });
     expect(await Bun.file(file("state", "active", "ralplan.json")).exists()).toBe(false);
@@ -319,6 +323,10 @@ test("rows follow the stage just written, doctor reports drift, Stop here, clear
     expect(JSON.parse(await call({ op: "clear" }))).toMatchObject({ active: false, current_phase: "complete" });
     expect(await json("state", "ralplan-state.json")).toMatchObject({ active: false, current_phase: "complete", run_id: ROOT });
     expect(await readdir(run())).toContain("stage-01-final.md");
+    expect(await call({ op: "clear" })).toBe(
+      "Error: existing state for ralplan is stale (mode-state is already terminal (complete)); use force: true to clear",
+    );
+    expect(JSON.parse(await call({ op: "clear", force: true })).current_phase).toBe("complete");
     // Corrupt and legacy states are schema violations; clear needs force.
     await writeFile(file("state", "ralplan-state.json"), "{");
     expect(JSON.parse(await call({ op: "doctor" })).summary.by_kind).toEqual({ schema_violation: 1, stale_active_state: 0 });

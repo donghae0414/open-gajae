@@ -285,21 +285,29 @@ export function summarizeRalplanIndex(
 }
 
 const DEFAULT_STAGE_PRESENCE_CAP = 6;
+/** `hud.ts` `HUD_TEXT_LIMIT`: HUD normalization cuts a chip value past it. */
+const STAGE_PRESENCE_TEXT_LIMIT = 80;
 
 /**
  * The `stages` chip value. Deviation 9: full stage words joined by ` · `
  * (e.g. `revision · architect · critic`) where gjc prints codes (`R·A·C`).
- * Collapses past `cap` with a "… N more" suffix; undefined when empty.
+ * Shows at most `cap` words, fewer when needed so the text with its
+ * "… N more" suffix fits the HUD text limit uncut; undefined when empty.
  */
 export function formatRalplanStagePresence(
   stages: readonly string[],
   cap = DEFAULT_STAGE_PRESENCE_CAP,
 ): string | undefined {
   if (stages.length === 0) return undefined;
-  if (stages.length <= cap) return stages.join(" · ");
-  const shown = stages.slice(0, cap).join(" · ");
-  const remaining = stages.length - cap;
-  return `${shown} … ${remaining} more ${remaining === 1 ? "stage" : "stages"}`;
+  const text = (shown: number) => {
+    const words = stages.slice(0, shown).join(" · ");
+    const remaining = stages.length - shown;
+    if (remaining === 0) return words;
+    return `${words} … ${remaining} more ${remaining === 1 ? "stage" : "stages"}`;
+  };
+  let shown = Math.min(cap, stages.length);
+  while (shown > 1 && text(shown).length > STAGE_PRESENCE_TEXT_LIMIT) shown -= 1;
+  return text(shown);
 }
 
 /** Collapse duplicate rows for the same `(stage, stage_n)` before lane accounting. */

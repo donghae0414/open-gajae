@@ -227,6 +227,8 @@ describe("ledger (gjc ralplan-runtime.ts, ledger-event-renderer.ts)", () => {
     expect(formatRalplanStagePresence(["revision", "architect", "critic"])).toBe("revision · architect · critic");
     expect(formatRalplanStagePresence(["planner", "a", "b", "c", "d", "e", "f"])).toBe("planner · a · b · c · d · e … 1 more stage");
     expect(formatRalplanStagePresence([])).toBeUndefined();
+    // Fewer than 6 words when the text would pass the 80-character HUD cut.
+    expect(formatRalplanStagePresence(["post-interview", "disposition", "revision", "architect", "disposition", "critic", "adr", "final"])).toBe("post-interview · disposition · revision · architect … 4 more stages");
   });
 
   test("final admission and the duplicate receipt", () => {

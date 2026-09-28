@@ -162,13 +162,23 @@ export function createSidebar({
   pollMs = 1000,
   readFile = (file) => fs.readFile(file, "utf8"),
 }: SidebarOptions) {
-  async function readView(sessionID: string): Promise<View> {
+  async function readView(
+    sessionID: string,
+    requested: Set<string>,
+  ): Promise<View> {
     // The server keys the session folder by the lineage root.
     const root = ctx.data.session.root(sessionID);
-    // Not in the TUI cache yet (`client/src/solid/data.ts:1340-1342`): hide
-    // for this poll; the next one retries.
+    // Not in the TUI cache yet (`client/src/solid/data.ts:1340-1342`): ask the
+    // host to load it once per poll loop (`session.sync`, `:1585-1609`; errors
+    // ignored), hide for this poll, and retry on the next one.
     const location = ctx.data.session.get(root)?.location.directory;
-    if (location === undefined) return undefined;
+    if (location === undefined) {
+      if (!requested.has(root)) {
+        requested.add(root);
+        void ctx.data.session.sync(root).catch(() => undefined);
+      }
+      return undefined;
+    }
     const base = path.join(await projectRoot(location), ".open-gajae");
     const suffix = `-${root}`;
     const names = (await fs.readdir(base).catch(missing)) ?? [];
@@ -193,11 +203,12 @@ export function createSidebar({
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     let disposed = false;
+    const requested = new Set<string>();
     // Each poll arms the next only after it settles, so reads never overlap
     // (the in-flight guard). An error keeps the last view; the next poll retries.
     const poll = async () => {
       try {
-        const next = await readView(input.sessionID);
+        const next = await readView(input.sessionID, requested);
         if (!disposed) setView(next);
       } catch {
         // Ignored, as OMO: a torn read or a transient fs error is not shown.
