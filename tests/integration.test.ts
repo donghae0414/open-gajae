@@ -263,6 +263,46 @@ test("ultragoal.hardMaxIterations defaults to 200, accepts 0 and rejects negativ
     }
   }));
 
+test("ralplan settings default to gjc, merge per key with a source, and reject bad values", async () =>
+  fixture(async (root, home) => {
+    expect((await loadSettings(root, home)).ralplan).toEqual({
+      maxIterations: 5,
+      maxReviewPassesPerLane: 1,
+      autoHandoff: "off",
+      source: {
+        maxIterations: "default",
+        maxReviewPassesPerLane: "default",
+        autoHandoff: "default",
+      },
+    });
+    const userFile = join(home, ".open-gajae/open-gajae.jsonc");
+    const projectFile = join(root, ".open-gajae/open-gajae.jsonc");
+    await writeFile(
+      userFile,
+      JSON.stringify({ ralplan: { maxIterations: 20, autoHandoff: "ultragoal" } }),
+    );
+    await writeFile(projectFile, JSON.stringify({ ralplan: { maxIterations: 3 } }));
+    expect((await loadSettings(root, home)).ralplan).toEqual({
+      maxIterations: 3,
+      maxReviewPassesPerLane: 1,
+      autoHandoff: "ultragoal",
+      source: {
+        maxIterations: projectFile,
+        maxReviewPassesPerLane: "default",
+        autoHandoff: userFile,
+      },
+    });
+    for (const [bad, message] of [
+      [{ maxIterations: 21 }, "ralplan.maxIterations"],
+      [{ maxReviewPassesPerLane: 0 }, "ralplan.maxReviewPassesPerLane"],
+      [{ autoHandoff: "autoresearch" }, "ralplan.autoHandoff"],
+      [{ receipts: true }, "ralplan.receipts: unknown setting"],
+    ] as const) {
+      await writeFile(projectFile, JSON.stringify({ ralplan: bad }));
+      await expect(loadSettings(root, home)).rejects.toThrow(message);
+    }
+  }));
+
 test("planner writes only session plans and drafts and delegates only to the two research roles", () => {
   // Deny-`*`-then-allow: the host evaluates with `findLast`.
   for (const prefix of ["", "../"])

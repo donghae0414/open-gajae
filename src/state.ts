@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { promises as fs, realpathSync } from "node:fs";
+import { constants as fsConstants, promises as fs, realpathSync } from "node:fs";
 import path from "node:path";
 
 // State and payload-boundary behavior draws on OMC MIT sources; project notices carry attribution.
@@ -17,7 +17,8 @@ export type StateWriter =
   | "state_write_tool"
   | "ralplan_hook"
   | "ultragoal_hook"
-  | "ultragoal_tool";
+  | "ultragoal_tool"
+  | "ralplan_tool";
 
 export type StateMeta = {
   mode: StateMode;
@@ -75,6 +76,45 @@ export type UltragoalTx = {
   deleteState(): Promise<"deleted" | "missing">;
   readFile(name: UltragoalFile): Promise<string | undefined>;
   writeFile(name: UltragoalFile, text: string): Promise<void>;
+};
+
+/**
+ * The operations `ralplanTransaction` hands its body; none of them queue. Every
+ * file argument must resolve inside the owner's session directory.
+ */
+export type RalplanTx = {
+  readonly paths: {
+    sessionDir: string;
+    /** `state/ralplan-state.json` */
+    statePath: string;
+    /** `state/ralplan-continuation.json` */
+    continuationPath: string;
+    /** `state/audit.jsonl` */
+    auditPath: string;
+    /** `state/active/ralplan.json` */
+    activeRowPath: string;
+    /** `state/skill-active-state.json` */
+    snapshotPath: string;
+    /** `plans/ralplan/<runId>`; `runId` must be one safe path component. */
+    runDir(runId: string): string;
+  };
+  readState(): Promise<InterviewState | undefined>;
+  /**
+   * Replaces the whole state (not a merge); `_meta` is regenerated. The gjc
+   * envelope is open, so only the payload limits apply, not the explicit-field
+   * checks the `state_*` tools use.
+   */
+  writeState(
+    state: Record<string, unknown>,
+    updatedBy: StateWriter,
+  ): Promise<InterviewState>;
+  readText(file: string): Promise<string | undefined>;
+  writeText(file: string, text: string): Promise<void>;
+  /** Appends `line` plus a newline; `line` must not contain one (JSONL). */
+  appendLine(file: string, line: string): Promise<void>;
+  /** Sorted entry names; `[]` when the directory is missing. */
+  list(dir: string): Promise<string[]>;
+  remove(file: string): Promise<"deleted" | "missing">;
 };
 
 export type SessionPaths = {
@@ -641,6 +681,127 @@ export class StateStore {
       };
       return fn(tx);
     });
+  }
+
+  /**
+   * Run `fn` holding the session's ralplan queue, the one `read`/`patch` use for
+   * ralplan. `fn` must only use `tx`: calling a queued StateStore method for
+   * ralplan inside it waits on its own queue forever, and taking another
+   * queue (ultragoal) inside it is not allowed either (plan C-1.1, C-1.2).
+   */
+  async ralplanTransaction<T>(
+    owner: string,
+    fn: (tx: RalplanTx) => Promise<T>,
+  ): Promise<T> {
+    return enqueue(this.queueKey(owner, RALPLAN_MODE), async () => {
+      const sessionDir = await this.resolveSessionDir(owner);
+      const statePath = await this.statePath(owner, RALPLAN_MODE);
+      const stateDir = path.join(sessionDir, "state");
+      const inside = (file: string) => {
+        const resolved = path.resolve(file);
+        const relative = path.relative(sessionDir, resolved);
+        if (
+          relative === "" ||
+          relative.startsWith("..") ||
+          path.isAbsolute(relative)
+        )
+          throw new Error("ralplan path escapes the session directory");
+        return resolved;
+      };
+      const tx: RalplanTx = {
+        paths: {
+          sessionDir,
+          statePath,
+          continuationPath: path.join(stateDir, "ralplan-continuation.json"),
+          auditPath: path.join(stateDir, "audit.jsonl"),
+          activeRowPath: path.join(stateDir, "active", "ralplan.json"),
+          snapshotPath: path.join(stateDir, "skill-active-state.json"),
+          // gjc `assertSafePathComponent` (`gjc-runtime/workflow-cli-common.ts:24-30`).
+          runDir: (runId) => {
+            if (
+              !/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$/.test(runId) ||
+              runId.includes("..")
+            )
+              throw new Error(`invalid path component for run_id: ${runId}`);
+            return path.join(sessionDir, "plans", "ralplan", runId);
+          },
+        },
+        readState: () => this.readFile(statePath, owner),
+        writeState: (state, updatedBy) =>
+          this.writeMerged(
+            statePath,
+            owner,
+            RALPLAN_MODE,
+            updatedBy,
+            snapshotState(state),
+          ),
+        readText: (file) => this.readText(inside(file)),
+        writeText: (file, text) => this.atomicWriteText(inside(file), text),
+        appendLine: (file, line) => {
+          if (line.includes("\n"))
+            throw new Error("a JSONL line must not contain a newline");
+          return this.appendText(inside(file), `${line}\n`);
+        },
+        list: async (dir) => {
+          const target = inside(dir);
+          if (!(await this.inspectParent(target, false))) return [];
+          const stat = await fs
+            .lstat(target)
+            .catch((error: NodeJS.ErrnoException) => {
+              if (error.code === "ENOENT") return undefined;
+              throw error;
+            });
+          if (!stat) return [];
+          if (stat.isSymbolicLink() || !stat.isDirectory())
+            throw new Error("state path contains a symlink or non-directory");
+          return (await fs.readdir(target)).sort();
+        },
+        remove: async (file) => {
+          const target = inside(file);
+          if (!(await this.inspectParent(target, false))) return "missing";
+          const stat = await fs
+            .lstat(target)
+            .catch((error: NodeJS.ErrnoException) => {
+              if (error.code === "ENOENT") return undefined;
+              throw error;
+            });
+          if (!stat) return "missing";
+          if (stat.isSymbolicLink() || !stat.isFile())
+            throw new Error(`${path.basename(target)} is not a regular file`);
+          await fs.unlink(target);
+          return "deleted";
+        },
+      };
+      return fn(tx);
+    });
+  }
+
+  /** `O_NOFOLLOW` closes the gap between the check and the open. */
+  private async appendText(file: string, text: string) {
+    await this.inspectParent(file, true);
+    const refuse = () =>
+      new Error("refusing to append to a symlink or non-regular file");
+    const existing = await fs
+      .lstat(file)
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return undefined;
+        throw error;
+      });
+    if (existing && (existing.isSymbolicLink() || !existing.isFile()))
+      throw refuse();
+    const { O_WRONLY, O_APPEND, O_CREAT, O_NOFOLLOW } = fsConstants;
+    const handle = await fs
+      .open(file, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0o600)
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ELOOP") throw refuse();
+        throw error;
+      });
+    try {
+      if (!(await handle.stat()).isFile()) throw refuse();
+      await handle.appendFile(text, "utf8");
+    } finally {
+      await handle.close();
+    }
   }
 
   private async readText(file: string): Promise<string | undefined> {

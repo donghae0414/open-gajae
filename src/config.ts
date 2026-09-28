@@ -18,12 +18,30 @@ export const agentNames = [
 ] as const;
 type AgentName = (typeof agentNames)[number];
 type ModelSettings = { model?: string; variant?: string };
+type RalplanSettings = {
+  maxIterations: number;
+  maxReviewPassesPerLane: number;
+  autoHandoff: "off" | "ultragoal";
+};
 export interface Settings {
   deepInterview: { ambiguityThreshold: number; maxRounds: number };
   /** `hardMaxIterations`: 0 = unlimited, default 200 (decision 19). */
   ultragoal: { hardMaxIterations: number };
   agents: Partial<Record<AgentName, ModelSettings>>;
+  /**
+   * gjc 5c52314 `gjc.ralplan.*` (`gjc-runtime/ralplan-runtime.ts:93-112,388-524`):
+   * defaults 5 / 1 / `off`, integers 1..20 and 1..10; `autoresearch` is not a
+   * target here (deviation 6). Resolved once at setup, not per write (deviation
+   * 4); `source` per key is the winning file's path or `default` (DR-13).
+   */
+  ralplan: RalplanSettings & {
+    source: Record<keyof RalplanSettings, string>;
+  };
 }
+/** One settings file; `ralplan` carries only the keys that file sets. */
+type Layer = Partial<Omit<Settings, "ralplan">> & {
+  ralplan?: Partial<RalplanSettings>;
+};
 function object(value: unknown, location: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error(`${location}: expected an object`);
@@ -38,7 +56,7 @@ function keys(
     if (!allowed.includes(key))
       throw new Error(`${location}.${key}: unknown setting`);
 }
-async function load(path: string): Promise<Partial<Settings>> {
+async function load(path: string): Promise<Layer> {
   let text: string;
   try {
     text = await readFile(path, "utf8");
@@ -53,8 +71,8 @@ async function load(path: string): Promise<Partial<Settings>> {
       `${path}:${errors[0].offset}: ${printParseErrorCode(errors[0].error)}`,
     );
   const value = object(parsed, path);
-  keys(value, ["deepInterview", "ultragoal", "agents"], path);
-  const result: Partial<Settings> = {};
+  keys(value, ["deepInterview", "ultragoal", "agents", "ralplan"], path);
+  const result: Layer = {};
   if ("deepInterview" in value) {
     const config = object(value.deepInterview, `${path}.deepInterview`);
     keys(config, ["ambiguityThreshold", "maxRounds"], `${path}.deepInterview`);
@@ -93,6 +111,39 @@ async function load(path: string): Promise<Partial<Settings>> {
       );
     result.ultragoal = config as Settings["ultragoal"];
   }
+  if ("ralplan" in value) {
+    const config = object(value.ralplan, `${path}.ralplan`);
+    keys(
+      config,
+      ["maxIterations", "maxReviewPassesPerLane", "autoHandoff"],
+      `${path}.ralplan`,
+    );
+    for (const [key, limit] of [
+      ["maxIterations", 20],
+      ["maxReviewPassesPerLane", 10],
+    ] as const) {
+      const setting = config[key];
+      if (
+        key in config &&
+        (typeof setting !== "number" ||
+          !Number.isInteger(setting) ||
+          setting < 1 ||
+          setting > limit)
+      )
+        throw new Error(
+          `${path}.ralplan.${key}: expected an integer between 1 and ${limit}`,
+        );
+    }
+    if (
+      "autoHandoff" in config &&
+      config.autoHandoff !== "off" &&
+      config.autoHandoff !== "ultragoal"
+    )
+      throw new Error(
+        `${path}.ralplan.autoHandoff: expected one of off, ultragoal`,
+      );
+    result.ralplan = config as Partial<RalplanSettings>;
+  }
   if ("agents" in value) {
     const agents = object(value.agents, `${path}.agents`);
     keys(agents, agentNames, `${path}.agents`);
@@ -120,10 +171,15 @@ export async function loadSettings(
   worktree: string,
   home = homedir(),
 ): Promise<Settings> {
-  const [user, project] = await Promise.all([
-    load(join(home, ".open-gajae/open-gajae.jsonc")),
-    load(join(worktree, ".open-gajae/open-gajae.jsonc")),
-  ]);
+  const userFile = join(home, ".open-gajae/open-gajae.jsonc");
+  const projectFile = join(worktree, ".open-gajae/open-gajae.jsonc");
+  const [user, project] = await Promise.all([load(userFile), load(projectFile)]);
+  const ralplanSource = (key: keyof RalplanSettings) =>
+    project.ralplan && key in project.ralplan
+      ? projectFile
+      : user.ralplan && key in user.ralplan
+        ? userFile
+        : "default";
   const agents: Settings["agents"] = {};
   for (const name of agentNames) {
     if (user.agents?.[name] || project.agents?.[name])
@@ -150,6 +206,18 @@ export async function loadSettings(
       ...project.ultragoal,
     },
     agents,
+    ralplan: {
+      maxIterations: 5,
+      maxReviewPassesPerLane: 1,
+      autoHandoff: "off",
+      ...user.ralplan,
+      ...project.ralplan,
+      source: {
+        maxIterations: ralplanSource("maxIterations"),
+        maxReviewPassesPerLane: ralplanSource("maxReviewPassesPerLane"),
+        autoHandoff: ralplanSource("autoHandoff"),
+      },
+    },
   };
 }
 
