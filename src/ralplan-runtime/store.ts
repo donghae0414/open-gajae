@@ -1637,17 +1637,29 @@ export type RalplanHandoffMeta = {
  * false, current_phase: "handoff", handoff_to, handoff_at}` over the kept
  * fields, the row removed (deviation 19: gjc keeps an inactive caller row with
  * `handoff_to`) and the snapshot rebuilt.
+ *
+ * `requireActive` (the `ralplan handoff` op, R-OD18): an inactive ralplan —
+ * after Stop here, `clear` or an earlier handoff — is refused. In gjc, Stop
+ * here ends the turn, and a later turn's `ultragoal` load finds no active
+ * skill to hand off (`tools/skill.ts:170-171,203-221`; the skill is tracked
+ * per turn, `session/agent-session.ts:8038-8046,13620-13622`). The entry gate
+ * checks `active` before its transaction instead.
  */
 export async function demoteRalplanForUltragoalEntry(
   store: StateStore,
   sessionId: string,
   owner: AuditOwner = RUNTIME_OWNER,
+  { requireActive = false }: { requireActive?: boolean } = {},
 ): Promise<RalplanHandoffMeta> {
   return store.ralplanTransaction(sessionId, async (tx) => {
     const state = await readStateForMutation(tx);
     if (state === undefined)
       throw new Error("there is no ralplan state in this session to hand off");
     const phase = trimmed(state.current_phase) ?? "";
+    if (requireActive && state.active !== true)
+      throw new Error(
+        `ralplan is not active (phase ${phase || "(none)"}), so there is nothing to hand off: Stop here, \`clear\` or an earlier handoff ended the run. To execute the plan, load the \`ultragoal\` skill directly and call \`ultragoal create\` with the plan's goals.`,
+      );
     if (!TERMINAL_PHASES.has(phase))
       throw new Error(
         `ralplan can hand off to ultragoal only from a finished phase (${[...TERMINAL_PHASES].join(", ")}); the current phase is ${phase || "(none)"}. Record the final plan first.`,
@@ -1700,7 +1712,9 @@ export async function ralplanHandoff(
   sessionId: string,
   owner: AuditOwner = RUNTIME_OWNER,
 ): Promise<string> {
-  const meta = await demoteRalplanForUltragoalEntry(store, sessionId, owner);
+  const meta = await demoteRalplanForUltragoalEntry(store, sessionId, owner, {
+    requireActive: true,
+  });
   const plan = meta.pending_approval_path
     ? ` with source_plan ${meta.pending_approval_path}`
     : "";
