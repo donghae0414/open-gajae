@@ -1631,6 +1631,18 @@ export type RalplanHandoffMeta = {
   pending_approval_path?: string;
 };
 
+/** The `ralplan handoff` op's refusal of an inactive ralplan (R-OD18). */
+export class RalplanNotActiveError extends Error {}
+
+/** The run's `pending-approval.md`, when it exists. */
+async function pendingApprovalPathTx(tx: RalplanTx, state: Json): Promise<string | undefined> {
+  const runId = activeRunId(tx, state);
+  const runDir = runId ? tx.paths.runDir(runId) : undefined;
+  return runDir && (await tx.list(runDir)).includes(RALPLAN_PENDING_APPROVAL_FILE)
+    ? path.join(runDir, RALPLAN_PENDING_APPROVAL_FILE)
+    : undefined;
+}
+
 /**
  * The ralplan side of a handoff to ultragoal, in one transaction: the phase
  * must be in T (DR-7, deviation 34), then the gjc caller state `{active:
@@ -1638,12 +1650,14 @@ export type RalplanHandoffMeta = {
  * fields, the row removed (deviation 19: gjc keeps an inactive caller row with
  * `handoff_to`) and the snapshot rebuilt.
  *
- * `requireActive` (the `ralplan handoff` op, R-OD18): an inactive ralplan —
- * after Stop here, `clear` or an earlier handoff — is refused. In gjc, Stop
- * here ends the turn, and a later turn's `ultragoal` load finds no active
- * skill to hand off (`tools/skill.ts:170-171,203-221`; the skill is tracked
- * per turn, `session/agent-session.ts:8038-8046,13620-13622`). The entry gate
- * checks `active` before its transaction instead.
+ * `requireActive` (R-OD18): after the phase check, an inactive ralplan —
+ * after Stop here, `clear` or an earlier handoff — is refused with a
+ * `RalplanNotActiveError`. gjc's `state handoff` verb checks neither the phase
+ * nor `active`, but Stop here ends the turn, and a later turn's `ultragoal`
+ * load finds no active skill to hand off (`tools/skill.ts:170-171,203-221`;
+ * the skill is tracked per turn, `session/agent-session.ts:8038-8046,
+ * 13620-13622`). The entry gate passes on that error, which it can only meet
+ * when a concurrent handoff wins the race.
  */
 export async function demoteRalplanForUltragoalEntry(
   store: StateStore,
@@ -1656,14 +1670,20 @@ export async function demoteRalplanForUltragoalEntry(
     if (state === undefined)
       throw new Error("there is no ralplan state in this session to hand off");
     const phase = trimmed(state.current_phase) ?? "";
-    if (requireActive && state.active !== true)
-      throw new Error(
-        `ralplan is not active (phase ${phase || "(none)"}), so there is nothing to hand off: Stop here, \`clear\` or an earlier handoff ended the run. To execute the plan, load the \`ultragoal\` skill directly and call \`ultragoal create\` with the plan's goals.`,
-      );
     if (!TERMINAL_PHASES.has(phase))
       throw new Error(
         `ralplan can hand off to ultragoal only from a finished phase (${[...TERMINAL_PHASES].join(", ")}); the current phase is ${phase || "(none)"}. Record the final plan first.`,
       );
+    if (requireActive && state.active !== true) {
+      if (phase === "handoff")
+        throw new RalplanNotActiveError(
+          "ralplan was already handed off (inactive, phase handoff); continue in the `ultragoal` skill.",
+        );
+      const pending = await pendingApprovalPathTx(tx, state);
+      throw new RalplanNotActiveError(
+        `ralplan is not active (phase ${phase}), so there is nothing to hand off: Stop here or \`clear\` ended the run. To execute the plan, load the \`ultragoal\` skill, call \`ultragoal start\` with a reason, then \`ultragoal create\` with the plan's goals${pending ? ` and source_plan ${pending}` : ""}.`,
+      );
+    }
     const at = now();
     await writeStateTx(
       tx,
@@ -1687,12 +1707,7 @@ export async function demoteRalplanForUltragoalEntry(
       },
     );
     await syncActiveRowTx(tx, { active: false, sessionId }, owner);
-    const runId = activeRunId(tx, state);
-    const runDir = runId ? tx.paths.runDir(runId) : undefined;
-    const pending =
-      runDir && (await tx.list(runDir)).includes(RALPLAN_PENDING_APPROVAL_FILE)
-        ? path.join(runDir, RALPLAN_PENDING_APPROVAL_FILE)
-        : undefined;
+    const pending = await pendingApprovalPathTx(tx, state);
     return {
       handoff_from: "ralplan",
       handoff_at: at,
@@ -1758,10 +1773,20 @@ export async function ultragoalEntryGate(
   if (ralplan.active === true) {
     if (!TERMINAL_PHASES.has(ralplan.current_phase))
       return { status: "refused", message: RALPLAN_RUNNING_REFUSAL };
-    return {
-      status: "handoff",
-      ...(await demoteRalplanForUltragoalEntry(store, sessionId, owner)),
-    };
+    // The read above is outside the lock: if a `ralplan handoff` op commits
+    // first, the demote finds ralplan inactive and the gate passes instead of
+    // demoting it a second time.
+    try {
+      return {
+        status: "handoff",
+        ...(await demoteRalplanForUltragoalEntry(store, sessionId, owner, {
+          requireActive: true,
+        })),
+      };
+    } catch (error) {
+      if (error instanceof RalplanNotActiveError) return { status: "pass" };
+      throw error;
+    }
   }
   await store.ralplanTransaction(sessionId, async (tx) => {
     const current = await tx.readState().catch(() => undefined);

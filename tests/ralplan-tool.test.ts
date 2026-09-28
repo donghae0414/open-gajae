@@ -388,17 +388,27 @@ test("handoff needs a finished phase, demotes ralplan and confirms ultragoal wit
   });
 });
 
-test("handoff refuses an inactive ralplan: after Stop here and after an earlier handoff (R-OD18)", async () => {
+test("handoff refuses an inactive ralplan after Stop here, clear or a handoff; an unfinished one still needs final (R-OD18)", async () => {
   await fixture(async ({ call, write, json, store }) => {
     await call({ op: "start", task: "t" });
+    await call({ op: "state", patch: { active: false } });
+    expect(await call({ op: "handoff", to: "ultragoal" })).toContain("Record the final plan first");
     await write("final", 1, "f");
     await call({ op: "state", patch: { active: false } });
-    expect(await call({ op: "handoff", to: "ultragoal" })).toContain("ralplan is not active (phase final)");
+    const stopped = await call({ op: "handoff", to: "ultragoal" });
+    expect(stopped).toContain("ralplan is not active (phase final)");
+    expect(stopped).toContain("source_plan");
     expect(await json("state", "ralplan-state.json")).toMatchObject({ active: false, current_phase: "final" });
     expect(await store.read(ROOT, "ultragoal")).toBeUndefined();
     await call({ op: "state", patch: { active: true } });
     expect(await call({ op: "handoff", to: "ultragoal" })).toContain("Handed off to ultragoal");
-    expect(await call({ op: "handoff", to: "ultragoal" })).toContain("ralplan is not active (phase handoff)");
+    expect(await call({ op: "handoff", to: "ultragoal" })).toContain("already handed off");
+  });
+  await fixture(async ({ call, write }) => {
+    await call({ op: "start", task: "t" });
+    await write("final", 1, "f");
+    await call({ op: "clear" });
+    expect(await call({ op: "handoff", to: "ultragoal" })).toContain("ralplan is not active (phase complete)");
   });
 });
 
