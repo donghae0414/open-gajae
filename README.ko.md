@@ -163,7 +163,7 @@ host가 ralplan state가 active인 세션을 압축하면, 플러그인은 현�
 
 **알려진 동작(GJC와 같음).** 잠긴 phase에서 write하면 — `final` 이후의 다듬기, 또는 Stop here나 `clear` 뒤의 write — 활성 행의 phase는 방금 쓴 단계가 되고 state의 phase는 `final` 또는 `complete`로 남습니다. 이때 원본 행 파일을 읽는 `ralplan doctor`는 GJC처럼 `stale_active_state`를 보고하고 해결 명령으로 `ralplan clear`를 제시합니다. `final`에서 다듬은 뒤라면 `clear`가 잠긴 state의 phase를 행의 phase 대신 읽으므로 그 `force` 없는 `ralplan clear`는 GJC처럼 성공합니다(`clear` 뒤라면 state가 이미 종료라 `force` 없는 clear는 거부됩니다). 예상된 동작이므로 이 보고만으로 `ralplan clear`를 호출하지 마세요. clear는 run을 끝냅니다.
 
-**알려진 동작(GJC와 같음): 전환 감사 행.** 현재 phase에서 표의 간선이 아닌 단계를 write해도 성공하며, `state/audit.jsonl`에 `invalid_transition_detected` 행 하나만 추가됩니다(spec D-T11). 표에 `planner→critic`, `critic→architect` 간선이 없고 두 리뷰 레인은 어느 순서로든 기록되므로, 1회차 병렬 리뷰에서도 이런 행이 흔히 생깁니다.
+**알려진 동작(GJC와 같음): 전환 감사 행.** 현재 phase에서 표의 간선이 아닌 단계를 write해도 성공하며, `state/audit.jsonl`에 `invalid_transition_detected` 행 하나만 추가됩니다(spec D-T11). 표에 다음 간선이 없어서 스킬이 정한 순서대로 진행해도 이런 행이 흔히 생깁니다. 1회차 병렬 리뷰는 어느 순서로든 기록되고(`critic→architect`, `revision→critic`), 수정본은 마지막 리뷰 레인 뒤에 오며(`architect→revision`), 2회차는 수정본에서 바로 Architect로 가고(`revision→architect`), 7단계는 `post-interview` 바로 뒤에 `final`을 씁니다(표는 `final`을 `adr` 뒤에만 둠, `post-interview→final`). GJC의 표와 스킬도 같으므로 같은 순서면 GJC도 같은 행을 남깁니다.
 
 **진행 표시 없음.** spec이 ralplan용으로 계획한 TUI 사이드바(D-H3~D-H7)는 보류되었습니다(R-OD17). 배포된 OpenCode 2.0.15 바이너리는 TUI 플러그인에 호스트의 `solid-js`·`@opentui/*` 인스턴스를 넘겨주지 않아, 일반 import로는 플러그인이 그릴 수 없습니다(필수 후속 개발 6번). ralplan 활성 행과 스냅숏에는 GJC의 HUD 칩이 계속 기록됩니다.
 
@@ -270,7 +270,7 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
 | 7 | `--architect/--critic openai-code` 없음. | `gjc-runtime/ralplan-runtime.ts:614-615` | 역할 모델은 `agents` 설정으로 지정 | run별로 리뷰어 모델을 바꿀 수 없음 |
 | 8 | 승인 질문에 `workflowGate` 표식 없음. | `SKILL.md:110` | OpenCode `question`에 해당 필드가 없고(`core/src/tool/plugin/question.ts:23-25`) 시간초과 자동 선택도 없음 | 원격 workflow-gate 이벤트 없음 |
 | 9 | HUD 칩은 활성 행과 스냅숏에 기록되지만 그려지지 않으며, `stages` 칩은 단계 전체 이름을 씁니다. | `skill-state/workflow-hud.ts:188-245`, `gjc-runtime/ledger-event-renderer.ts:156-166`, `modes/components/skill-hud/render.ts:43-64` | host UI 차이: TUI 사이드바 보류(R-OD17). 단계 이름은 관리자 선택 | TUI에 ralplan 진행 표시 없음. `stages` 칩은 여섯 단어가 칩 값 80자 제한을 넘으면 더 적은 단어를 보이며 단어를 자르지 않음 |
-| 10 | OMC continuation을 유지하며, 종료 phase·`PLANNING-STUCK`·`active: false`에서 멈춥니다. | (GJC에 없음) | 관리자 선택 | 멈춘 계획 턴이 breaker 한도 안에서 자동 재개 |
+| 10 | OMC continuation을 유지하며, 종료 phase·`PLANNING-STUCK`·`active: false`에서 멈춥니다. | GJC 자체 TUI 세션에는 ralplan continuation이 없고, Stop 훅 검사로 deep-interview만 자동 재개합니다(`session/agent-session.ts:21140-21168`). 대신 GJC의 Codex 네이티브 Stop 훅은 ralplan이 활성인 동안 `final`·`handoff`에서도 종료를 막고, ralplan이 강등되거나 clear될 때 풉니다(`hooks/skill-state.ts:663-691,878-977`, `hooks/native-skill-hook.ts:385-395`). | 관리자 선택 | 멈춘 계획 턴이 breaker 한도 안에서 자동 재개. GJC 네이티브 Stop 훅과 달리 `final`·`handoff`는 붙잡지 않으므로, `final`을 쓰고 승인 질문 없이 턴을 끝낸 모델은 그대로 멈춤 |
 | 11 | 계획 가드가 `shell`의 변경 명령을 판별하지 않습니다. | `skill-state/workflow-mutation-guard.ts:1475-1610` | 명령 판별의 비용과 정확도 | 계획 중 `shell`을 통한 수정은 프롬프트로만 억제 |
 | 12 | `repository_binding`은 가능한 값만 기록하고 강제하지 않습니다. | `gjc-runtime/ralplan-runtime.ts:905-978` | 플러그인이 경로를 직접 해석 | 다른 worktree에서의 쓰기를 거부하지 않음 |
 | 13 | `doctor`에 checksum·orphan journal 점검이 없습니다. | `gjc-runtime/state-runtime.ts:317,466-500` | checksum과 인계 저널이 없음 | 점검 항목 축소 |
@@ -288,12 +288,14 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
 | 27 | ralplan skill과 플러그인 문구는 GJC 승인 라벨을 쓰지만, `skills/ultragoal/SKILL.md`는 여전히 "Execute via ultragoal"입니다(R-O5). | `SKILL.md:112` | 이번에는 ultragoal skill을 바꾸지 않음(OQ1) | 두 skill의 문구 불일치(알려진 문제, 필수 후속 개발) |
 | 28 | 가드의 "현재 skill" 판정을 "루트 세션에서 ultragoal 실행 중"으로 근사합니다(R-O7). | `skill-state/workflow-mutation-guard.ts:294-310` | ultragoal은 활성 행을 쓰지 않음 | ultragoal 실행 중에는 계획 편집 보호 없음. 항상 차단 경로는 유지 |
 | 29 | ultragoal 진입 게이트는 ultragoal이 실행 중이 아닐 때만 ralplan을 확인합니다(R-O9). | `tools/skill.ts:192-220` | spec AC16 문구보다 GJC 동작을 우선, 관리자 결정 | 실행 중인 ultragoal의 `create`·skill 재로드는 ralplan과 무관 |
-| 30 | primary의 `path` 입력은 OS 임시 루트로 한정합니다(DR-11). | `gjc-runtime/ralplan-runtime.ts:847-858`(`.gjc/` 밖 아무 파일), `SKILL.md:49` | spec D-W4 | 저장소 파일을 `path`로 넘길 수 없음. `content`를 사용 |
+| 30 | primary의 `path` 입력은 OS 임시 루트로 한정합니다(DR-11). | `SKILL.md:49`(`.gjc/` 밖에 준비한 artifact 경로). 런타임은 바인딩된 worktree 안 파일만 받고(`gjc-runtime/ralplan-runtime.ts:2053-2070` → `gjc-runtime/repository-binding.ts:187-201`), `--worktree-root`를 주면 호출한 cwd 안 파일만 받음(`gjc-runtime/ralplan-runtime.ts:811-846`) | spec D-W4 | 저장소 파일을 `path`로 넘길 수 없음. `content`를 사용 |
 | 31 | `start(run_id)`는 open-gajae 추가분입니다(DR-19). | `gjc-runtime/ralplan-runtime.ts:2382-2391`(seed에 run ID 없음), `:1565-1570`(`--write`에만) | spec D-T3 | `start`에서 새 run 폴더와 예산을 지정할 수 있음 |
 | 32 | owner 세션을 할당문의 `session_id`가 아니라 세션 계보에서 정합니다(DR-1). | `prompts/agent-fragments/ralplan-persistence.md:2,7` | host의 `context.sessionID` 계보를 신뢰할 수 있음 | 역할은 다른 세션의 run에 쓸 수 없음. 할당문에 `session_id`가 필요 없음 |
 | 33 | 역할 프롬프트 host 치환: planner의 "Ask only about …"은 headless 규칙으로, architect의 forkContext 문장·`report_finding` 문단과 `irc`는 제거, `yield.result.data`는 최종 응답으로, `{{restrictedBash}}`는 읽기 전용 `shell` 문장으로 바꾸고 frontmatter는 제거합니다. | `prompts/agents/{planner,architect,critic}.md`, `prompts/agent-fragments/restricted-bash.md` | OpenCode에 해당 도구·필드가 없고 역할은 `question`을 쓸 수 없음 | 문구만 다름. 목록은 각 프롬프트의 source 섹션 |
 | 34 | `ralplan handoff` op는 종료 phase를 요구합니다(DR-7). | `gjc-runtime/state-runtime.ts:1572-1640`(동사는 phase를 검사하지 않음), 검사는 `tools/skill.ts:42-61,203-208` | skill 도구의 체인 가드를 op에 합침(D-F12) | 계획 도중의 직접 인계는 거부 |
 | 35 | 활성 행 파일(`state/active/ralplan.json`)을 읽을 수 없으면 `force` 없는 `clear`는 GJC처럼 멈추지만, `clear(force: true)`는 그 파일을 읽지 않고 정리합니다(R-OD16). | `gjc-runtime/state-runtime.ts:244-270,1425` → `readActiveEntries`(`gjc-runtime/state-writer.ts:425-431`)가 `--force` 확인 전에 예외를 던짐 | 항상 차단 때문에 `state/**`를 편집 도구로 고칠 수 없어, GJC 동작이면 `shell`로 파일을 지우지 않고는 run을 끝낼 방법이 없음 | 손상된 행 파일이 있어도 강제 clear는 동작, force 없는 clear는 GJC와 같음 |
+| 36 | ralplan 스킬을 불러와도 state를 쓰지 않습니다. run은, 그리고 계획 가드와 continuation도, `ralplan start`(또는 첫 `write`)에서 시작합니다. | `session/agent-session.ts:13582-13597` → `hooks/skill-state.ts:387-496,641`(`/skill:ralplan`을 불러오면 `ensureWorkflowSkillActivationState`가 phase `planner`인 mode state와 repository binding, 활성 행, 스냅숏을 써서, 불러온 순간부터 GJC의 mutation guard와 Stop 훅이 적용됨) | spec D-F13·R-O6: 훅과 키워드는 아무것도 시딩하지 않고 `start`가 문서화된 진입. 2026-09-29 리뷰 후 기록 | 스킬을 불러온 뒤 `ralplan start` 전까지는 계획 중 편집이 막히지 않고 멈춘 턴도 이어지지 않음. 스킬의 첫 지시가 `start` 호출 |
+| 37 | ralplan에서 다른 스킬로 넘어가는 것은 ultragoal 방향만 막습니다. ultragoal 진입 게이트(편차 29, 34)와 ultragoal 실행 중 `ralplan` 로드 거부가 전부입니다. 계획 phase 진행 중에 `ralplan`을 다시 불러오거나 `deep-interview` 같은 다른 스킬을 불러와도 거부하지 않습니다. | `tools/skill.ts:170-176`(현재 활성 스킬로의 연쇄 거부), `:54-61,200-221`(`phasePermitsChain`: 진행 중인 ralplan phase에서는 모든 연쇄를 거부하고, 종료 phase에서는 불러온 스킬로 `gjc state handoff`를 실행) | 이식 범위가 ralplan → ultragoal 게이트만 정했음(spec C-4, D-F12). 2026-09-29 리뷰 후 기록 | 계획 중 그런 로드는 통과하고 ralplan state는 그대로. 리더를 계획 루프에 붙잡는 것은 거부가 아니라 스킬 문구 |
 
 ### 수용한 동작 차이
 
@@ -302,7 +304,7 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
 | 항목 | 동작 | 근거 | 영향 |
 |---|---|---|---|
 | 역할은 `content`만(spec D-W4 일부 대체) | 역할의 `path` 입력은 거부되고, OS 임시 `path`는 primary 전용입니다(R-O4). | GJC `gjc-runtime/ralplan-runtime.ts:852`, `SKILL.md:51` | 역할에는 파일 권한 확인 창이 없음. 큰 산출물(수십~100 KB 이상)이 도구 인자로 인라인 전달됨 |
-| 시딩 없음, `write`가 state 생성(spec D-F13) | 훅·키워드는 아무것도 시딩하지 않고 `start`가 문서화된 진입입니다. `write`는 GJC처럼 state를 만들고 run을 전환합니다(R-O6). | GJC `gjc-runtime/ralplan-runtime.ts:986-1059` | `write`로 만든 run에는 `mode`·`interactive`·repository binding이 없을 수 있음 |
+| 시딩 없음, `write`가 state 생성(spec D-F13) | 훅·키워드는 아무것도 시딩하지 않고 `start`가 문서화된 진입입니다. `write`는 GJC처럼 state를 만들고 run을 전환합니다(R-O6). | GJC `gjc-runtime/ralplan-runtime.ts:986-1059`. GJC는 스킬 로드 때 시딩함(편차 36) | `write`로 만든 run에는 `mode`·`interactive`·repository binding이 없을 수 있음 |
 | 한 모드 원칙 일부 해제 | ultragoal 실행 중에는 `start`만 거부하고, 역할·primary의 `write`는 거부하지 않습니다(R-O6, R-AE1). | 관리자 결정(GJC 그대로) | ultragoal 실행 중 ralplan이 활성화될 수 있음. `ralplan state(patch={"active": false})` 또는 `ralplan clear`로 복구 |
 | ultragoal 실행 중 가드 미적용(spec D-F15 예외) | 루트 세션에서 ultragoal이 실행 중이면 계획 가드를 적용하지 않습니다(R-O7). | GJC `skill-state/workflow-mutation-guard.ts:294-310` 근사 | AC18의 예외. 항상 차단 경로는 유지 |
 | ultragoal 실행 중 게이트가 ralplan을 보지 않음(spec AC16 예외) | ultragoal이 실행 중이면 진입 게이트가 ralplan을 읽지 않습니다(R-O9). | GJC `tools/skill.ts:192-220` | 실행 중인 ultragoal의 `create`·skill 재로드는 ralplan state에 좌우되지 않음 |

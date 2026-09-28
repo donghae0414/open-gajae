@@ -5,9 +5,12 @@
 // `gjc-runtime/ralplan-runtime.ts:811-858` (`readConfinedArtifactFile`: open
 // with `O_NOFOLLOW`, require a regular file).
 // DR-11 / deviation 30: the primary's `write{path}` accepts only a neutral temp
-// file, where gjc reads any file outside `.gjc/`. gjc's post-open identity
-// check reads `/proc/self/fd`, which macOS lacks; it is not carried over, so
-// containment rests on the canonical check made just before the open.
+// file. gjc's SKILL allows an artifact path outside `.gjc/`, but its runtime
+// accepts only a file inside the bound worktree
+// (`ralplan-runtime.ts:2053-2070`) or, with `--worktree-root`, inside the
+// invoking cwd (`:811-846`). gjc's post-open identity check reads
+// `/proc/self/fd`, which macOS lacks; it is not carried over, so containment
+// rests on the canonical check made just before the open.
 import { constants as fsConstants, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
