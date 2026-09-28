@@ -5,7 +5,7 @@
 - 기록 시점: 2026-09-24
 - 호스트: OpenCode v2 `2.0.15` (`~/.opencode/bin/opencode`)
 - 플러그인: open-gajae `feat/opencode-v2-port` 커밋 `f4df6e6`, v2 플러그인 API `@opencode/plugin` 2.0.15
-- 갱신: 2026-09-28, GJC 기반 `ralplan`(도구 `ralplan`, 사이드바 `tui-plugin/`) — 브랜치 `feat/ralplan-gjc-stage-trail`
+- 갱신: 2026-09-29, GJC 기반 `ralplan`(도구 `ralplan`; TUI 사이드바는 보류, README "필수 후속 개발" 6번) — 브랜치 `feat/ralplan-gjc-stage-trail`
 
 ## 0. 저장소 준비
 
@@ -41,26 +41,10 @@ bun test
 
 파일 전체를 바꾸지 말고 이 세 key만 추가/유지하세요. 다른 host 설정(모델 provider, 다른 플러그인 등)은 그대로 둡니다.
 
-### `~/.config/opencode/cli.json` (선택: ralplan 사이드바)
-
-ralplan 진행 칩을 TUI 사이드바에 보려면, TUI 설정 파일 `~/.config/opencode/cli.json`의 `plugins`에 저장소 안 `tui-plugin` **디렉터리**를 절대 경로로 넣습니다. 이 파일은 `opencode.jsonc`와 별개인 TUI 전용 설정입니다(`opencode/packages/cli/src/config/config.ts:31`). `tui-plugin/sidebar.ts`는 저장소의 `src/ralplan-runtime/manifest.ts`를 가져오므로 `tui-plugin/`만 따로 복사하지 말고 저장소 안의 디렉터리를 등록합니다.
-
-```json
-{
-  "plugins": ["/Users/dongwuk/apps/open-gajae/tui-plugin"]
-}
-```
-
-- **설치 없음:** 절대 경로 항목은 로컬 소스로 처리되어(`opencode/packages/plugin/src/source.ts:61-66`) npm 설치나 패키지 준비 없이 디렉터리를 바로 해석하고, 그 안의 `tui.ts`를 진입으로 씁니다(`opencode/packages/tui/src/plugin/context.tsx:666-669`). 빌드 단계와 별도 `package.json`은 필요 없습니다. host가 표시하는 `install: true`는 로컬 경로에 영향이 없습니다.
-- **디렉터리만:** 파일 경로 항목은 건너뛰므로(`context.tsx:333-341`) `tui-plugin/tui.ts`가 아니라 디렉터리를 등록합니다.
-- **저장 시 재로드:** 로컬 디렉터리는 감시되어(`context.tsx:343`) 파일을 저장하면 TUI가 플러그인을 다시 불러옵니다.
-- **별도 등록:** 서버 플러그인 디렉터리와 자동으로 묶이지 않습니다(`tui`가 아니라 `tui-plugin`). 등록하지 않으면 사이드바만 없고 ralplan 동작은 같습니다. 파일의 다른 key는 그대로 두고 `plugins` 배열에 항목만 추가합니다.
-- **원격 attach 미지원:** 사이드바는 TUI가 도는 머신의 파일 시스템에서 `<worktree>/.open-gajae/_session-*/state/skill-active-state.json`을 약 1초마다 읽습니다. 서버가 다른 머신에 있으면 파일을 찾지 못해 조용히 숨습니다.
-
 ### v1에서 옮길 필요 없는 항목
 
 - `plugin`(v1의 단수형 키, `file://…/dist/index.js`)은 삭제합니다. v2는 `plugins`(복수형)를 씁니다.
-- `~/.config/opencode/tui.json`의 `plugin: ["file://…/dist/tui.js"]` 항목: `main`에는 이 파일을 만드는 빌드 산출물이 없으므로 넣지 않습니다(v1 기록과 동일). v2의 사이드바는 위 `cli.json`에 `tui-plugin` 디렉터리로 등록합니다.
+- `~/.config/opencode/tui.json`의 `plugin: ["file://…/dist/tui.js"]` 항목: `main`에는 이 파일을 만드는 빌드 산출물이 없으므로 넣지 않습니다(v1 기록과 동일). v2에는 등록할 TUI 플러그인이 없습니다(ralplan 사이드바 보류, README "필수 후속 개발" 6번).
 - `~/.config/opencode/package.json`의 `@opencode-ai/plugin` 항목: host가 관리하는 v1 의존성이며, v2 host는 이를 요구하지 않습니다.
 
 ## 2. open-gajae 자체 설정
@@ -119,7 +103,7 @@ ralplan 진행 칩을 TUI 사이드바에 보려면, TUI 설정 파일 `~/.confi
 
 1. 저장소를 준비합니다(0절).
 2. 1절의 `opencode.jsonc` 항목(`plugins`, `default_agent`, `experimental.subagent_depth`)을 넣습니다. 파일 전체를 바꾸지 말고 이 key들만 추가합니다.
-3. 필요하면 2절의 `open-gajae.jsonc`를 사용자/프로젝트 위치에 두고, ralplan 사이드바를 쓰려면 1절의 `cli.json` 항목을 넣습니다.
+3. 필요하면 2절의 `open-gajae.jsonc`를 사용자/프로젝트 위치에 둡니다.
 4. OpenCode를 시작하고, 이 디렉터리(또는 하위 디렉터리)에서 **첫 프롬프트를 한 번 보냅니다.** 플러그인 `setup`은 서버 시작이나 세션 생성이 아니라 위치별 첫 프롬프트에서 지연 실행되므로, 프롬프트를 보내기 전에는 아래 확인 명령이 아무것도 보여주지 않습니다.
 5. 등록 상태를 확인합니다.
 
@@ -143,11 +127,10 @@ opencode debug agent open-gajae-critic
 2. 두 skill 모두 키워드로 진입합니다(mention 없이 일반 텍스트로 `deep interview …`, `ralplan …`). 안내가 보이는지 확인합니다. ralplan 키워드는 state를 만들지 않으며, 모델이 `ralplan start`를 호출한 뒤에야 `state/ralplan-state.json`이 생기는지 확인합니다.
 3. ralplan 루프 도중 Esc로 중단합니다. 이후 continuation이 재개되지 않는지 확인합니다 — background subagent가 그동안 완료되어도 마찬가지입니다. 다음 실제 프롬프트를 보내면 continuation이 다시 동작하는지 확인합니다.
 4. planner 위임: GJC 기반 planner 프롬프트에는 위임 지시가 없으므로 위임 여부는 모델이 정합니다(권한은 `open-gajae-explore`/`open-gajae-document-specialist`로 유지). `experimental.subagent_depth: 2`가 설정된 상태에서 planner가 위임하면 호출이 성공하는지, 이 설정 없이 위임을 시도하면 host가 거부하고 planner가 직접 `read`/`grep`/`glob`로 조사해 `ralplan write`로 plan을 기록하는지 확인합니다. 위임하지 않았다면 그 사실만 기록합니다.
-5. ralplan 1회 실행: 1절의 `cli.json`에 `tui-plugin`을 등록하고 OpenCode를 다시 시작한 뒤 `@ralplan <작업>`을 보냅니다.
+5. ralplan 1회 실행: `@ralplan <작업>`을 보냅니다.
    - `.open-gajae/_session-*/plans/ralplan/<ses_…>/`에 `stage-01-planner.md`, `stage-01-intent.md`, architect·critic 단계 파일, `stage-NN-final.md`가 생기고, `index.jsonl`의 각 줄이 JSON으로 읽히며 `stage`, `stage_n`, `path`, `created_at`, `sha256`을 가지는지, `pending-approval.md`가 마지막 `final`과 같은지 확인합니다.
    - planner·architect·critic이 본문을 붙여 넣지 않고 영수증만 돌려주는지 확인합니다.
-   - 사이드바에 `ralplan` 블록과 칩(`stage`, `iter`, `stages`, `arch`, `crit`, `verdict`)이 한 줄에 하나씩 보이고, `final` 뒤 승인 질문 동안 `pending=approval` 칩이 보이는지 확인합니다.
-   - 승인 질문에서 **Stop here**를 고르면 사이드바의 ralplan 블록이 사라지고 `pending-approval.md`는 남는지 확인합니다.
+   - 승인 질문에서 **Stop here**를 고르면 활성 행 `state/active/ralplan.json`이 지워지고 `pending-approval.md`는 남는지 확인합니다.
    - 이어서 "ultragoal로 진행"이라고 요청하면 ultragoal이 시작되고(`source_plan` = `pending-approval.md`), ultragoal 목표 검증이 `VERDICT: approve` 또는 `VERDICT: reject`로 끝나는지 확인합니다(README "필수 후속 개발"의 판정 어휘 충돌 참고).
 6. primary 임시 파일 스테이징: primary가 큰 산출물을 `/tmp` 같은 OS 임시 경로에 host `write`로 먼저 쓰고 `ralplan write`의 `path`로 넘기면, 프로젝트 밖 경로라서 host가 `external_directory` 확인 창을 띄웁니다. 규칙이 맞지 않는 권한은 host 기본값이 `ask`이고(`opencode/packages/core/src/permission.ts:86-95`), 기본 허용은 host 자신의 임시 디렉터리(`$TMPDIR/opencode/*`, `opencode/packages/core/src/agent.ts:62`) 등뿐이기 때문입니다. 확인 창이 뜨는지, 허용 후 `ralplan write`가 성공하는지 확인합니다. 역할(planner·architect·critic)은 `content`만 쓰므로 이 창이 뜨지 않아야 합니다.
 

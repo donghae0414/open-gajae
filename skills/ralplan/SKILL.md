@@ -248,7 +248,7 @@ Source: Gajae Code `packages/coding-agent/src/defaults/gjc/skills/ralplan/SKILL.
 | "Ralplan mutation blocking is enforced in code" | Enforced for `write`, `edit`, and `patch`; `shell` commands are not inspected | Deviation 11 |
 | bash heredoc | `shell` heredoc | Host tool name |
 | Exit code 3 with stdout `PLANNING-STUCK`; exit 2 errors | A `PLANNING-STUCK` result (`ok: false`, `planning_stuck: true`); other refusals return `Error: …` | Deviation 1 |
-| HUD iteration | TUI sidebar `iter` chip | Deviation 9 |
+| HUD iteration | `iter` chip in the active row and snapshot (not drawn; the TUI sidebar is deferred) | Deviation 9 |
 | `gjc state clear --force --mode ralplan` scoped by `--session-id` or `GJC_SESSION_ID` | `ralplan clear(force=true)`, owner from lineage; the state keeps its files and becomes `active: false`, `complete` | Deviations 1, 19 |
 | Step 9: `gjc state ralplan write --input '{"current_phase":"handoff"}'` then the skill tool's in-process `gjc state ralplan handoff --to ultragoal` | `ralplan handoff(to="ultragoal")` (terminal phase required), then `skill` `ultragoal` and `create` with `source_plan` = `pending_approval_path` | Deviations 22, 25, 34 |
 | Approval label "Approve execution via ultragoal (Recommended)" | Kept as is; the unchanged ultragoal skill still names "Execute via ultragoal" | Deviation 27 |

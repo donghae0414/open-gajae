@@ -9,5 +9,5 @@
     "types": ["bun"],
     "allowImportingTsExtensions": true
   },
-  "include": ["index.ts", "src/**/*.ts", "tui-plugin/**/*.ts", "tests/**/*.ts"]
+  "include": ["index.ts", "src/**/*.ts", "tests/**/*.ts"]
 }

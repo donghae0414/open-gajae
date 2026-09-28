@@ -28,7 +28,7 @@ open-gajae의 자체 작성 부분은 MIT, 외부 자료는 각 원본 라이선
 - GJC 기준(메인 에이전트 프롬프트, 그리고 `ralplan` skill·런타임·합의 역할 프롬프트)은 GJC v0.17.7 커밋 `5c5231418930673e42cc5d08ebe4376e03187533`이며, OMC 기반 skill과 역할 내부 계약의 기준은 OMC v5.4.0 커밋 `5281b19e0d64f8e6dc6767f2130299a88af2dc71` 그대로입니다.
 - 대상 호스트는 OpenCode v2입니다. 이번 이식은 `@opencode/plugin` 2.0.15를 대상으로 하며, 로컬 `opencode/` 참조는 `v2.0.15`(`6f3639d82e`)에 고정되어 있습니다. v1 호스트는 더 이상 이 플러그인을 로드할 수 없습니다(v1 지원 중단 — deviations 표 참고).
 - 패키지는 빌드 단계가 없는 TS 소스입니다. `package.json`의 `exports["."]`는 `./src/index.ts`를 가리키고, 루트 `index.ts`가 이를 re-export합니다. `dist/`는 없습니다.
-- 구현 범위는 `deep-interview`·`ralplan`·`ultragoal`, `open-gajae`/`open-gajae-explore`/`open-gajae-document-specialist`, `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic` 합의 역할, `open-gajae-executor`/`open-gajae-cleaner` ultragoal 실행 역할, 세션 상태, native 문서 출력, 바로 호출 가능한 도구 13개(상태 도구 3개 + `ralplan` 도구 1개 + `ultragoal` 도구 1개 + 읽기 전용 AST/LSP 도구 8개), 그리고 ralplan 진행을 보여주는 선택 사항인 TUI 사이드바 플러그인 `tui-plugin/`입니다. company context(v1의 advisory MCP hook)는 완전히 제거되었습니다.
+- 구현 범위는 `deep-interview`·`ralplan`·`ultragoal`, `open-gajae`/`open-gajae-explore`/`open-gajae-document-specialist`, `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic` 합의 역할, `open-gajae-executor`/`open-gajae-cleaner` ultragoal 실행 역할, 세션 상태, native 문서 출력, 그리고 바로 호출 가능한 도구 13개(상태 도구 3개 + `ralplan` 도구 1개 + `ultragoal` 도구 1개 + 읽기 전용 AST/LSP 도구 8개)입니다. company context(v1의 advisory MCP hook)는 완전히 제거되었습니다.
 - `ralplan`은 제공하며 `pending approval` 상태의 plan(`pending-approval.md`)에서 끝나고, 최종 승인 질문은 `Refine further`/`Approve execution via ultragoal (Recommended)`/`Stop here`를 제공합니다. `ultragoal`은 OMC ralph를 이식한 목표 기반 지속 실행 loop로, goal별 architect 검증·필수 읽기 전용 cleaner pass·최종 critic 리뷰를 제공합니다. deep-interview → ralplan → ultragoal 핸드오프 체인도 제공합니다. autopilot, team, 독립된 ralph skill, autoresearch, 공유 세션 상태, 자동 migration/recovery는 제공하지 않습니다. 슬래시 커맨드는 없으며 명시적인 자연어 요청이나 지원되는 mention·키워드로 skill에 진입할 수 있습니다(아래 "진입" 참고).
 - v2 호스트와 워크플로 설명은 `feat/opencode-v2-port` 브랜치 커밋 `f4df6e6`에서 비롯되었으며, 위 메인 에이전트 프롬프트 기준은 별도 변경입니다. 그 변경 자체가 Phase 1 완료를 입증한 것은 아니며, 아래 검증 계층(typecheck, unit test, host probe)이 이 변경에 대해 통과했다는 주장도 아닙니다. 검증 항목은 plan을 참고하세요.
 
@@ -99,7 +99,7 @@ ambiguity 임계값에 도달해 spec을 저장한 뒤에는 인터뷰를 마칠
 
 안내(ralplan 안내, deep-interview magic guide, ultragoal restore banner, breaker 메시지)는 함께 일어나는 state 쓰기가 있으면 그 뒤에 `ctx.session.synthetic({ resume: false })` 메시지로 기록됩니다. host는 synthetic 메시지를 같은 턴의 user 메시지 **앞**에 배치합니다. OMC/v1은 뒤에 덧붙였으므로 이는 기록된 host 배치 차이이며, 설계 선택이 아닙니다. `synthetic` 자체가 실패하면 안내가 사라지지 않도록 marker로 감싼 채 prompt 텍스트에 덧붙입니다. state 쓰기는 어느 쪽이든 유지됩니다.
 
-**`ralplan` 도구**는 ralplan state, run의 단계 파일, 사이드바가 읽는 파일의 유일한 기록자입니다. `state_*` 도구는 더 이상 `mode: "ralplan"`을 받지 않으며 deep-interview 전용입니다. op는 GJC의 CLI·state 동사에 대응합니다.
+**`ralplan` 도구**는 ralplan state, run의 단계 파일, ralplan 활성 행과 스냅숏의 유일한 기록자입니다. `state_*` 도구는 더 이상 `mode: "ralplan"`을 받지 않으며 deep-interview 전용입니다. op는 GJC의 CLI·state 동사에 대응합니다.
 
 | Op | 호출자 | 동작 |
 |---|---|---|
@@ -137,7 +137,7 @@ ambiguity 임계값에 도달해 spec을 저장한 뒤에는 인터뷰를 마칠
 - **멱등 기록.** 같은 `(stage, stage_n)`에 같은 내용을 다시 쓰면 앞의 영수증을 `deduplicated: true`와 함께 돌려주고(빠진 원장 줄은 복구), 다른 내용은 "Use a new stage_n to record another pass."로 거부합니다.
 - **역할은 content로만 기록.** planner, architect, critic은 산출물 전체를 `content`로 넘기고 primary에게는 영수증만 돌려줍니다. primary는 `content`를 넘기거나, 프로젝트 밖 OS 임시 루트(`os.tmpdir()`, `$TMPDIR`, `/tmp`, `/var/tmp`와 그 `/private` 별칭) 아래 파일의 `path`를 넘길 수 있습니다.
 - **Disposition.** Architect와 Critic의 지적이 충돌하면 revision 전에 `disposition` 단계(JSON, GJC `ralplan.review_conflicts.v1` 스키마)가 충돌마다 처리를 정해야 합니다. 도구는 근거 영수증을 run 원장과 대조해, 미처리·알 수 없는·불일치 항목을 거부합니다.
-- **기록 관리.** `state/audit.jsonl`에는 파일 변경 1건당 한 줄이 남습니다. `state/active/ralplan.json`과 스냅숏 `state/skill-active-state.json`은 사이드바용 활성 행과 칩을 담습니다. `state/ralplan-continuation.json`은 continuation breaker 카운터만 담습니다.
+- **기록 관리.** `state/audit.jsonl`에는 파일 변경 1건당 한 줄이 남습니다. `state/active/ralplan.json`과 스냅숏 `state/skill-active-state.json`은 활성 행과 HUD 칩을 담습니다. 아직 open-gajae에는 이를 그리는 곳이 없습니다(필수 후속 개발 6번). `state/ralplan-continuation.json`은 continuation breaker 카운터만 담습니다.
 
 **예산과 PLANNING-STUCK.** 한 run이 여는 회차(planner·revision opener)는 최대 `ralplan.maxIterations`(기본 5)이며, `index.jsonl`과 디스크의 단계 파일 중 큰 쪽으로 셉니다. 레인마다 열린 회차당 architect 또는 critic 기록은 `ralplan.maxReviewPassesPerLane`(기본 1)까지입니다. 어느 예산이든 넘는 write는 오류 대신 `PLANNING-STUCK` 결과(`ok: false`, `planning_stuck: true`, `marker: "PLANNING-STUCK"`)를 돌려주고 state에 `planning_stuck`을 기록합니다. 이미 열린 회차 안의 architect·critic 기록과 `post-interview`, `adr`, `final`은 계속 허용되어 가장 나은 plan을 `pending approval`로 남길 수 있습니다. 막힌 run의 `final`은 `auto_handoff`를 사유 `planning_stuck`과 함께 `off`로 해석하며 절대 인계되지 않습니다. 새 `run_id`는 새 폴더와 새 예산으로 시작합니다.
 
@@ -148,12 +148,12 @@ ambiguity 임계값에 도달해 spec을 저장한 뒤에는 인터뷰를 마칠
 **승인, Stop here, 인계.** `final`이 `auto_handoff.effectiveTarget`을 `ultragoal`로 해석하면(`ralplan.autoHandoff: "ultragoal"` 설정, 막히지 않은 run) primary는 묻지 않고 인계합니다. 그 밖에는 **Refine further**, **Approve execution via ultragoal (Recommended)**, **Stop here**와 자유 입력을 담은 `question` 하나를 엽니다. 사용자가 승인하거나 같은 턴에서 이미 ultragoal을 지목하지 않으면 plan은 `pending approval`로 남습니다.
 
 - **Refine further**는 재검토 루프로 돌아갑니다.
-- **Stop here**는 `ralplan state(patch={"active": false})`입니다. phase는 `final` 그대로, `pending-approval.md`는 보존되고, 활성 행이 제거되어 사이드바가 숨습니다. 나중에 ultragoal을 요청해도 진행됩니다.
+- **Stop here**는 `ralplan state(patch={"active": false})`입니다. phase는 `final` 그대로, `pending-approval.md`는 보존되고, 활성 행이 제거됩니다. 나중에 ultragoal을 요청해도 진행됩니다.
 - **Approve execution via ultragoal**: primary가 `ralplan handoff(to="ultragoal")`를 호출하고 `ultragoal` skill을 불러와 `source_plan`을 `pending-approval.md` 경로로 넣어 `create`를 호출합니다(미완료 goal list가 이미 있으면 `resume`). handoff op는 종료 phase(`final`, `handoff`, `complete`, `completed`, `failed`, `cancelled`, `canceled`, `inactive`)를 요구합니다. ralplan을 `{active: false, current_phase: "handoff", handoff_to: "ultragoal"}`로 두고, 활성 행을 제거하며, `handoff_from: "ralplan"`이 담긴 확인된 ultragoal state를 씁니다.
 - **ultragoal 진입 게이트.** 루트 세션에서 ultragoal이 실행 중이 아닐 때, `ultragoal` skill 로드, `@ultragoal` mention, `ultragoal start`/`resume`/`create`는 ralplan이 종료가 아닌 phase에서 active이면 거부되고, 종료 phase에서 active이면(예: 승인 질문이 열려 있는 동안의 active `final`) 같은 인계를 먼저 수행합니다.
 - **반대 방향.** `ultragoal handoff(to="ralplan", reason)`은 ultragoal을 멈추고(goal과 progress는 삭제되지 않고 유지) 같은 호출에서 reason을 task로 ralplan을 시작하며, 기존 `run_id`를 재사용합니다. 새 run 폴더와 예산이 필요하면 새 `run_id`로 `ralplan start`를 호출하세요. 다시 승인하면 `ultragoal resume`을 호출해 새 plan을 `add`/`revise`/`supersede`로 기존 goal에 병합합니다.
 
-**write 의미(GJC와 같음).** `start` 없이 `write`하면 state를 만듭니다(`active: true`, phase = 기록한 단계, `mode`·`interactive`·repository binding 없음). 새 `run_id`를 명시한 `write`는 run을 전환하며 verdict·stuck·auto-handoff 필드를 초기화합니다. 같은 run에서는 write가 `active: true`로 두고 phase를 기록한 단계로 전진시키지만, phase가 잠겨 있으면(`final`, `handoff`, `complete` 등) state를 전혀 바꾸지 않습니다 — 그래서 Stop here나 `clear` 뒤의 다듬기 write는 run을 다시 활성화하지 않습니다. 다만 write는 활성 행을 다시 쓰므로 다음 Stop here, handoff, clear까지 사이드바에 행이 다시 보입니다. `write`는 ultragoal 실행 중에도 거부되지 않습니다: ultragoal 실행 중 역할이나 primary의 write가 ralplan을 활성화할 수 있고, 그러면 ultragoal이 끝난 뒤 계획 가드가 편집을 막고 진입 게이트가 새 ultragoal을 거부합니다. `ralplan state(patch={"active": false})` 또는 `ralplan clear`로 복구하세요. 가드의 차단 메시지도 이 둘을 안내합니다.
+**write 의미(GJC와 같음).** `start` 없이 `write`하면 state를 만듭니다(`active: true`, phase = 기록한 단계, `mode`·`interactive`·repository binding 없음). 새 `run_id`를 명시한 `write`는 run을 전환하며 verdict·stuck·auto-handoff 필드를 초기화합니다. 같은 run에서는 write가 `active: true`로 두고 phase를 기록한 단계로 전진시키지만, phase가 잠겨 있으면(`final`, `handoff`, `complete` 등) state를 전혀 바꾸지 않습니다 — 그래서 Stop here나 `clear` 뒤의 다듬기 write는 run을 다시 활성화하지 않습니다. 다만 write는 활성 행을 다시 쓰며, 그 행은 다음 Stop here, handoff, clear까지 남습니다. `write`는 ultragoal 실행 중에도 거부되지 않습니다: ultragoal 실행 중 역할이나 primary의 write가 ralplan을 활성화할 수 있고, 그러면 ultragoal이 끝난 뒤 계획 가드가 편집을 막고 진입 게이트가 새 ultragoal을 거부합니다. `ralplan state(patch={"active": false})` 또는 `ralplan clear`로 복구하세요. 가드의 차단 메시지도 이 둘을 안내합니다.
 
 **계획 가드.** 루트 세션의 ralplan state가 `active: true`이고 phase가 `complete`, `completed`, `failed`, `cancelled`, `canceled`, `inactive`가 아니면 — 즉 `final`과 `handoff`도 active인 동안은 막습니다 — 그 세션 계보의 모든 agent의 `write`, `edit`, `patch`를 거부합니다. 대상이 모두 프로젝트 밖 OS 임시 루트 아래일 때만 통과합니다. 루트 세션에서 ultragoal이 실행 중이면 가드는 적용되지 않으며, `shell` 명령은 검사하지 않습니다. 계획 중 deep-interview spec 저장도 막히지만, deep-interview bridge는 `ralplan start` 전에 spec을 저장하므로 정상 흐름에는 영향이 없습니다. 가드와 별개로, 세션 폴더의 `plans/ralplan/**`와 `state/**`, 그리고 ultragoal 소유 파일에 대한 `write`, `edit`, `patch`는 모든 agent에게 항상 거부되며 도구만 이들을 바꿉니다.
 
@@ -165,7 +165,7 @@ host가 ralplan state가 active인 세션을 압축하면, 플러그인은 현�
 
 **알려진 동작(GJC와 같음): 전환 감사 행.** 현재 phase에서 표의 간선이 아닌 단계를 write해도 성공하며, `state/audit.jsonl`에 `invalid_transition_detected` 행 하나만 추가됩니다(spec D-T11). 표에 `planner→critic`, `critic→architect` 간선이 없고 두 리뷰 레인은 어느 순서로든 기록되므로, 1회차 병렬 리뷰에서도 이런 행이 흔히 생깁니다.
 
-**사이드바.** 별도 TUI 플러그인 `tui-plugin/`이 `state/skill-active-state.json`을 약 1초마다 폴링해 세션 사이드바(`sidebar.content`)에 `ralplan` 블록을 그립니다. `~/.config/opencode/cli.json`에 `{"plugins": ["/Users/dongwuk/apps/open-gajae/tui-plugin"]}`처럼 디렉터리를 등록하세요. 자세한 내용은 [`docs/local-install-v2.md`](docs/local-install-v2.md)를 참고하세요. state의 phase가 잠겨 있는 동안(`final`, `handoff`, `complete` 등) `stage` 칩은 GJC HUD처럼 방금 쓴 단계 대신 그 phase를 보여줍니다(GJC `skill-state/active-state.ts:507-545`). 행 파일 자체에는 방금 쓴 단계가 남습니다. 블록은 행의 칩을 한 줄에 하나씩 `label=value`로 보여줍니다 — `pending=approval`, `stage`, `iter`, `stages`(`revision · architect · critic`처럼 단계 전체 이름), `arch=n/max`, `crit=n/max`, `verdict`, `handoff`, 최대 6개. 오류와 차단은 테마의 error 색, 경고는 warning 색, `CLEAR`/`OKAY`/`APPROVE` verdict는 success 색입니다. ralplan 행이 active이거나 `pending` 칩이 있는 동안 보이고, Stop here, handoff, clear에서 숨습니다. 로컬 파일만 읽으므로 원격 서버에 attach한 TUI에서는 아무것도 보이지 않습니다.
+**진행 표시 없음.** spec이 ralplan용으로 계획한 TUI 사이드바(D-H3~D-H7)는 보류되었습니다(R-OD17). 배포된 OpenCode 2.0.15 바이너리는 TUI 플러그인에 호스트의 `solid-js`·`@opentui/*` 인스턴스를 넘겨주지 않아, 일반 import로는 플러그인이 그릴 수 없습니다(필수 후속 개발 6번). ralplan 활성 행과 스냅숏에는 GJC의 HUD 칩이 계속 기록됩니다.
 
 ## 자체 역할과 설정
 
@@ -257,7 +257,7 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
 
 ## GJC로부터의 deviation (ralplan)
 
-출처: GJC v0.17.7 커밋 `5c5231418930673e42cc5d08ebe4376e03187533`(MIT). ralplan skill, 세 합의 역할 프롬프트, `src/ralplan-runtime/`은 아래 행이 달리 적지 않는 한 GJC ralplan 계약을 따릅니다(AGENTS.md 정책: 출처, deviation, 이유, 영향). GJC 경로는 `gajae-code/packages/coding-agent/src/` 기준이며 `SKILL.md`는 `defaults/gjc/skills/ralplan/SKILL.md`입니다. OpenCode 경로는 `opencode/packages/` 기준입니다. 결정 ID(`D-…`, `DR-…`, `R-…`)는 이식의 spec과 plan(`.omc/specs/deep-interview-ralplan-gjc-stage-trail.md`, `.omc/plans/ralplan-gjc-stage-trail.md`)을 가리킵니다. 행 번호는 skill과 프롬프트의 source 섹션이 인용하는 plan 번호를 그대로 씁니다. 18행은 `stage` 칩이 GJC를 따르게 되어(행에는 방금 쓴 단계를 기록하고, 잠긴 state phase가 있으면 표시할 때 그것으로 바꿈) 철회했으며 번호는 다시 쓰지 않습니다.
+출처: GJC v0.17.7 커밋 `5c5231418930673e42cc5d08ebe4376e03187533`(MIT). ralplan skill, 세 합의 역할 프롬프트, `src/ralplan-runtime/`은 아래 행이 달리 적지 않는 한 GJC ralplan 계약을 따릅니다(AGENTS.md 정책: 출처, deviation, 이유, 영향). GJC 경로는 `gajae-code/packages/coding-agent/src/` 기준이며 `SKILL.md`는 `defaults/gjc/skills/ralplan/SKILL.md`입니다. OpenCode 경로는 `opencode/packages/` 기준입니다. 결정 ID(`D-…`, `DR-…`, `R-…`)는 이식의 spec과 plan(`.omc/specs/deep-interview-ralplan-gjc-stage-trail.md`, `.omc/plans/ralplan-gjc-stage-trail.md`)을 가리킵니다. 행 번호는 skill과 프롬프트의 source 섹션이 인용하는 plan 번호를 그대로 씁니다. 18행은 `stage` 칩이 GJC를 따르게 되어(행에는 방금 쓴 단계를 기록하고, 잠긴 state phase가 있으면 표시할 때 그것으로 바꿈) 철회했고, 16행(`cli.json`에 등록하는 별도 `tui-plugin/` 디렉터리 사이드바)은 사이드바 보류와 함께 철회했습니다(R-OD17). 두 번호 모두 다시 쓰지 않습니다.
 
 | # | Deviation | GJC 출처 | 이유 | 영향 |
 |---|---|---|---|---|
@@ -269,16 +269,15 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
 | 6 | `autoresearch` 자동 인계 대상 없음. | `gjc-runtime/ralplan-runtime.ts:103-112` | autoresearch skill이 없음 | `autoHandoff`는 `off` 또는 `ultragoal` |
 | 7 | `--architect/--critic openai-code` 없음. | `gjc-runtime/ralplan-runtime.ts:614-615` | 역할 모델은 `agents` 설정으로 지정 | run별로 리뷰어 모델을 바꿀 수 없음 |
 | 8 | 승인 질문에 `workflowGate` 표식 없음. | `SKILL.md:110` | OpenCode `question`에 해당 필드가 없고(`core/src/tool/plugin/question.ts:23-25`) 시간초과 자동 선택도 없음 | 원격 workflow-gate 이벤트 없음 |
-| 9 | HUD가 파일 폴링으로 그리는 TUI `sidebar.content` 블록이 되고, `stages` 칩은 단계 전체 이름을 씁니다. | `skill-state/workflow-hud.ts:188-245`, `gjc-runtime/ledger-event-renderer.ts:156-166`, `modes/components/skill-hud/render.ts:43-64` | host UI 차이, 관리자 선택 | 최대 약 1초 지연, 원격 attach 미지원. `stages` 칩은 여섯 단어가 칩 값 80자 제한을 넘으면 더 적은 단어를 보이며 단어를 자르지 않음. 칩은 한 줄에 하나씩 그리며, `success` severity(`CLEAR`/`OKAY`/`APPROVE`)는 success 색으로 그림(GJC renderer는 dim으로 둠) |
+| 9 | HUD 칩은 활성 행과 스냅숏에 기록되지만 그려지지 않으며, `stages` 칩은 단계 전체 이름을 씁니다. | `skill-state/workflow-hud.ts:188-245`, `gjc-runtime/ledger-event-renderer.ts:156-166`, `modes/components/skill-hud/render.ts:43-64` | host UI 차이: TUI 사이드바 보류(R-OD17). 단계 이름은 관리자 선택 | TUI에 ralplan 진행 표시 없음. `stages` 칩은 여섯 단어가 칩 값 80자 제한을 넘으면 더 적은 단어를 보이며 단어를 자르지 않음 |
 | 10 | OMC continuation을 유지하며, 종료 phase·`PLANNING-STUCK`·`active: false`에서 멈춥니다. | (GJC에 없음) | 관리자 선택 | 멈춘 계획 턴이 breaker 한도 안에서 자동 재개 |
 | 11 | 계획 가드가 `shell`의 변경 명령을 판별하지 않습니다. | `skill-state/workflow-mutation-guard.ts:1475-1610` | 명령 판별의 비용과 정확도 | 계획 중 `shell`을 통한 수정은 프롬프트로만 억제 |
 | 12 | `repository_binding`은 가능한 값만 기록하고 강제하지 않습니다. | `gjc-runtime/ralplan-runtime.ts:905-978` | 플러그인이 경로를 직접 해석 | 다른 worktree에서의 쓰기를 거부하지 않음 |
 | 13 | `doctor`에 checksum·orphan journal 점검이 없습니다. | `gjc-runtime/state-runtime.ts:317,466-500` | checksum과 인계 저널이 없음 | 점검 항목 축소 |
 | 14 | 활성 스킬 행은 ralplan만 기록합니다. | `skill-state/active-state.ts` | 다른 skill은 재설계가 필요 | 필수 후속 개발 |
 | 15 | 역할 프롬프트는 GJC, ultragoal 리뷰어 brief는 OMC 기반 유지(OQ1). | `prompts/agents/*.md` | 관리자 결정: 단계적 개정 | 알려진 충돌 5개(필수 후속 개발 참고) |
-| 16 | 사이드바는 `cli.json`에 등록하는 별도 `tui-plugin/` 디렉터리입니다: 자동 결합 없음, 빌드 없음, OMO 폴링 패턴(OQ2). | GJC 내장 TUI | host는 서버 플러그인 디렉터리 안의 `tui` 진입을 자동 결합함(`plugin/src/host.ts:17-44`). 관리자가 별도 등록을 선택 | 사용자 등록 1단계 |
 | 17 | state 봉투에 GJC `receipt`·checksum·`state_revision`이 없고 StateStore `_meta`를 유지합니다. 활성 행의 `source_state_revision`, 스냅숏의 `state_revision`, GJC revision·stale-skip 로직도 생략합니다(R-OD6). | `gjc-runtime/state-writer.ts:1003-1067`, `skill-state/workflow-state-contract.ts:23-40`; revision `gjc-runtime/state-writer.ts:446-472,852-857,1354-1360`, `skill-state/active-state.ts:85,858,943` | 13과 같은 이유와 StateStore 소유자 검사. ralplan 쓰기는 모두 한 프로세스의 소유 세션 큐 하나를 거치므로 순서가 뒤바뀌지 않음(여러 프로세스는 알려진 한계) | state·행·스냅숏 key 일부가 다름(형식 호환 범위 밖). `doctor`의 `stale_active_state`는 revision이 아니라 phase와 active 플래그를 비교하므로 영향 없음 |
-| 19 | `ralplan handoff`가 ralplan 활성 행을 제거합니다(`clear`도 GJC처럼 제거). | `skill-state/active-state.ts:868,969-1014`(GJC handoff는 `handoff_to`를 담은 비활성 호출자 행을 남김) | spec AC14 | handoff에서 사이드바가 숨고, 인계 대상은 행이 아니라 ralplan state(`handoff_to`)에 남음 |
+| 19 | `ralplan handoff`가 ralplan 활성 행을 제거합니다(`clear`도 GJC처럼 제거). | `skill-state/active-state.ts:868,969-1014`(GJC handoff는 `handoff_to`를 담은 비활성 호출자 행을 남김) | spec AC14 | handoff 뒤에는 활성 행이 남지 않고, 인계 대상은 행이 아니라 ralplan state(`handoff_to`)에 남음 |
 | 20 | 압축 복구 텍스트에 `Intent Reconciliation:` 줄을 추가하고(DR-14), ultragoal 압축 문맥처럼 한 줄 머리말을 붙인 `<ralplan-compaction-context>` 블록 하나로 넣습니다. | `session/agent-session.ts:667-710` | spec AC19; host 압축 hook은 marker로 감싼 system 텍스트를 받음 | 복구 문맥이 약간 길어짐 |
 | 21 | 감사 `owner` 값은 `open-gajae-runtime`과 `open-gajae-hook`입니다. | `gjc-runtime/state-writer.ts:517-532` | host 이름 | 필드는 같고 값만 다름 |
 | 22 | SKILL 9단계의 state 쓰기 + skill 도구 인계가 `ralplan handoff` op 하나가 됩니다(DR-12). | `SKILL.md:118-124`, `tools/skill.ts:200-218` | GJC 자신의 전환 규칙표가 `final`에서의 그 state 쓰기를 거부함(`gjc-runtime/workflow-manifest.ts:241-265`, `gjc-runtime/state-runtime.ts:1335-1341`) | 인계가 op 호출 1회 |
@@ -311,14 +310,14 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
 | 이전 형식 state | 알 수 없는 phase(예: OMC의 `current_phase: "ralplan"`)의 state는 판독 불가로 봅니다: 가드 해제, continuation 없음, 게이트 통과, `doctor`는 `schema_violation` 보고. 이동 코드는 없습니다(DR-21). | spec D-T10 | 이전 세션이 편집을 잠그지 않음. 그 state는 직접 삭제 |
 | 가드 해제 집합(spec D-F15, 명확화) | 가드는 `complete`, `completed`, `failed`, `cancelled`, `canceled`, `inactive`에서만 풀리고, `final`과 `handoff`는 active인 동안 계속 막습니다(R-O10). | GJC `skill-state/workflow-mutation-guard.ts:264-276`, `gjc-runtime/workflow-manifest.ts:154-160` | 변화 없음. 이전 리뷰 질문의 잘못된 암시를 바로잡음 |
 | `ralplan`이 숨겨지는 범위(spec AC1) | 이 도구를 쓸 수 없는 자체 agent에서는 숨기고, host `build`/`general`과 사용자 정의 agent는 실행 시 거부만 합니다(DR-22). | `core/src/plugin/agent.ts:84-100`; `ultragoal`·`state_*` 도구도 같음 | 그 agent들의 도구 목록에 보일 수 있음 |
-| Stop here 뒤 사이드바 없음(spec D-H6 일부 철회) | spec은 최신 `final`이 승인 대기인 동안 "Stop here 이후 포함" 사이드바를 보이게 했습니다. Stop here는 GJC처럼 활성 행을 제거하므로 사이드바가 숨습니다(R-OD10). 승인 질문 중(active `final`)에는 `pending` 칩이 보입니다. | GJC `skill-state/active-state.ts:849-866` | Stop here 뒤에는 사이드바로 승인 대기를 알 수 없음. `pending-approval.md`는 보존 |
+| Stop here가 활성 행을 제거(spec D-H6 일부 철회) | spec은 최신 `final`이 승인 대기인 동안 "Stop here 이후 포함" ralplan 표시를 유지하게 했습니다. Stop here는 GJC처럼 활성 행을 제거합니다(R-OD10). 승인 질문 중(active `final`)에는 행에 `pending` 칩이 있습니다. | GJC `skill-state/active-state.ts:849-866` | Stop here 뒤에는 활성 행으로 승인 대기를 알 수 없으므로 이후의 사이드바(후속 6번)도 알 수 없음. `pending-approval.md`는 보존 |
 | revision 번호 없음(spec D-T8) | 활성 행과 스냅숏에 revision 번호를 두지 않습니다(R-OD6, deviation 17). | ralplan 쓰기는 모두 소유 세션 큐 하나에서 순차 기록 | 각각 D-T8 목록보다 key가 하나 적음 |
 
 ## 필수 후속 개발
 
 아래 항목은 정책으로 기록한 필수 후속 작업이며, 아직 어느 것도 구현되지 않았습니다.
 
-1. **deep-interview와 ultragoal의 활성 행, 사이드바, 도구.** 활성 행, `skill-active-state.json` 스냅숏, 사이드바 블록은 ralplan만 씁니다(deviation 14). deep-interview와 ultragoal에도 활성 행과 TUI 진행 표시가 필요하며, 이를 위한 도구·설계 재작업이 필요합니다(spec D-D2, D-H3).
+1. **deep-interview와 ultragoal의 활성 행과 도구.** 활성 행과 `skill-active-state.json` 스냅숏은 ralplan만 씁니다(deviation 14). deep-interview와 ultragoal에도 활성 행과 TUI 진행 표시(6번)가 필요하며, 이를 위한 도구·설계 재작업이 필요합니다(spec D-D2, D-H3).
 2. **ultragoal을 GJC 방식으로 개정.** 합의 역할 프롬프트는 이제 GJC 것이지만, ultragoal의 리뷰어 brief(`src/ultragoal.ts`의 `verificationBrief`), `record_verdict`(`src/ultragoal-tool.ts`), `skills/ultragoal/SKILL.md`는 OMC 기반 그대로입니다(OQ1, deviation 15). ultragoal이 각 역할 고유의 판정을 소비하도록 개정합니다 — Architect `CLEAR`와 `APPROVE`, 또는 Critic `OKAY`는 `approve`, 그 밖은 `reject`로 매핑하고 `WATCH`, `COMMENT`, `ITERATE`의 매핑을 명시합니다 — 그리고 테스트 실행을 executor QA 레인으로 옮깁니다. 이 개정은 GJC 역할 프롬프트와 ultragoal brief 사이의 알려진 충돌 5개를 해소해야 합니다.
    1. **판정 어휘:** 역할은 `CLEAR`/`WATCH`/`BLOCK`과 `APPROVE`/`COMMENT`/`REQUEST CHANGES`, 또는 `OKAY`/`ITERATE`/`REJECT`로 끝나지만, brief는 `VERDICT: approve | reject`를 요구합니다.
    2. **제한 shell vs "run tests":** 역할 프롬프트는 `shell`을 읽기 전용 점검으로 제한하지만, brief는 리뷰어에게 관련 테스트와 빌드를 실행하라고 합니다.
@@ -326,11 +325,12 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
    4. **"Attempt N/3" vs ratchet pass 번호:** brief는 거부 한도까지 시도 횟수를 세지만, GJC 리뷰어는 5규칙 ratchet을 `review pass N`에 맞춥니다.
    5. **plan-only critic 정체성:** GJC critic은 실행 전에 plan이 실행 가능한지 판정하는 역할인데, ultragoal은 구현된 run의 최종 리뷰에 이를 씁니다.
 3. **승인 라벨 정렬.** `skills/ultragoal/SKILL.md`는 ralplan 승인 선택지를 여전히 **Execute via ultragoal**로 부릅니다. GJC의 **Approve execution via ultragoal**로 바꿉니다(R-O5, deviation 27).
-4. **알려진 한계(기록만, 일정 없음).** 한 worktree에서 여러 OpenCode 프로세스가 동시에 작업하면 서로 직렬화되지 않습니다: 플러그인은 한 프로세스 안에서만 쓰기를 큐에 넣고, GJC는 파일 잠금을 씁니다. 사이드바는 로컬 파일을 읽으므로 원격 서버에 attach한 TUI는 지원하지 않습니다.
+4. **알려진 한계(기록만, 일정 없음).** 한 worktree에서 여러 OpenCode 프로세스가 동시에 작업하면 서로 직렬화되지 않습니다: 플러그인은 한 프로세스 안에서만 쓰기를 큐에 넣고, GJC는 파일 잠금을 씁니다.
 5. **항상 차단 경로의 대소문자.** 항상 차단 경로 검사(`.open-gajae/_session-*/state/**`, `plans/ralplan/**`, ultragoal 파일)는 대소문자를 구분해 비교하므로, 대소문자를 구분하지 않는 파일 시스템(macOS 기본)에서는 `.OPEN-GAJAE/…`처럼 대소문자만 다른 경로가 계획 가드가 없는 때 이 검사를 빠져나갑니다. 이 검사들의 대소문자를 정규화합니다(관리자 결정 R-OD13).
+6. **TUI 진행 사이드바(보류, R-OD17).** spec이 계획한 ralplan 사이드바(D-H3~D-H7)는 이식 브랜치 `feat/ralplan-gjc-stage-trail`에서 만들었다가(`tui-plugin/`, 커밋 `96e9176`, 수정 `eb85dde`·`0cbb491`) 병합 전에 제거했습니다. 배포된 OpenCode 2.0.15 바이너리(Bun 1.4.2로 컴파일)는 TUI 플러그인의 bare import(`solid-js`, `@opentui/solid`, `@opentui/core`, `@opencode/plugin/tui`)를 호스트 인스턴스로 연결하지 않습니다. 로컬 패키지가 없으면 플러그인 로드가 실패하고, 있으면 별도 사본을 불러와 요소를 만들 때 `No renderer found`가 나서 아무것도 그려지지 않습니다. OpenCode 자체 테스트는 이 연결을 기대하지만(`tui/test/plugin-source.test.ts`, "shared runtime and ordinary package identities survive plugin generations"), 컴파일하지 않은 상태에서 돕니다. 2026-09-29 수동 확인에서는 플러그인이 호스트의 가상 모듈 `opentui:runtime-module:<specifier>`(`@opentui/core` 0.5.10 `runtime-plugin.js`의 내부 명명 규칙)에서 호스트 인스턴스를 가져오면 블록이 그려졌습니다. 호스트가 플러그인 import를 연결하게 되면, 또는 그 우회를 호스트 통합 deviation으로 기록해 사이드바를 다시 넣습니다. 로컬 파일을 읽으므로 원격 서버에 attach한 TUI는 계속 지원하지 않습니다.
 
 ## 검증 근거와 한계
 
-이 이식이 정의하는 검증 계층은 `@opencode/plugin` 2.0.15에서의 `bun run typecheck`/`bun test`, prompt hook·permission rule 생성·continuation·artifact guard·state/code tool·`ralplan` 도구와 런타임(`tests/fixtures/gjc-ralplan/`의 GJC 픽스처와의 key 집합 비교 포함)에 대한 unit test와 사이드바 headless render 1개, 로컬 OpenCode 2.0.15 바이너리를 대상으로 한 host probe(`tests/host-probe.ts`, `tests/host-session-probe.ts`, `tests/planner-permission-probe.ts`, `tests/package-probe.ts`, `tests/ralplan-trail-probe.ts`), 그리고 `openai/gpt-6-luna`로 deep-interview → ralplan bridge, 키워드 진입, ralplan 중 Esc interrupt, `experimental.subagent_depth` 유무에 따른 planner delegation, 단계 파일·사이드바 칩·Stop here·ultragoal 시작까지의 ralplan 1회 실행을 다루는 manual checklist입니다. 이들의 현재 pass/fail 상태는 이식의 plan과 ledger가 관리하며 이 문서가 주장하지 않습니다.
+이 이식이 정의하는 검증 계층은 `@opencode/plugin` 2.0.15에서의 `bun run typecheck`/`bun test`, prompt hook·permission rule 생성·continuation·artifact guard·state/code tool·`ralplan` 도구와 런타임(`tests/fixtures/gjc-ralplan/`의 GJC 픽스처와의 key 집합 비교 포함)에 대한 unit test, 로컬 OpenCode 2.0.15 바이너리를 대상으로 한 host probe(`tests/host-probe.ts`, `tests/host-session-probe.ts`, `tests/planner-permission-probe.ts`, `tests/package-probe.ts`, `tests/ralplan-trail-probe.ts`), 그리고 `openai/gpt-6-luna`로 deep-interview → ralplan bridge, 키워드 진입, ralplan 중 Esc interrupt, `experimental.subagent_depth` 유무에 따른 planner delegation, 단계 파일·Stop here·ultragoal 시작까지의 ralplan 1회 실행을 다루는 manual checklist입니다. 이들의 현재 pass/fail 상태는 이식의 plan과 ledger가 관리하며 이 문서가 주장하지 않습니다.
 
 이 계층들은 호스트 probe에 필요할 때 가짜 provider를 쓰는 결정적 transport·source-contract 검사입니다. 실제 모델 행동 검증이나 LLM obedience, prompt branch 보장, injection resistance, model 의미적 품질, external credential, 설치된 language server의 의미적 정확성 증거는 아닙니다. GJC 메인 프롬프트의 실제 모델 대화 확인은 GJC 프롬프트 plan의 사용자 전용 체크리스트에 따라 사용자가 맡으며, 여기서는 수행하지 않았습니다. LSP server는 자동 다운로드되지 않습니다. 이 가이드는 동작과 evidence scope를 기록하며 독립 completion proof는 durable delivery ledger에 둡니다.
