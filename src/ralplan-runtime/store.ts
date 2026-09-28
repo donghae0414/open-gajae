@@ -350,7 +350,6 @@ type ActiveRowInput = {
   hud?: WorkflowHudSummary;
   receipt?: Json;
   handoff_from?: string;
-  handoff_to?: string;
   handoff_at?: string;
 };
 
@@ -384,7 +383,6 @@ async function syncActiveRowTx(
       updated_at: at,
       session_id: input.sessionId,
       ...(input.handoff_from ? { handoff_from: input.handoff_from } : {}),
-      ...(input.handoff_to ? { handoff_to: input.handoff_to } : {}),
       ...(input.handoff_at ? { handoff_at: input.handoff_at } : {}),
       ...(hud ? { hud } : {}),
       ...(input.receipt ? { receipt: input.receipt } : {}),
