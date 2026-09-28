@@ -22,7 +22,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test ./tests",
-    "test:host": "bun ./tests/host-probe.ts && bun ./tests/host-session-probe.ts && bun ./tests/planner-permission-probe.ts && bun ./tests/package-probe.ts"
+    "test:host": "bun ./tests/host-probe.ts && bun ./tests/host-session-probe.ts && bun ./tests/planner-permission-probe.ts && bun ./tests/package-probe.ts && bun ./tests/ralplan-trail-probe.ts"
   },
   "dependencies": {
     "@ast-grep/napi": "0.31.1",

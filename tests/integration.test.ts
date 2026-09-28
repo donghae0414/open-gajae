@@ -725,3 +725,20 @@ test("the docs show ultragoal.hardMaxIterations with its default and 0 = unlimit
     expect(`${file}: ${text.includes(comment)}`).toBe(`${file}: true`);
   }
 });
+
+test("both READMEs carry the GJC ralplan deviations and the mandatory follow-up sections", async () => {
+  // Plan S5 (D-D1, D-D2): the one doc test; exact heading lines, so a renamed
+  // or demoted section fails.
+  for (const [file, headings] of [
+    ["README.md", ["## Deviations from GJC (ralplan)", "## Mandatory follow-up development"]],
+    ["README.ko.md", ["## GJC로부터의 deviation (ralplan)", "## 필수 후속 개발"]],
+  ] as const) {
+    const lines = (
+      await readFile(new URL(`../${file}`, import.meta.url), "utf8")
+    ).split("\n");
+    for (const heading of headings)
+      expect(`${file}: ${heading}: ${lines.includes(heading)}`).toBe(
+        `${file}: ${heading}: true`,
+      );
+  }
+});

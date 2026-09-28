@@ -10,15 +10,19 @@
 //
 // Fake provider protocol. A user message whose last line is
 // `#ACTION {"tag": ..., "steps": [...]}` scripts the turn: step k is answered
-// on the k-th request after that message (a tool call, a text, a delayed text,
-// or an HTTP error). A `<ralplan-continuation>` message is answered with
+// on the k-th request after that message (a tool call, several tool calls in
+// one assistant message, a text, a delayed text, or an HTTP error). A
+// `<ralplan-continuation>` message is answered with
 // `ralplan clear` (plan DR-17) once its reinforcement count reaches the
 // thread's `clearAfter` (default 1), so a continuation loop always ends. An
 // `<ultragoal-continuation>` is answered the same way with `ultragoal cancel`
 // once `iteration - 1` reaches `clearAfter`. A `{{request_id}}` inside scripted
 // tool arguments is replaced with the `request_id "…"` found in the thread's
-// messages, which is how a scripted reviewer answers the plugin's brief.
-// Title requests (no tools) and every other message get a plain text.
+// messages, which is how a scripted reviewer answers the plugin's brief. A
+// `{{subagent_session:<agent>}}` is replaced with the child `sessionID` of the
+// newest `subagent` result whose call named that agent, which is how a
+// scripted parent resumes a child it spawned earlier. Title requests (no
+// tools) and every other message get a plain text.
 // Grown from the Phase 0 spike driver (removed; see commit b08883d).
 import {
   appendFileSync,
@@ -163,8 +167,11 @@ export async function runProbe(
 }
 
 // ------------------------------------------------------------ fake provider
+export type ToolAction = { tool: string; args?: unknown; rawArgs?: string };
 export type Action =
-  | { tool: string; args?: unknown; rawArgs?: string }
+  | ToolAction
+  /** Several tool calls in one assistant message; the host runs them in parallel. */
+  | { parallel: ToolAction[] }
   | { text: string }
   | { sleep: number; text: string }
   | { error: number };
@@ -211,7 +218,7 @@ const textResponse = (text: string) =>
     { ...chunkBase, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
   ]);
 let callCounter = 0;
-const toolResponse = (name: string, args: string) =>
+const toolResponse = (calls: { name: string; args: string }[]) =>
   sse([
     {
       ...chunkBase,
@@ -220,7 +227,12 @@ const toolResponse = (name: string, args: string) =>
           index: 0,
           delta: {
             role: "assistant",
-            tool_calls: [{ index: 0, id: `call_probe_${++callCounter}`, type: "function", function: { name, arguments: args } }],
+            tool_calls: calls.map((call, index) => ({
+              index,
+              id: `call_probe_${++callCounter}`,
+              type: "function",
+              function: { name: call.name, arguments: call.args },
+            })),
           },
           finish_reason: null,
         },
@@ -232,6 +244,40 @@ const toolResponse = (name: string, args: string) =>
 function parseDirective(text: string): Directive | undefined {
   const match = text.match(DIRECTIVE_LINE);
   return match ? JSON.parse(match[1]!) : undefined;
+}
+
+/**
+ * The completed `subagent` results in a request's raw messages, oldest first:
+ * the agent the call named, the child `sessionID` and the result text
+ * (`<subagent sessionID="…" state="completed">`, `core/src/tool/plugin/subagent.ts`).
+ */
+export function subagentResults(messages: any[]) {
+  const agents = new Map<string, string>();
+  for (const m of messages)
+    for (const call of m.role === "assistant" ? (m.tool_calls ?? []) : [])
+      if (call.function?.name === "subagent")
+        agents.set(call.id, JSON.parse(call.function.arguments || "{}").agent);
+  return messages.flatMap((m) => {
+    const agent = m.role === "tool" ? agents.get(m.tool_call_id) : undefined;
+    const text = contentText(m.content);
+    const sessionID = text.match(/^<subagent sessionID="([^"]+)"/)?.[1];
+    return agent && sessionID ? [{ agent, sessionID, text }] : [];
+  });
+}
+
+/** Scripted tool arguments with the `{{…}}` placeholders filled in. */
+function scriptedArgs(action: ToolAction, entry: ProviderEntry, messages: any[]): string {
+  let args = action.rawArgs ?? JSON.stringify(action.args ?? {});
+  if (args.includes("{{request_id}}")) {
+    const id = [...entry.messages].reverse().map((m) => m.text.match(/request_id "([^"]+)"/)?.[1]).find(Boolean);
+    // Left in place when absent, so a parent passes it to its child.
+    if (id) args = args.replaceAll("{{request_id}}", id);
+  }
+  return args.replace(
+    /\{\{subagent_session:([\w-]+)\}\}/g,
+    (placeholder, agent) =>
+      subagentResults(messages).filter((r) => r.agent === agent).at(-1)?.sessionID ?? placeholder,
+  );
 }
 
 function classify(messages: any[]) {
@@ -319,15 +365,13 @@ export class FakeProvider {
           }
           return textResponse(action.text);
         }
-        if ("tool" in action) {
-          let args = action.rawArgs ?? JSON.stringify(action.args ?? {});
-          if (args.includes("{{request_id}}")) {
-            const id = [...entry.messages].reverse().map((m) => m.text.match(/request_id "([^"]+)"/)?.[1]).find(Boolean);
-            // Left in place when absent, so a parent passes it to its child.
-            if (id) args = args.replaceAll("{{request_id}}", id);
-          }
-          return toolResponse(action.tool, args);
-        }
+        if ("tool" in action || "parallel" in action)
+          return toolResponse(
+            ("parallel" in action ? action.parallel : [action]).map((call) => ({
+              name: call.tool,
+              args: scriptedArgs(call, entry, messages),
+            })),
+          );
         return textResponse(action.text);
       },
     });
