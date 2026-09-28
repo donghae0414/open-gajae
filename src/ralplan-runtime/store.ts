@@ -35,7 +35,9 @@
 // - `gjc-runtime/state-renderer.ts:82-190` (`STATE_FIELD_ALLOWLIST`,
 //   `projectStateFields`)
 // - `skill-state/active-state.ts:65-83,914-952` (`SkillActiveEntry`,
-//   `syncSkillActiveState`), `:886-898` (stale entry replacement, gate ⑤)
+//   `syncSkillActiveState`), `:886-898` (stale entry replacement, gate ⑤),
+//   `:507-546,666-683` (`readModeStatePhase`, `withCanonicalRalplanPhase`,
+//   `mergeVisibleEntries`; the clear's stale check, R-OD14)
 // - `skill-state/workflow-state-contract.ts:59-84` (state-write receipt on the
 //   active row)
 // Deviations (plan §7.1):
@@ -52,6 +54,9 @@
 //   row with `handoff_to` (`active-state.ts:868,969-1014`) (AC14). `clear`
 //   removes the row as gjc does (`syncWorkflowSkillState({active: false})` →
 //   `persistActiveEntry` → `removeActiveEntry`, `active-state.ts:849-866`).
+// - 35: an unreadable active-row file stops an unforced `clear`, as in gjc,
+//   but a forced clear skips reading it; gjc's clear throws on it even with
+//   `--force` (`state-writer.ts:425-431` via `readActiveEntries`) (R-OD16).
 // - 21: audit `owner` is `open-gajae-runtime` / `open-gajae-hook`.
 // - 25: `ralplanHandoff` seeds ultragoal state (R-O2).
 // - 34: the handoff requires a phase in T (DR-7).
@@ -1241,9 +1246,14 @@ export async function patchStateTx(
 /**
  * gjc `describeStaleClearState` (`state-runtime.ts:255-270`): a mode-state
  * phase in R other than `inactive`, or a visible active ralplan phase that
- * differs from it. The active phase is gjc `readActivePhaseForSkill`
- * (`:244-253`) over the snapshot: the active ralplan entry, else the top-level
- * snapshot when it names ralplan; a missing or unparsable snapshot has none.
+ * differs from it. The visible phase is gjc `readActivePhaseForSkill`
+ * (`:244-253`) over `readVisibleSkillActiveState` (R-OD14, gjc exactly):
+ * `mergeVisibleEntries` (`active-state.ts:666-683`) takes the row file over
+ * the snapshot entry and keeps it only while active, and
+ * `readModeStatePhase` + `withCanonicalRalplanPhase` (`:507-546`) replace its
+ * phase with a mode-state phase in the phase lock. So a row left on the stage
+ * written after `final` is not stale here; the doctor, which reads the raw
+ * files as gjc's does, still reports it.
  */
 async function describeStaleClearTx(
   tx: RalplanTx,
@@ -1252,17 +1262,33 @@ async function describeStaleClearTx(
   const phase = trimmed(existing.current_phase);
   if (phase && GUARD_RELEASE_PHASES.has(phase) && phase !== "inactive")
     return `mode-state is already terminal (${phase})`;
-  const { value: snapshot } = await readRawJsonTx(tx, tx.paths.snapshotPath);
-  if (!isRecord(snapshot)) return undefined;
-  const entries = Array.isArray(snapshot.active_skills)
-    ? (snapshot.active_skills as unknown[]).filter(activeFlag)
-    : [];
-  // gjc has no visible active state when nothing in it is active.
-  if (entries.length === 0 && snapshot.active !== true) return undefined;
-  const activePhase = rowPhase(
-    entries.find((entry) => isRecord(entry) && entry.skill === SKILL) ??
-      (snapshot.skill === SKILL ? snapshot : undefined),
+  const { value: row, error: rowError } = await readRawJsonTx(
+    tx,
+    tx.paths.activeRowPath,
   );
+  // gjc `readActiveEntries` throws on an unreadable row file, so gjc's clear
+  // stops here even with `--force`. Deviation 35 (R-OD16): only an unforced
+  // clear stops; `clearStateTx` skips this read when `force` is set.
+  if (rowError !== undefined)
+    throw new Error(
+      `active row ${tx.paths.activeRowPath} is unreadable (${rowError}); use force: true to clear`,
+    );
+  let entry: unknown = isRecord(row) && row.skill === SKILL ? row : undefined;
+  if (entry === undefined) {
+    const { value: snapshot } = await readRawJsonTx(tx, tx.paths.snapshotPath);
+    entry =
+      isRecord(snapshot) && Array.isArray(snapshot.active_skills)
+        ? (snapshot.active_skills as unknown[]).find(
+            (item) => isRecord(item) && item.skill === SKILL,
+          )
+        : undefined;
+  }
+  if (!activeFlag(entry)) return undefined;
+  const canonical = modeStatePhase(existing);
+  const activePhase =
+    canonical && (RALPLAN_PHASE_LOCK as readonly string[]).includes(canonical)
+      ? canonical
+      : rowPhase(entry);
   if (activePhase && phase && activePhase !== phase)
     return `active-state phase ${activePhase} differs from mode-state phase ${phase}`;
   return undefined;
@@ -1271,9 +1297,10 @@ async function describeStaleClearTx(
 /**
  * gjc `gjc state ralplan clear` (`handleClear`, `state-runtime.ts:1402-1490`;
  * R-OD11, gjc as-is, replacing the DR-6 reading that only a corrupt state
- * needs `force`): without `force`, a corrupt state and then a stale one are
- * refused. Then `{active: false, current_phase: "complete"}` over the kept
- * fields (run_id stays), files kept, and the row removed as in gjc.
+ * needs `force`): without `force`, a corrupt state and then a stale one
+ * (R-OD14, read as gjc's visible path does) are refused. Then `{active:
+ * false, current_phase: "complete"}` over the kept fields (run_id stays),
+ * files kept, and the row removed as in gjc.
  */
 export async function clearStateTx(
   tx: RalplanTx,

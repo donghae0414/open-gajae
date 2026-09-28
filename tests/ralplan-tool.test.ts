@@ -280,7 +280,7 @@ test("state op checks the table, write only audits a skipped edge, a locked phas
     await write("final", 2, "f");
     await write("revision", 3, "r3");
     expect((await json("state", "ralplan-state.json")).current_phase).toBe("final");
-    await call({ op: "clear", force: true });
+    await call({ op: "clear" });
     const allowed = ["ts", "skill", "category", "verb", "owner", "mutation_id", "from_phase", "to_phase", "forced", "paths"];
     const rows = await audit();
     const kinds = new Set(rows.map((r) => `${r.category}:${r.verb}`));
@@ -294,7 +294,7 @@ test("state op checks the table, write only audits a skipped edge, a locked phas
   });
 });
 
-test("rows follow the stage just written, doctor reports drift, Stop here, clear, stale and corrupt states (AC14, AC24, DR-6, R-OD11)", async () => {
+test("rows follow the stage just written, doctor reports drift, Stop here, clear, stale and corrupt states (AC14, AC24, DR-6, R-OD11, R-OD14, R-OD16)", async () => {
   await fixture(async ({ call, write, json, file, run, store }) => {
     await call({ op: "start", task: "t" });
     await write("planner", 1, "p");
@@ -303,6 +303,16 @@ test("rows follow the stage just written, doctor reports drift, Stop here, clear
     expect(row.phase).toBe("intent");
     expect(row.hud.chips).toContainEqual({ label: "stages", value: "planner · intent", priority: 35 });
     expect(JSON.parse(await call({ op: "doctor" })).ok).toBe(true);
+    // R-OD14: the row file wins over the snapshot; a row on another phase than an active, unlocked state is stale.
+    await writeFile(file("state", "active", "ralplan.json"), JSON.stringify({ ...row, phase: "planner" }));
+    expect(await call({ op: "clear" })).toBe(
+      "Error: existing state for ralplan is stale (active-state phase planner differs from mode-state phase intent); use force: true to clear",
+    );
+    // R-OD16 (deviation 35): an unreadable row file stops an unforced clear, as in gjc; force skips reading it.
+    await writeFile(file("state", "active", "ralplan.json"), "{");
+    expect(await call({ op: "clear" })).toContain("is unreadable");
+    expect(JSON.parse(await call({ op: "clear", force: true })).current_phase).toBe("complete");
+    await call({ op: "start", task: "t" });
     await write("final", 1, "f");
     await write("revision", 2, "r");
     // R-OD8: after a post-final write the row and snapshot name `revision`, the state `final`.
@@ -311,10 +321,10 @@ test("rows follow the stage just written, doctor reports drift, Stop here, clear
     expect(drift.problems.filter((p: any) => p.type === "stale_active_state").map((p: any) => p.path).sort()).toEqual(
       [file("state", "active", "ralplan.json"), file("state", "skill-active-state.json")].sort(),
     );
-    // R-OD11: an unforced clear refuses a stale state (row phase differs, then a terminal phase in R).
-    expect(await call({ op: "clear" })).toBe(
-      "Error: existing state for ralplan is stale (active-state phase revision differs from mode-state phase final); use force: true to clear",
-    );
+    // R-OD14: the locked state phase replaces the row phase on gjc's visible path, so an unforced clear is not stale.
+    expect(JSON.parse(await call({ op: "clear" }))).toMatchObject({ active: false, current_phase: "complete" });
+    await call({ op: "start", task: "t" });
+    await write("final", 2, "f2");
     // Stop here removes the row; a later refine write leaves the state inactive (phase locked).
     expect(JSON.parse(await call({ op: "state", patch: { active: false } }))).toMatchObject({ active: false, current_phase: "final" });
     expect(await Bun.file(file("state", "active", "ralplan.json")).exists()).toBe(false);

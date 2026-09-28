@@ -29,7 +29,7 @@ For corrupt, tampered, unreadable, or stale current-session ralplan state, call 
 
 `ralplan write` does not check for a running ultragoal: a write while an ultragoal run is active can create ralplan state, or re-activate it for a new `run_id` or an unlocked phase. Clean it up with `ralplan state(patch={"active": false})` or `ralplan clear`. A same-run write keeps a locked phase (such as `final`, `handoff`, or `complete`) and does not re-activate the state, so after **Stop here**, `ralplan clear`, or `ralplan handoff` the state stays inactive.
 
-During post-final refinement (a write after `final`) or a write after `ralplan clear`, `ralplan doctor` may report `stale_active_state`: the active row's `phase` is the stage just written while the state's `current_phase` stays locked (`final` or `complete`). This is known behavior, the same as gjc, and an unforced `ralplan clear` is refused while the two phases differ; do not force a clear on that report alone.
+During post-final refinement (a write after `final`) or a write after `ralplan clear`, `ralplan doctor` may report `stale_active_state`: the active row's `phase` is the stage just written while the state's `current_phase` stays locked (`final` or `complete`). This is known behavior, the same as gjc; an unforced `ralplan clear` would succeed there and end the run, so do not call `ralplan clear` on that report alone.
 
 ## Behavior
 

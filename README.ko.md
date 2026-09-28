@@ -109,7 +109,7 @@ ambiguity 임계값에 도달해 spec을 저장한 뒤에는 인터뷰를 마칠
 | `doctor` | primary | `schema_violation`과 `stale_active_state`를 보고하며 아무것도 고치지 않습니다. |
 | `state(patch)` | primary, planner, architect, critic | patch를 병합합니다(`null`은 필드 삭제). phase 변경은 GJC 전환 규칙표를 따라야 합니다. Stop here는 `patch={"active": false}`입니다. |
 | `handoff(to="ultragoal")` | primary | 승인된 plan을 ultragoal에 넘깁니다(아래). |
-| `clear(force?)` | primary | `{active: false, current_phase: "complete"}`로 두고 파일과 `run_id`는 유지합니다. `force` 없이는 GJC처럼 손상된 state, 이미 종료 해제 phase(`complete` 등)인 state, 활성 행 phase가 state phase와 다른 state를 거부합니다. |
+| `clear(force?)` | primary | `{active: false, current_phase: "complete"}`로 두고 파일과 `run_id`는 유지합니다. `force` 없이는 GJC처럼 손상된 state, 이미 종료 해제 phase(`complete` 등)인 state, 잠기지 않은 phase에서 활성 행 phase가 그와 다른 state를 거부합니다(`final` 같은 잠긴 phase에서는 GJC가 행의 phase를 state의 phase로 읽으므로 final 이후 다듬기 중의 clear는 통과). 활성 행 파일을 읽을 수 없어도 멈춥니다(deviation 35). |
 
 모든 op는 호출 세션의 계보 루트를 대상으로 하므로, 역할의 하위 세션도 루트 세션 폴더에 기록합니다. run 폴더는 명시한 `run_id`, 그다음 state의 `run_id`, 그다음 루트 세션의 native ID(예: `ses_f4b081a27ffe…`)입니다. 명시하는 `run_id`는 `A-Z a-z 0-9 . _ -` 1~64자이고, `.`으로 시작하거나 `..`을 포함할 수 없습니다. `open-gajae-explore`, `open-gajae-document-specialist`, `open-gajae-executor`, `open-gajae-cleaner`에서는 이 도구가 거부되고 숨겨집니다. `build`/`general` 같은 host agent와 사용자 정의 agent에는 보일 수 있지만 호출하면 거부됩니다.
 
@@ -161,11 +161,11 @@ continuation은 ralplan state가 active이고 종료 phase가 아니며 `plannin
 
 host가 ralplan state가 active인 세션을 압축하면, 플러그인은 현재 plan의 목표, 범위, 비목표, 수용 기준, Intent Reconciliation, 다음 행동을 담은 `<ralplan-compaction-context>` 블록 하나를 압축 프롬프트에 추가합니다. state가 비활성이거나 손상되었거나 산출물의 sha256이 원장 줄과 맞지 않으면 추가하지 않습니다. state는 세션별이므로 세션 간 복원은 없고, ralplan restore 안내도 없습니다.
 
-**알려진 동작(GJC와 같음).** 잠긴 phase에서 write하면 — `final` 이후의 다듬기, 또는 Stop here나 `clear` 뒤의 write — 활성 행의 phase는 방금 쓴 단계가 되고 state의 phase는 `final` 또는 `complete`로 남습니다. 이때 `ralplan doctor`는 GJC처럼 `stale_active_state`를 보고하고 해결 명령으로 `ralplan clear`를 제시하며, 두 phase가 다른 동안에는 그 `force` 없는 `ralplan clear`도 GJC처럼 거부됩니다. 예상된 동작이므로 이 보고만으로 clear를 강제하지 마세요. clear는 run을 끝냅니다.
+**알려진 동작(GJC와 같음).** 잠긴 phase에서 write하면 — `final` 이후의 다듬기, 또는 Stop here나 `clear` 뒤의 write — 활성 행의 phase는 방금 쓴 단계가 되고 state의 phase는 `final` 또는 `complete`로 남습니다. 이때 원본 행 파일을 읽는 `ralplan doctor`는 GJC처럼 `stale_active_state`를 보고하고 해결 명령으로 `ralplan clear`를 제시합니다. `clear`는 잠긴 state의 phase를 행의 phase 대신 읽으므로 그 `force` 없는 `ralplan clear`는 GJC처럼 성공합니다. 예상된 동작이므로 이 보고만으로 `ralplan clear`를 호출하지 마세요. clear는 run을 끝냅니다.
 
 **알려진 동작(GJC와 같음): 전환 감사 행.** 현재 phase에서 표의 간선이 아닌 단계를 write해도 성공하며, `state/audit.jsonl`에 `invalid_transition_detected` 행 하나만 추가됩니다(spec D-T11). 표에 `planner→critic`, `critic→architect` 간선이 없고 두 리뷰 레인은 어느 순서로든 기록되므로, 1회차 병렬 리뷰에서도 이런 행이 흔히 생깁니다.
 
-**사이드바.** 별도 TUI 플러그인 `tui-plugin/`이 `state/skill-active-state.json`을 약 1초마다 폴링해 세션 사이드바(`sidebar.content`)에 `ralplan` 블록을 그립니다. `~/.config/opencode/cli.json`에 `{"plugins": ["/Users/dongwuk/apps/open-gajae/tui-plugin"]}`처럼 디렉터리를 등록하세요. 자세한 내용은 [`docs/local-install-v2.md`](docs/local-install-v2.md)를 참고하세요. 블록은 행의 칩을 한 줄에 하나씩 `label=value`로 보여줍니다 — `pending=approval`, `stage`, `iter`, `stages`(`revision · architect · critic`처럼 단계 전체 이름), `arch=n/max`, `crit=n/max`, `verdict`, `handoff`, 최대 6개. 오류와 차단은 테마의 error 색, 경고는 warning 색, `CLEAR`/`OKAY`/`APPROVE` verdict는 success 색입니다. ralplan 행이 active이거나 `pending` 칩이 있는 동안 보이고, Stop here, handoff, clear에서 숨습니다. 로컬 파일만 읽으므로 원격 서버에 attach한 TUI에서는 아무것도 보이지 않습니다.
+**사이드바.** 별도 TUI 플러그인 `tui-plugin/`이 `state/skill-active-state.json`을 약 1초마다 폴링해 세션 사이드바(`sidebar.content`)에 `ralplan` 블록을 그립니다. `~/.config/opencode/cli.json`에 `{"plugins": ["/Users/dongwuk/apps/open-gajae/tui-plugin"]}`처럼 디렉터리를 등록하세요. 자세한 내용은 [`docs/local-install-v2.md`](docs/local-install-v2.md)를 참고하세요. state의 phase가 잠겨 있는 동안(`final`, `handoff`, `complete` 등) `stage` 칩은 GJC HUD처럼 방금 쓴 단계 대신 그 phase를 보여줍니다(GJC `skill-state/active-state.ts:507-545`). 행 파일 자체에는 방금 쓴 단계가 남습니다. 블록은 행의 칩을 한 줄에 하나씩 `label=value`로 보여줍니다 — `pending=approval`, `stage`, `iter`, `stages`(`revision · architect · critic`처럼 단계 전체 이름), `arch=n/max`, `crit=n/max`, `verdict`, `handoff`, 최대 6개. 오류와 차단은 테마의 error 색, 경고는 warning 색, `CLEAR`/`OKAY`/`APPROVE` verdict는 success 색입니다. ralplan 행이 active이거나 `pending` 칩이 있는 동안 보이고, Stop here, handoff, clear에서 숨습니다. 로컬 파일만 읽으므로 원격 서버에 attach한 TUI에서는 아무것도 보이지 않습니다.
 
 ## 자체 역할과 설정
 
@@ -257,7 +257,7 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
 
 ## GJC로부터의 deviation (ralplan)
 
-출처: GJC v0.17.7 커밋 `5c5231418930673e42cc5d08ebe4376e03187533`(MIT). ralplan skill, 세 합의 역할 프롬프트, `src/ralplan-runtime/`은 아래 행이 달리 적지 않는 한 GJC ralplan 계약을 따릅니다(AGENTS.md 정책: 출처, deviation, 이유, 영향). GJC 경로는 `gajae-code/packages/coding-agent/src/` 기준이며 `SKILL.md`는 `defaults/gjc/skills/ralplan/SKILL.md`입니다. OpenCode 경로는 `opencode/packages/` 기준입니다. 결정 ID(`D-…`, `DR-…`, `R-…`)는 이식의 spec과 plan(`.omc/specs/deep-interview-ralplan-gjc-stage-trail.md`, `.omc/plans/ralplan-gjc-stage-trail.md`)을 가리킵니다. 행 번호는 skill과 프롬프트의 source 섹션이 인용하는 plan 번호를 그대로 씁니다. 18행은 `stage` 칩이 GJC를 따르게 되어 철회했으며 번호는 다시 쓰지 않습니다.
+출처: GJC v0.17.7 커밋 `5c5231418930673e42cc5d08ebe4376e03187533`(MIT). ralplan skill, 세 합의 역할 프롬프트, `src/ralplan-runtime/`은 아래 행이 달리 적지 않는 한 GJC ralplan 계약을 따릅니다(AGENTS.md 정책: 출처, deviation, 이유, 영향). GJC 경로는 `gajae-code/packages/coding-agent/src/` 기준이며 `SKILL.md`는 `defaults/gjc/skills/ralplan/SKILL.md`입니다. OpenCode 경로는 `opencode/packages/` 기준입니다. 결정 ID(`D-…`, `DR-…`, `R-…`)는 이식의 spec과 plan(`.omc/specs/deep-interview-ralplan-gjc-stage-trail.md`, `.omc/plans/ralplan-gjc-stage-trail.md`)을 가리킵니다. 행 번호는 skill과 프롬프트의 source 섹션이 인용하는 plan 번호를 그대로 씁니다. 18행은 `stage` 칩이 GJC를 따르게 되어(행에는 방금 쓴 단계를 기록하고, 잠긴 state phase가 있으면 표시할 때 그것으로 바꿈) 철회했으며 번호는 다시 쓰지 않습니다.
 
 | # | Deviation | GJC 출처 | 이유 | 영향 |
 |---|---|---|---|---|
@@ -294,6 +294,7 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
 | 32 | owner 세션을 할당문의 `session_id`가 아니라 세션 계보에서 정합니다(DR-1). | `prompts/agent-fragments/ralplan-persistence.md:2,7` | host의 `context.sessionID` 계보를 신뢰할 수 있음 | 역할은 다른 세션의 run에 쓸 수 없음. 할당문에 `session_id`가 필요 없음 |
 | 33 | 역할 프롬프트 host 치환: planner의 "Ask only about …"은 headless 규칙으로, architect의 forkContext 문장·`report_finding` 문단과 `irc`는 제거, `yield.result.data`는 최종 응답으로, `{{restrictedBash}}`는 읽기 전용 `shell` 문장으로 바꾸고 frontmatter는 제거합니다. | `prompts/agents/{planner,architect,critic}.md`, `prompts/agent-fragments/restricted-bash.md` | OpenCode에 해당 도구·필드가 없고 역할은 `question`을 쓸 수 없음 | 문구만 다름. 목록은 각 프롬프트의 source 섹션 |
 | 34 | `ralplan handoff` op는 종료 phase를 요구합니다(DR-7). | `gjc-runtime/state-runtime.ts:1572-1640`(동사는 phase를 검사하지 않음), 검사는 `tools/skill.ts:42-61,203-208` | skill 도구의 체인 가드를 op에 합침(D-F12) | 계획 도중의 직접 인계는 거부 |
+| 35 | 활성 행 파일(`state/active/ralplan.json`)을 읽을 수 없으면 `force` 없는 `clear`는 GJC처럼 멈추지만, `clear(force: true)`는 그 파일을 읽지 않고 정리합니다(R-OD16). | `gjc-runtime/state-runtime.ts:244-270,1425` → `readActiveEntries`(`gjc-runtime/state-writer.ts:425-431`)가 `--force` 확인 전에 예외를 던짐 | 항상 차단 때문에 `state/**`를 편집 도구로 고칠 수 없어, GJC 동작이면 `shell`로 파일을 지우지 않고는 run을 끝낼 방법이 없음 | 손상된 행 파일이 있어도 강제 clear는 동작, force 없는 clear는 GJC와 같음 |
 
 ### 수용한 동작 차이
 

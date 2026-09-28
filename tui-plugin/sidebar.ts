@@ -1,8 +1,9 @@
 // Ralplan progress in the OpenCode v2 TUI sidebar (spec D-H3~D-H7). The server's
 // `ralplan` tool computes the HUD chips and writes them to the session's
-// `state/skill-active-state.json`; this file only polls that snapshot and draws
-// the ralplan row. Files only, no RPC or events (D-H4), so a TUI attached to a
-// server on another file system finds nothing and stays hidden.
+// `state/skill-active-state.json`; this file only polls that snapshot and the
+// session's `state/ralplan-state.json` and draws the ralplan row. Files only,
+// no RPC or events (D-H4), so a TUI attached to a server on another file system
+// finds nothing and stays hidden.
 //
 // Source: oh-my-openagent d1557a4b48fdbec06a7144fdc4afa3e65c6523ed (Sustainable
 // Use License) `packages/omo-opencode/src/tui.ts:47-68,137-183` and
@@ -15,6 +16,9 @@
 // (`SkillActiveEntry.hud`) and `modes/components/skill-hud/render.ts:35-64`,
 // drawn as one gjc `label=value` line per chip in the theme's feedback
 // colors, success included (spec D-H5; gjc's renderer leaves success dim).
+// The drawn `stage` follows gjc's visible reader (R-OD15): `readModeStatePhase`
+// and `withCanonicalRalplanPhase` (`skill-state/active-state.ts:507-546`)
+// replace the entry's `stage` chip with a mode-state phase in the phase lock.
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -22,6 +26,9 @@ import type { Plugin } from "@opencode/plugin/tui";
 import { TextAttributes } from "@opentui/core";
 import { createElement, insert, setProp, type JSX } from "@opentui/solid";
 import { createMemo, createSignal, onCleanup } from "solid-js";
+// Single-sourced lock list: `manifest.ts` is pure (no imports), the host loads
+// this relative `.ts` import as it loads `./sidebar`, and the package ships `src`.
+import { RALPLAN_PHASE_LOCK } from "../src/ralplan-runtime/manifest";
 
 type Severity = "info" | "warning" | "blocked" | "error" | "success";
 type Chip = {
@@ -66,11 +73,36 @@ function byPriority(a: Chip, b: Chip): number {
   );
 }
 
+function isLocked(phase: string): boolean {
+  return (RALPLAN_PHASE_LOCK as readonly string[]).includes(phase);
+}
+
+/**
+ * gjc `readModeStatePhase` (`active-state.ts:507-524`): the trimmed
+ * `current_phase`, none for a missing or unparsable state or for an inactive
+ * one whose phase is not locked.
+ */
+function canonicalPhase(raw: string | undefined): string | undefined {
+  let state: unknown;
+  try {
+    state = raw === undefined ? undefined : JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(state) || typeof state.current_phase !== "string")
+    return undefined;
+  const phase = state.current_phase.trim();
+  if (!phase || (state.active === false && !isLocked(phase))) return undefined;
+  return phase;
+}
+
 /**
  * The ralplan row of a snapshot: shown while its entry is active or carries a
- * `pending` (approval) chip, hidden when there is no entry (D-H6).
+ * `pending` (approval) chip, hidden when there is no entry (D-H6). A locked
+ * mode-state phase other than the entry's replaces its `stage` chip value
+ * (gjc `withCanonicalRalplanPhase`, `active-state.ts:526-546`).
  */
-function ralplanView(raw: string): View {
+function ralplanView(raw: string, canonical: string | undefined): View {
   const snapshot: unknown = JSON.parse(raw);
   const entries =
     isRecord(snapshot) && Array.isArray(snapshot.active_skills)
@@ -80,9 +112,16 @@ function ralplanView(raw: string): View {
     (item) => isRecord(item) && item.skill === "ralplan",
   );
   if (!isRecord(entry)) return undefined;
+  const stage =
+    canonical && isLocked(canonical) && entry.phase !== canonical
+      ? canonical
+      : undefined;
   const hud = isRecord(entry.hud) ? entry.hud : {};
   const chips = (Array.isArray(hud.chips) ? hud.chips : [])
     .filter(isChip)
+    .map((chip) =>
+      stage && chip.label === "stage" ? { ...chip, value: stage } : chip,
+    )
     .sort(byPriority);
   if (entry.active !== true && !chips.some((chip) => chip.label === "pending"))
     return undefined;
@@ -187,14 +226,15 @@ export function createSidebar({
     );
     // None yet, or ambiguous (`src/state.ts` fails closed on two matches too).
     if (matches.length !== 1) return undefined;
-    const file = path.join(
-      base,
-      matches[0],
-      "state",
-      "skill-active-state.json",
-    );
-    const raw = await readFile(file).catch(missing);
-    return raw === undefined ? undefined : ralplanView(raw);
+    const stateDir = path.join(base, matches[0], "state");
+    const raw = await readFile(
+      path.join(stateDir, "skill-active-state.json"),
+    ).catch(missing);
+    if (raw === undefined) return undefined;
+    const state = await readFile(
+      path.join(stateDir, "ralplan-state.json"),
+    ).catch(missing);
+    return ralplanView(raw, canonicalPhase(state));
   }
 
   return (input: { readonly sessionID: string }): JSX.Element => {

@@ -22,7 +22,7 @@ function snapshot(entries: object[]) {
   });
 }
 
-test("sidebar finds the session folder from a subdirectory and follows the snapshot", async () => {
+test("sidebar finds the session folder from a subdirectory and follows the snapshot and the locked state phase", async () => {
   const repo = await mkdtemp(join(tmpdir(), "open-gajae-tui-"));
   const stateDir = join(
     repo,
@@ -116,6 +116,33 @@ test("sidebar finds the session folder from a subdirectory and follows the snaps
     expect(frame.indexOf("stage=planner")).toBeLessThan(
       frame.indexOf("iter=1"),
     );
+
+    // R-OD15: a locked mode-state phase replaces the entry's stage chip (gjc
+    // `withCanonicalRalplanPhase`).
+    await writeFile(
+      file,
+      snapshot([
+        {
+          skill: "ralplan",
+          phase: "revision",
+          active: true,
+          session_id: ROOT,
+          hud: {
+            version: 1,
+            chips: [{ label: "stage", value: "revision", priority: 10 }],
+          },
+        },
+      ]),
+    );
+    frame = await frameUntil((text) => text.includes("stage=revision"));
+    expect(frame).toContain("stage=revision");
+    await writeFile(
+      join(stateDir, "ralplan-state.json"),
+      JSON.stringify({ skill: "ralplan", active: true, current_phase: "final" }),
+    );
+    frame = await frameUntil((text) => text.includes("stage=final"));
+    expect(frame).toContain("stage=final");
+    expect(frame).not.toContain("stage=revision");
 
     // Inactive but awaiting approval still shows (D-H6).
     await writeFile(
