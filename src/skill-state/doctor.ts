@@ -17,8 +17,8 @@
 // Deviations:
 // - ralplan 13 (DR-15, I-19): no checksum or orphan-journal checks, so the
 //   summary has no `journals_scanned` and the text no `journals_scanned` line.
-// - ralplan 14: rows of skills that are not registered here are counted but
-//   not checked (gjc checks a non-workflow row against `<skill>-state.json`).
+// - Rows of skills that are not registered here are counted but not checked
+//   (gjc checks a non-workflow row against `<skill>-state.json`).
 // - ralplan 1: fix commands name tool ops (`<skill> clear (force: true)`)
 //   instead of `gjc state <skill> migrate|clear`; there is no migrate op.
 // - DR-21 (ralplan): an unknown phase in a readable envelope is a

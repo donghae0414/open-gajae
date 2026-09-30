@@ -66,10 +66,12 @@ Source: Gajae Code `packages/coding-agent/src/defaults/gjc/skills/ultragoal/ai-s
 
 | gjc 5c52314 | open-gajae | Record |
 |---|---|---|
+| `# Ultragoal AI Slop Cleaner Fragment` | `# Open-gajae Cleaner` | Host role name (deviation 19) |
 | "internal Ultragoal sub-skill, loaded on demand as a `kind: "skill-fragment"` prompt … never resolvable through `skill://`" | The `open-gajae-cleaner` role that the ultragoal leader calls through `subagent` | Deviation 19 |
 | `.gjc/` state | `.open-gajae/` state | Host path |
 | (none) | "Do not modify any file, including through shell", the read-only `shell` list, and "Do not ask the user questions and do not delegate", kept from the earlier open-gajae cleaner prompt: host permissions deny this role file edits, `subagent`, `question`, and the workflow tools, but allow `shell` | Host permissions (plan C-12) |
 | "the active Ultragoal story's changed-files list" | "the changed-files list the ultragoal leader names" (the goal's change set, or the frozen change set of the cohort) | Stories are goals here |
+| "outside safe story scope" | "outside safe goal scope" | Stories are goals here |
 | Recursion guard naming `ralplan`, `autoresearch`, `deep-interview`, `ultragoal` | `autoresearch` removed | The plugin has no `autoresearch` workflow |
 | `executor` in the leader action | `open-gajae-executor` | Host role name |
 

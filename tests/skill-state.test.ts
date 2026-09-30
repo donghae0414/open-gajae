@@ -258,7 +258,7 @@ test("doctor: the ralplan summary is unchanged and renders as gjc's doctor text"
     await run(async (tx) => {
       await tx.writeState({ skill: "ralplan", active: true, current_phase: "intent" }, "ralplan_tool");
       await row(tx, { skill: "ralplan", active: true, phase: "planner" });
-      // Deviation 14: another skill's row is counted, not checked.
+      // A skill outside the filter: its row is counted, not checked.
       await row(tx, { skill: "ultragoal", active: true, phase: "active" });
       await tx.writeText(
         tx.paths.snapshotPath,

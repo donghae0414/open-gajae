@@ -38,8 +38,8 @@
 //   re-verified", so `objective` is capped at 1972 characters (E-24).
 // - 42 (wording): the parent's resolution evidence says "verification
 //   blocker goal", where gjc says "story" (stories are goals here).
-// `LIMITS` and `isSubstantive` move here from `src/ultragoal.ts:28-38,99-106`,
-// which re-exports them until plan S3.
+// `LIMITS` and `isSubstantive` moved here from `src/ultragoal.ts:28-38,99-106`,
+// which plan S3 removed.
 
 import { checkReceipt, completionVerificationError, isValidCompletion, type ReceiptCheck, type ReceiptKind } from "./receipt.js";
 import type { CompletionVerification } from "./receipt.js";
@@ -57,7 +57,6 @@ export const LIMITS = {
   text: 2000,
   evidence: 4000,
   pattern: 500,
-  sourcePlan: 500,
   /** E-24: `LIMITS.text` minus `FIX_CRITERION_SUFFIX` (28 characters). */
   objective: 1972,
 } as const;

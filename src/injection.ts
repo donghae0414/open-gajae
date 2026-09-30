@@ -1,6 +1,5 @@
 // Injected-message markers and the one wrapper that produces marked text
 // (ultragoal revision plan C-12, E-13), in a module neither skill owns.
-// `src/ralplan.ts` re-exports them from their old path.
 //
 // n6/a3: no bare marker token is added. Every injected message is wrapped in an
 // OMC-style tag, and `wrapInjected` is the ONLY way the plugin produces

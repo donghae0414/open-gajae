@@ -356,8 +356,8 @@ ultragoal 도구가 ultragoal state의 유일한 작성자라는 원칙의 예�
 
 **상태(2026-09-30)**: 해결. 플러그인의 `context` 훅(`compaction`·`generate`에도 등록)이 `ultragoal`·`goal`·`ralplan`을 소유하지 않은 agent의 요청에서 지웁니다(spec D-HE8, plan C-11). README 수용 차이 "Where `ralplan`, `ultragoal`, and `goal` are hidden"에 기록했습니다.
 
-- **동작**: 호스트 `build`·`general`과 사용자 정의 agent에게 도구가 보이고, 실행할 때만 거부됩니다. 이 브랜치 이전부터 그랬습니다.
-- **기록**: DR-22는 ralplan 결정이고, ultragoal의 이 동작을 선례로 인용합니다(계획서 `:50`). README 수용 차이 "Where `ralplan` is hidden"은 ultragoal 도구도 같다고 적습니다.
+- **해결 전 동작**: 호스트 `build`·`general`과 사용자 정의 agent에게 도구가 보였고, 실행할 때만 거부됐습니다. 이 브랜치 이전부터 그랬습니다.
+- **해결 전 기록**: DR-22는 ralplan 결정이고, ultragoal의 이 동작을 선례로 인용했습니다(계획서 `:50`). README 수용 차이 "Where `ralplan` is hidden"은 ultragoal 도구도 같다고 적었습니다.
 - **경위**: 숨기는 안은 관리자에게 물을 때 "ultragoal 쪽까지 바뀌어 이번 범위가 늘어난다"는 설명과 함께 채택되지 않았습니다(대화 기록).
 
 ### U29. 진입 게이트의 phase 처리 (R-CE1, DR-21)

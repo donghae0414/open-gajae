@@ -735,9 +735,10 @@ test("prompts name the executor, the cleaner, ultragoal and the review lanes' ra
   expect(await read("open-gajae-critic")).toContain(
     'ralplan write(stage="critic"',
   );
-  expect(await read("open-gajae-cleaner")).toContain(
-    "Do not modify any file, including through shell.",
-  );
+  const cleaner = await read("open-gajae-cleaner");
+  expect(cleaner).toContain("Do not modify any file, including through shell.");
+  // A stable sentence of the gjc cleaner fragment (ultragoal deviation 19).
+  expect(cleaner).toContain("AI SLOP CLEANUP REPORT");
 });
 
 test("neither SKILL.md carries the unsubstituted OMC arguments placeholder", async () => {
@@ -754,12 +755,18 @@ test("neither SKILL.md carries the unsubstituted OMC arguments placeholder", asy
   }
 });
 
-test("both READMEs carry the GJC ralplan deviations and the mandatory follow-up sections", async () => {
+test("both READMEs carry the GJC ralplan and ultragoal deviations and the mandatory follow-up sections", async () => {
   // Plan S5 (D-D1, D-D2): the one doc test; exact heading lines, so a renamed
   // or demoted section fails.
   for (const [file, headings] of [
-    ["README.md", ["## Deviations from GJC (ralplan)", "## Mandatory follow-up development"]],
-    ["README.ko.md", ["## GJC로부터의 deviation (ralplan)", "## 필수 후속 개발"]],
+    [
+      "README.md",
+      ["## Deviations from GJC (ralplan)", "## Deviations from GJC (ultragoal)", "## Mandatory follow-up development"],
+    ],
+    [
+      "README.ko.md",
+      ["## GJC로부터의 deviation (ralplan)", "## GJC로부터의 deviation (ultragoal)", "## 필수 후속 개발"],
+    ],
   ] as const) {
     const lines = (
       await readFile(new URL(`../${file}`, import.meta.url), "utf8")

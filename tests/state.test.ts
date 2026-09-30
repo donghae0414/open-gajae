@@ -469,7 +469,7 @@ test("C-1: one workflow queue per session serializes every mode and transaction"
     const held = new Promise<void>((resolve) => (release = resolve));
     const tx = store.workflowTransaction("ses_u", async (t) => {
       order.push("workflow tx start");
-      await t.writeModeState("ultragoal", { active: true, iteration: 1 }, "goal_tool");
+      await t.writeModeState("ultragoal", { active: true, iteration: 1 }, "ultragoal_tool");
       await held;
       order.push("workflow tx end");
     });

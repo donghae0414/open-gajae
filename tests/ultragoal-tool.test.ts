@@ -10,6 +10,7 @@ import { goalCompleteGuard, readUltragoalGuardInput } from "../src/goal/tool";
 import { StateStore } from "../src/state";
 import {
   lastCriterionRefusal,
+  NO_PLAN,
   OBJECTIVE_TOO_LONG,
   reopenHint,
   reviewBlockerCapRefusal,
@@ -887,6 +888,154 @@ test("add after final keeps the old final as a per-goal completion", async () =>
     expect(done).toContain("- G003 [complete] Goal 3 — receipt: per-goal(superseded final)");
     expect(done).toContain("- G004 [complete] Goal 4 — receipt: valid");
     expect(done).toContain("- run_complete: yes");
+  });
+});
+
+/** create(2) + next: G001 active, G002 pending. */
+async function started(h: Harness) {
+  await create(h, 2);
+  await h.call({ op: "next" });
+}
+
+/** The ultragoal row names another phase than the mode-state. */
+async function staleRow(h: Harness) {
+  const row = await h.json("state", "active", "ultragoal.json");
+  await h.put(JSON.stringify({ ...row, phase: "blocked" }), "state", "active", "ultragoal.json");
+}
+
+test("P-AC8: refused ops change no files", async () => {
+  const files = [
+    ["ultragoal", "goals.json"],
+    ["ultragoal", "ledger.jsonl"],
+    ["ultragoal", "progress.txt"],
+    ["state", "audit.jsonl"],
+    ["state", "ultragoal-state.json"],
+    ["state", "active", "ultragoal.json"],
+    ["state", "goal-state.json"],
+  ];
+  type Setup = (h: Harness) => Promise<void>;
+  const planless: Setup = async () => {};
+  const corruptPlan: Setup = async (h) => {
+    await started(h);
+    await h.put("{", "ultragoal", "goals.json");
+  };
+  const capped: Setup = async (h) => {
+    await create(h, 1);
+    await h.call({ op: "next" });
+    for (const objective of ["fix A", "fix B", "fix C"])
+      await h.call({ op: "record_review_blockers", goal_id: "G001", objective, evidence: "the cohort found a crash" });
+  };
+  const stale: Setup = async (h) => {
+    await started(h);
+    await staleRow(h);
+  };
+  const statusRefusal = (op: string, target: string, allowed: string) =>
+    `Error: ultragoal ${op} (${target}) requires goal G001 status ${allowed}; found active. ${reopenHint("G001")}`;
+  const substantive = "Error: rationale must be substantive: at least 5 words and 32 characters";
+  const short = { rationale: "too short", evidence: EVIDENCE };
+  const steering = { rationale: RATIONALE, evidence: EVIDENCE };
+  const blocker = { op: "record_review_blockers", goal_id: "G001", evidence: "the cohort found a crash" };
+  const pause = { op: "record_critic_verdict", terminus: "pause", verdict: "OKAY", evidence: "needs a key" };
+  const reason = "the plan needs a new design";
+  // [case, args, expected result prefix, setup (default: started)]. `schema:
+  // <field>` means the input schema refuses the call before the op runs.
+  // `doctor` has no refusal path (it reports findings), so it has no case.
+  const cases: [string, Record<string, unknown>, string, Setup?][] = [
+    ["status: invalid goals.json", { op: "status" }, "Error: goals.json is invalid: ", corruptPlan],
+    ["create: no goals", { op: "create", description: "ship v2", goals: [] }, "Error: goals needs at least one goal"],
+    ["next: no plan", { op: "next" }, `Error: ${NO_PLAN}`, planless],
+    [
+      "checkpoint: no gate",
+      { op: "checkpoint", goal_id: "G001", status: "complete", evidence: "done", ...DONE },
+      "Error: complete checkpoints require gate",
+    ],
+    [
+      "checkpoint: pending goal",
+      { op: "checkpoint", goal_id: "G002", status: "complete", evidence: "done", gate: perGoal(["G002.AC1"]), ...DONE },
+      "Error: Cannot checkpoint G002 as complete while its durable goals.json status is pending",
+    ],
+    ["validate_gate: no gate", { op: "validate_gate", goal_id: "G001" }, "Error: gate is required for ultragoal validate_gate"],
+    [
+      "add: active goal",
+      { op: "add", target: "criterion", goal_id: "G001", criterion: "part 1 has docs", ...steering },
+      statusRefusal("add", "criterion", "pending"),
+    ],
+    [
+      "add: short rationale",
+      { op: "add", target: "goal", title: "Goal 3", description: "do part 3", acceptanceCriteria: ["part 3 works"], ...short },
+      substantive,
+    ],
+    [
+      "revise: active goal",
+      { op: "revise", target: "goal", goal_id: "G001", title: "Goal one", ...steering },
+      statusRefusal("revise", "goal", "pending"),
+    ],
+    ["revise: short rationale", { op: "revise", target: "goal", goal_id: "G002", title: "Goal two", ...short }, substantive],
+    [
+      "supersede: active goal",
+      { op: "supersede", target: "goal", goal_id: "G001", ...steering },
+      statusRefusal("supersede", "goal", "pending or blocked or review_blocked"),
+    ],
+    ["supersede: short rationale", { op: "supersede", target: "goal", goal_id: "G002", ...short }, substantive],
+    ["add_pattern: two lines", { op: "add_pattern", pattern: "tests live\nunder tests/" }, "Error: pattern must be a single line"],
+    ["record_review_blockers: cap", { ...blocker, objective: "fix D" }, `Error: ${reviewBlockerCapRefusal("G001", 3)}`, capped],
+    ["record_review_blockers: long objective", { ...blocker, objective: "x".repeat(1973) }, `Error: ${OBJECTIVE_TOO_LONG}`],
+    ["classify_blocker: invalid", { op: "classify_blocker", classification: "bogus", evidence: "x" }, "schema: classification"],
+    [
+      "classify_blocker: missing",
+      { op: "classify_blocker", evidence: "needs a key" },
+      "Error: classification is required for ultragoal classify_blocker",
+    ],
+    [
+      "record_critic_verdict: pause without classification",
+      pause,
+      "Error: record_critic_verdict classification_event_id is required for pause verdicts",
+    ],
+    [
+      "record_critic_verdict: pause, unbound classification",
+      { ...pause, classification_event_id: "evt-none" },
+      "Error: record_critic_verdict pause requires classification_event_id to name the latest human_blocked classification",
+    ],
+    ["handoff: invalid target", { op: "handoff", to: "ultragoal", reason }, "schema: to"],
+    ["handoff: no target", { op: "handoff", reason }, "Error: to is required for ultragoal handoff"],
+    [
+      "state: derived field",
+      { op: "state", patch: { goals: [] } },
+      "Error: state patch cannot set derived ultragoal field(s): goals",
+    ],
+    [
+      "clear: stale row, unforced",
+      { op: "clear" },
+      "Error: existing state for ultragoal is stale (active-state phase blocked differs from mode-state phase active)",
+      stale,
+    ],
+  ];
+  for (const [name, args, error, setup = started] of cases)
+    await fixture(async (h) => {
+      await setup(h);
+      const snapshot = () => Promise.all(files.map((parts) => h.text(...parts)));
+      const before = await snapshot();
+      // The planless case has all seven files missing; every other has all seven.
+      const missing = before.filter((text) => text === undefined).length;
+      expect(`${name}: ${missing}`).toBe(`${name}: ${setup === planless ? 7 : 0}`);
+      const parsed = h.tool.input.safeParse(args);
+      const result = parsed.success ? await h.call(args) : `schema: ${parsed.error.issues[0].path.join(".")}`;
+      expect(`${name}: ${result}`).toStartWith(`${name}: ${error}`);
+      expect({ name, files: await snapshot() }).toEqual({ name, files: before });
+    });
+});
+
+test("doctor reports an ultragoal row on another phase than the mode-state as stale_active_state", async () => {
+  await fixture(async (h) => {
+    await started(h);
+    await staleRow(h);
+    const rowPath = h.file("state", "active", "ultragoal.json");
+    const doctor = await h.call({ op: "doctor" });
+    expect(doctor).toStartWith("ok: false\n");
+    expect(doctor).toContain("counts: schema_violation=0, stale_active_state=1\n");
+    expect(doctor).toContain(
+      `finding: kind=stale_active_state skill=ultragoal path=${rowPath} message=active entry for ultragoal phase blocked differs from canonical mode-state phase active fix=ultragoal clear\n`,
+    );
   });
 });
 

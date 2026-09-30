@@ -20,14 +20,12 @@
 // - 8: the result has no `Tokens used:` line.
 // - 10: no nudge text.
 // - 30: the context and continuation are wrapped in the plugin markers
-//   `<goal-context>` and `<goal-continuation>` (visible synthetic messages).
+//   `<goal-context>` and `<goal-continuation>` (visible synthetic messages),
+//   and the continuation prompt drops gjc's first line, the HTML comment
+//   `<!-- Hidden continuation steer. role=user, suppressed from visible
+//   transcript. -->` (host substitution, plan D-DT1).
 // - 31: step 1 of the continuation audit no longer names `todo_write` (the
 //   host has no todo tool).
-// - Host substitution (plan D-DT1; recorded as a deviation in a later step):
-//   the continuation prompt drops gjc's first line, the HTML comment
-//   `<!-- Hidden continuation steer. role=user, suppressed from visible
-//   transcript. -->`, because here the continuation is a visible synthetic
-//   message.
 // - 32: the pause refusal has no terminal-critic ceiling or plan-generation text.
 // - 9, 18 (D-TL5, D-VF9): the hold notices of the continuation hook are
 //   open-gajae text inside `<goal-notice>` (gjc path A never holds); each

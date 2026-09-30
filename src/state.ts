@@ -18,9 +18,7 @@ export type StateWriter =
   | "ralplan_hook"
   | "ultragoal_hook"
   | "ultragoal_tool"
-  | "ralplan_tool"
-  | "goal_tool"
-  | "goal_hook";
+  | "ralplan_tool";
 
 export type StateMeta = {
   mode: StateMode;

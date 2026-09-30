@@ -15,8 +15,9 @@
 // The stage is an explicit input (DR-8, R-OD5, gjc as-is): after a write it is
 // the stage just written, after start/state the resulting `current_phase`.
 // Deviation 9: the `stages` chip holds full stage words
-// (`formatRalplanStagePresence` in `./ledger.ts`). Deviation 14: only the
-// ralplan builder is ported; the other skills' HUD builders are not.
+// (`formatRalplanStagePresence` in `./ledger.ts`). Only the ralplan builder
+// is here: the ultragoal one is `../ultragoal-runtime/hud.ts`, and
+// deep-interview writes no row, so it has none (deviation 14).
 
 import {
   chip,
