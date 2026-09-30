@@ -1,8 +1,9 @@
 // v2 host probe (plan Step 8): the repository loads as a directory plugin on
 // the installed 2.0.15 host, registers eight agents, three skills and
 // thirteen tools, the read-only roles do not see
-// `opencode_session_move`/`_rename`, and only the primary and the two
-// ultragoal reviewers see the `ultragoal` tool.
+// `opencode_session_move`/`_rename`, only the primary and the two
+// ultragoal reviewers see the `ultragoal` tool, and the host's `build` and
+// `general` agents see neither `ultragoal` nor `ralplan` (plan C-11).
 // Run: `bun run test:host` (or `bun ./tests/host-probe.ts`).
 import { join } from "node:path";
 import {
@@ -92,6 +93,20 @@ await runProbe("open-gajae-host-probe", async (report, scratch) => {
       );
       if (agent === "open-gajae-cleaner")
         report.check("open-gajae-cleaner: shell offered for read-only inspection", !!request?.tools.includes("shell"), request?.tools);
+    }
+
+    // Plan C-11 (PQ-24 B): the `context` hook removes both workflow tools from
+    // the host's own agents; `general` is a subagent-mode agent opened directly.
+    for (const agent of ["build", "general"]) {
+      const session = await host.createSession({ agent });
+      const tag = `host-${agent}`;
+      await host.turn(session, directive({ tag, steps: [] }));
+      const request = host.provider.thread(tag)[0];
+      report.check(
+        `${agent}: ralplan and ultragoal hidden`,
+        !!request && !request.tools.includes("ralplan") && !request.tools.includes("ultragoal"),
+        request?.tools,
+      );
     }
 
     // The executor writes code and delegates, but never asks or drives ultragoal.

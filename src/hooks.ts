@@ -1,6 +1,7 @@
 // Ralplan host hooks: continuation on durable execution events, keyword/mention
 // notices on the v2 `prompt` hook, the mutation guards and the ultragoal entry
-// gate on `execute.before`, and the compaction recovery context. Ultragoal
+// gate on `execute.before`, the workflow-tool hiding on `context` (plan C-11),
+// and the compaction recovery context. Ultragoal
 // shares this one engine and these hooks through `src/ultragoal-hooks.ts`, one
 // mode at a time (plan §5). The prompt hook also carries the deep-interview
 // keyword and `@deep-interview` mention, which only inject OMC's magic-keyword
@@ -118,6 +119,15 @@ export type HostSession = {
 /** A synthetic notice and the one line the TUI shows for it. */
 type Notice = { text: string; description: string };
 
+/**
+ * The fields of the host's `context`, `compaction` and `generate` session hook
+ * events (`SessionContext`) the tool-hiding hook reads or writes.
+ */
+export type ContextEvent = {
+  readonly agent?: string;
+  tools?: Record<string, unknown>;
+};
+
 /** The fields of the host's `prompt` hook event these hooks read or write. */
 export type PromptEvent = {
   readonly sessionID: string;
@@ -155,6 +165,11 @@ export type RalplanHooks = {
   rootSession(sessionID: string): Promise<string>;
   prompt(event: PromptEvent): Promise<void>;
   /**
+   * Plan C-11: registered on the `context`, `compaction` and `generate`
+   * session hooks; removes each workflow tool the request's agent does not own.
+   */
+  context(event: ContextEvent): void;
+  /**
    * The `compaction` session hook: ultragoal context while it runs (plan §7),
    * then the active ralplan run's recovery contract (plan D-H2/AC19).
    */
@@ -185,6 +200,31 @@ const ROLE_SUBAGENTS = new Set([
   "open-gajae-executor",
   "open-gajae-cleaner",
 ]);
+
+/**
+ * Plan C-11 (D-HE8, E-2): each workflow tool and the agents that own it,
+ * matching the tools' own actor checks — `ralplan` D-W3
+ * (`src/ralplan-runtime/tool.ts`), `ultragoal` the primary and its two
+ * reviewers (`src/ultragoal-tool.ts`; plan S3 narrows it to the primary). The
+ * `context` hook deletes a tool from any other agent's request, host and
+ * user-defined agents included, so the host neither offers it nor runs a call
+ * to it (`core/src/session/model-request.ts:225-255`, `core/src/tool.ts:
+ * 272-275`), as the host's patch plugin removes its tools
+ * (`core/src/tool/plugin/patch.ts:296-309`). The owners' `roleRules` denies stay.
+ */
+const TOOL_OWNERS: Record<string, ReadonlySet<string>> = {
+  ralplan: new Set([
+    PRIMARY_AGENT,
+    "open-gajae-planner",
+    "open-gajae-architect",
+    "open-gajae-critic",
+  ]),
+  ultragoal: new Set([
+    PRIMARY_AGENT,
+    "open-gajae-architect",
+    "open-gajae-critic",
+  ]),
+};
 
 /**
  * Interrupt reasons that mean "stop" (Q9): `user` is Esc or the interrupt API,
@@ -893,6 +933,19 @@ export function createHooks(
   };
 
   /**
+   * Plan C-11: hide each workflow tool from an agent that does not own it
+   * (`TOOL_OWNERS`). Only the listed tools are touched; a missing `tools` is
+   * left alone, and a missing `agent` owns nothing.
+   */
+  const context: RalplanHooks["context"] = (event) => {
+    const tools = event.tools;
+    if (!isRecord(tools)) return;
+    for (const [tool, owners] of Object.entries(TOOL_OWNERS))
+      if (typeof event.agent !== "string" || !owners.has(event.agent))
+        delete tools[tool];
+  };
+
+  /**
    * Plan D-H2/AC19: after ultragoal's context, the active ralplan run's
    * recovery contract — gjc's projection of the newest final (else
    * planner/revision) stage file, verified against its ledger sha256, and
@@ -987,6 +1040,7 @@ export function createHooks(
     parentSession,
     rootSession,
     prompt,
+    context,
     compaction,
     executeBefore,
     executeAfter,

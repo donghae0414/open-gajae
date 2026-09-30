@@ -1488,3 +1488,23 @@ test("(l) the C-4 refusal blocks `skill ultragoal` by invalidating its input, an
     expect(await missing(store, id, UG)).toBe(true);
   });
 });
+
+test("K1 — C-11: other agents lose ralplan and ultragoal; owners keep the ones they own", async () => {
+  await fixture(async ({ hooks }) => {
+    const offered = (agent?: string) => {
+      const event = {
+        ...(agent === undefined ? {} : { agent }),
+        tools: { ralplan: {}, ultragoal: {}, read: {} },
+      };
+      hooks.context(event);
+      return Object.keys(event.tools).sort();
+    };
+    for (const agent of ["build", "general", "plan", "my-agent", "open-gajae-executor", undefined])
+      expect(offered(agent)).toEqual(["read"]);
+    expect(offered("open-gajae")).toEqual(["ralplan", "read", "ultragoal"]);
+    expect(offered("open-gajae-planner")).toEqual(["ralplan", "read"]);
+    expect(offered("open-gajae-architect")).toEqual(["ralplan", "read", "ultragoal"]);
+    expect(offered("open-gajae-critic")).toEqual(["ralplan", "read", "ultragoal"]);
+    expect(() => hooks.context({ agent: "build" })).not.toThrow();
+  });
+});

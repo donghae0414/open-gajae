@@ -68,6 +68,11 @@ export default Plugin.define({
     });
     // 5. Prompt and tool hooks.
     await ctx.session.hook("prompt", hooks.prompt);
+    // Plan C-11: tool hiding on every request that carries an agent's tools,
+    // as the host's patch plugin registers its own.
+    await ctx.session.hook("context", hooks.context);
+    await ctx.session.hook("compaction", hooks.context);
+    await ctx.session.hook("generate", hooks.context);
     await ctx.session.hook("compaction", hooks.compaction);
     await ctx.tool.hook("execute.before", hooks.executeBefore);
     await ctx.tool.hook("execute.after", hooks.executeAfter);
