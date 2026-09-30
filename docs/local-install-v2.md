@@ -158,26 +158,59 @@ opencode debug agent open-gajae-critic
 
 ## 6. 수동 실행 결과 (Manual run result, AC37)
 
-ultragoal gjc 개정의 실제 호스트 1회 실행 기록입니다(spec AC37). **아직 기록이 없습니다.** 관리자가 5.2절을 `openai/gpt-6-luna`(모든 역할, variant로 구분)로 실행한 뒤 아래를 채웁니다. 이 절의 결과는 자동 테스트나 호스트 probe가 대신하지 않습니다.
+ultragoal gjc 개정의 실제 호스트 실행 기록입니다(spec AC37). 이 절의 결과는 자동 테스트나 호스트 probe가 대신하지 않습니다.
 
-- 실행 날짜: (미기록)
-- 호스트: OpenCode (버전 미기록)
-- 플러그인: 브랜치 `feat/ultragoal-gjc-revision`, 커밋 (미기록)
-- 모델: 모든 역할 `openai/gpt-6-luna` (variant: 미기록)
+**부분 실행으로 기록합니다(2026-10-01, 관리자 결정).** 실행 조건이 5.2절의 전제와 두 가지 다릅니다.
+- **모델**: 5.2절은 모든 역할을 `openai/gpt-6-luna`로 두고 variant로 구분합니다. 두 실행은 `-fast` 모델이었고, 기록된 variant는 모든 역할이 `default`였습니다. 설정에는 primary가 `high`였는데, 이것이 왜 적용되지 않았는지는 확인하지 못했습니다.
+- **방식**: 체크리스트를 항목별로 따라가지 않았습니다. 앱 작업 요청 한 번을 ralplan → ultragoal로 끝까지 돌렸습니다.
 
-| 5.2 항목 | 결과(통과·실패·관찰) | 메모 |
+아래 표에서 "미확인"인 항목은 실제 모델로 아직 확인하지 않은 것입니다.
+
+| 구분 | 1차 | 2차 |
 |---|---|---|
-| 1. 설정 로드 | (미기록) | |
-| 2. `build` agent의 도구 숨김 | (미기록) | |
-| 3. 진입과 goal-planning 가드 | (미기록) | |
-| 4. `create`, goal 켜기, continuation | (미기록) | |
-| 5. 목표별 architect gate → checkpoint | (미기록) | |
-| 6. 재오픈 | (미기록) | |
-| 7. 경계 cohort → terminal critic → final checkpoint → `goal complete` | (미기록) | |
-| 8. `ultragoal handoff(to: "ralplan")`와 복귀 | (미기록) | |
-| 9. 도구 없는 턴 3회 보류와 해제 | (미기록) | |
-| 10. Esc | (미기록) | |
-| 11. 압축 | (미기록) | |
-| 12. 다른 agent로 바꿨을 때 | (미기록) | |
-| 13. 수정 목표 | (미기록) | |
-| 14. 정리 | (미기록) | |
+| 실행 시각 | 2026-09-30 20:24–20:51 (KST) | 2026-09-30 23:49 – 10-01 00:36 (KST) |
+| 호스트 | OpenCode v2.0.15 | OpenCode v2.0.15 |
+| 플러그인 | 브랜치 `feat/ultragoal-gjc-revision`, 커밋 `9b5d4f9` | 같음 |
+| 모델 | 모든 역할 `openai/gpt-6-luna-fast` (variant `default`) | 모든 역할 `openai/gpt-6-sol-fast` (variant `default`) |
+| 요청 | `@ralplan --interactive`: 단일 HTML 앱을 Next.js·React·TypeScript로 옮기고 상세 페이지 분리 | `@ralplan`: 교실 스타일을 우주정거장·우주선 스타일로 바꾸고 인터랙션 강화 |
+| 세션 | `ses_f0df11fc9ffeWwrUZVfzxHw4FA` (자식 8) | `ses_f0d35376effec0XrVLC70z6Bfr` (자식 7) |
+| 목표 | G001 하나 | G001 → 수정 목표 G002 → 수정 목표 G003 |
+
+| 5.2 항목 | 결과 | 메모 |
+|---|---|---|
+| 1. 설정 로드 | 미확인 | |
+| 2. `build` agent의 도구 숨김 | 미확인 | 호스트 probe(`tests/host-probe.ts`)는 `build`·`general`에서 숨김을 확인합니다. |
+| 3. 진입과 goal-planning 가드 | 일부 통과 | 두 실행 모두 ralplan 승인 뒤 `ralplan handoff`에서 `skill ultragoal`로 이어져 `goal-planning`으로 들어갔습니다. 인계 저널은 생겼다가 지워졌습니다. 키워드 안내와 편집 거부는 이 흐름에 없어 미확인입니다. |
+| 4. `create`, goal 켜기, continuation | 통과 (continuation 제외) | `Created ultragoal plan with 1 goal at …`, `Goal armed: …`, `goal get`의 `Status: active`, `goals.json`의 `"version": 2`와 `G001.AC1` 꼴 기준, ledger `plan_created`, progress `PLAN`, `open-gajae: goal context added`를 확인했습니다. 두 실행 모두 첫 execution 하나로 `goal complete`까지 가서 continuation이 들어갈 일이 없었습니다(`goal-continuation.json` 없음). |
+| 5. 목표별 architect gate → checkpoint | 일부 통과 | `next`가 `checkpoint requires=`와 `criteria=`를 출력했습니다. 목표마다 마지막 목표여서 목표별 checkpoint, gate 오류 문구, 다음 목표 전환은 미확인입니다. |
+| 6. 재오픈 | 미확인 | |
+| 7. 경계 cohort → terminal critic → final checkpoint → `goal complete` | 통과 | 아래를 모두 확인했습니다. 1차 모델의 절차 위반은 이 표 아래 관찰에 적었습니다. |
+| 8. `ultragoal handoff(to: "ralplan")`와 복귀 | 미확인 | 반대 방향(ralplan → ultragoal) 인계는 두 실행 모두 정상이었습니다. |
+| 9. 도구 없는 턴 3회 보류와 해제 | 미확인 | |
+| 10. Esc | 미확인 | |
+| 11. 압축 | 미확인 | |
+| 12. 다른 agent로 바꿨을 때 | 미확인 | |
+| 13. 수정 목표 | 통과 (2차) | 아래를 모두 확인했습니다. 1차는 blocker가 있었지만 모델이 이 op를 부르지 않았습니다. |
+| 14. 정리 | 미확인 | |
+
+7번에서 확인한 것:
+- `next`의 `checkpoint requires=`에 `,reviewCohort:joined,criticReview:OKAY`가 붙었습니다.
+- cleaner(`AI SLOP CLEANUP REPORT`, `Gate Result: PASS`), architect, `[ultragoal-red-team]` executor가 돌았습니다.
+- red-team 조각은 executor 메시지에만 붙었습니다.
+- terminal critic `OKAY` → `validate_gate`의 `quality gate is valid.` → `All ultragoal goals are complete.` 순서였습니다.
+- `run_complete: yes`, 영수증은 `receiptKind: final-aggregate`입니다.
+- `state/active/ultragoal.json`이 지워졌습니다.
+- `goal complete` 뒤 `Status: complete`이고, 그 뒤 continuation이 없었습니다.
+
+13번에서 확인한 것(2차):
+- 1세대 cohort 불통과 → `Recorded review blockers. blocker-goal-id=G002`
+- G001이 `review_blocked`, G002 기준은 `… is resolved and re-verified` 하나입니다.
+- G002의 첫 `next`부터 최종 gate를 요구했습니다.
+- 2세대 불통과 → G003 → 뿌리 G001 `supersede`
+- G003 완료 → G002 `superseded`(증거 `Resolved by verification blocker goal G003: …`), `run_complete: yes`
+
+관찰(자세한 내용은 [`docs/skills/ultragoal/known-limits.md`](skills/ultragoal/known-limits.md)):
+- **1차 모델의 절차 위반**: cohort blocker를 `record_review_blockers` 없이 바로 고쳤고, 같은 세대에서 lane을 다시 돌렸고(U36), 요청 없이 `git commit`을 했습니다. 2차 모델은 SKILL 절차를 그대로 따랐습니다.
+- **lane 충돌**: 1차에서 cleaner와 QA lane이 동시에 e2e를 돌려 Playwright 산출물이 충돌했고, 이것이 가짜 blocker가 됐습니다(U37).
+- **감사 로그**: 두 실행 모두 ralplan 감사 로그에 `invalid_transition_detected`가 4~5행 남았습니다. gjc 전이 표와 SKILL 흐름이 원래 어긋나서 생기는 것이고, 기록만 남습니다(U38).
+- **서브에이전트 사용**: ralplan에서 `open-gajae-explore`는 쓰이지 않았고, ultragoal 구현은 leader가 직접 했습니다. SKILL 기본값("Direct inline implementation by the leader is the default")과 작은 앱 규모에 맞는 결과입니다.

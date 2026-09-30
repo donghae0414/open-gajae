@@ -158,7 +158,7 @@
 - test-app `_session-20260930-202416-ses_f0df11fc…`: 모든 역할 `openai/gpt-6-luna-fast`
 - test-app `_session-20260930-234931-ses_f0d35376…`: 모든 역할 `openai/gpt-6-sol-fast`
 
-플러그인 동작 자체의 오류는 두 실행 모두 없었습니다. 두 세션 폴더와 OpenCode 세션 기록은 저장소 밖에 있고, `docs/local-install-v2.md` 6절에는 아직 기록하지 않았습니다.
+플러그인 동작 자체의 오류는 두 실행 모두 없었습니다. 두 세션 폴더와 OpenCode 세션 기록은 저장소 밖에 있습니다. 실행 조건과 체크리스트별 결과는 `docs/local-install-v2.md` 6절에 부분 실행으로 기록했습니다.
 
 ### U35. 마지막 목표에서 architect를 몇 번 돌릴지 정해져 있지 않음 (결정 필요)
 
@@ -301,7 +301,7 @@
 | U14 | PLANNING-STUCK 거부 안내 | 열림 | 위 |
 | U15 | 인계 실패 경로 | 일부 해결 | 위 |
 | U16 | 계약 자동 회귀 검사 | 일부 해결 | 위 |
-| U17 | 실제 모델 VERDICT 확인 | 해결(대상 없음) | 수동 실행 결과를 적을 자리는 `docs/local-install-v2.md` 6절(아직 비어 있음) |
+| U17 | 실제 모델 VERDICT 확인 | 해결(대상 없음) | 수동 실행 결과는 `docs/local-install-v2.md` 6절(2026-10-01 부분 실행 기록) |
 | U18 | ultragoal 저장 구성 | 해결 | [state-and-files.md](state-and-files.md) |
 | U19 | executor 프롬프트의 계획 경로 | 해결 | `prompts/open-gajae-executor.md` |
 | U20 | ultragoal 실행 중 계획 가드 | 해결 | [guards.md](guards.md) |
