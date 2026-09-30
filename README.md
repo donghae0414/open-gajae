@@ -39,7 +39,7 @@ See [AGENTS.md](AGENTS.md) for development policy and [third-party notices](THIR
 ```sh
 bun install
 bun run typecheck
-bun test
+bun test ./tests
 ```
 
 Add a `plugins` entry pointing at this repository's **directory** (not a built file) to the host config, typically `~/.config/opencode/opencode.jsonc`:

@@ -39,7 +39,7 @@ open-gajae의 자체 작성 부분은 MIT, 외부 자료는 각 원본 라이선
 ```sh
 bun install
 bun run typecheck
-bun test
+bun test ./tests
 ```
 
 호스트 설정(보통 `~/.config/opencode/opencode.jsonc`)에 이 저장소의 **디렉터리**(빌드된 파일이 아님)를 가리키는 `plugins` 항목을 추가합니다.

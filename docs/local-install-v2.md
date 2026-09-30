@@ -14,7 +14,7 @@
 cd /Users/dongwuk/apps/open-gajae
 bun install
 bun run typecheck
-bun test
+bun test ./tests
 ```
 
 `bun install`은 `package.json`의 `dependencies`(`@opencode/plugin`, `zod`, `@ast-grep/napi`, `jsonc-parser`)를 이 저장소의 `node_modules`에 설치합니다. 빌드 단계는 없습니다 — `package.json`의 `exports["."]`가 `./src/index.ts`를 가리키고, 루트 `index.ts`가 이를 re-export하므로 host는 TypeScript 소스를 바로 로드합니다. `dist/`는 만들지 않습니다.
