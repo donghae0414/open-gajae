@@ -1,13 +1,14 @@
 // Ultragoal pure logic: the goals.json schema and its criteria revisions, the
-// progress log, the loop phase and continuation decision, the seed, and every
-// message the plugin injects for ultragoal. No `fs`, no client, no host calls.
+// loop phase and continuation decision, the seed, and every message the
+// plugin injects for ultragoal. No `fs`, no client, no host calls. The
+// progress log, `LIMITS` and `isSubstantive` moved to `./ultragoal-runtime/`
+// (plan S2) and are re-exported below; this file is replaced in plan S3.
 //
 // Ultragoal is the port of OMC ralph (plan D-name), not OMC's separate
 // `ultragoal` mode. Stories are goals, `prd.json` is `goals.json` (U1).
 //
 // Source: oh-my-claudecode v5.4.0 (MIT) — `src/hooks/ralph/prd.ts` (revision
-// binding, amendment ledger), `src/hooks/ralph/progress.ts` (log format and
-// context injection), `src/hooks/ralph/verifier.ts` (verification and
+// binding, amendment ledger), `src/hooks/ralph/verifier.ts` (verification and
 // rejection templates), `src/hooks/persistent-mode/index.ts` (continuation
 // template) and `scripts/persistent-mode.mjs` (iteration limits).
 
@@ -15,6 +16,8 @@ import { createHash } from "node:crypto";
 import { wrapUltragoalInjected } from "./ralplan.js";
 import { isKnownPhase, TERMINAL_PHASES } from "./ralplan-runtime/manifest.js";
 import type { ExplicitStatePatch } from "./state.js";
+import { LIMITS } from "./ultragoal-runtime/plan.js";
+import { lastEntryFor, oneLine, parseProgress, progressContext } from "./ultragoal-runtime/progress.js";
 
 /** An ultragoal state snapshot as read from disk; every field is untrusted. */
 export type UltragoalStateSnapshot = Record<string, unknown> | null | undefined;
@@ -25,17 +28,26 @@ export const ULTRAGOAL_TOOL_LESS_MAX = 3; // OMC persistent-mode/index.ts:1578
 export const ULTRAGOAL_REJECT_CEILING = 3; // spec R14
 export const FINAL_TARGET = "final";
 
-export const LIMITS = {
-  title: 200,
-  text: 2000,
-  evidence: 4000,
-  pattern: 500,
-  sourcePlan: 500,
-} as const;
-
-/** gajae-code `MIN_SUBSTANTIVE_EVIDENCE_WORDS/CHARS` (decision 9). */
-export const MIN_SUBSTANTIVE_WORDS = 5;
-export const MIN_SUBSTANTIVE_CHARS = 32;
+// Moved to `./ultragoal-runtime/` (plan S2); re-exported here until plan S3.
+export {
+  isSubstantive,
+  LIMITS,
+  MIN_SUBSTANTIVE_CHARS,
+  MIN_SUBSTANTIVE_WORDS,
+} from "./ultragoal-runtime/plan.js";
+export {
+  addProgressPattern,
+  appendProgressEntry,
+  appendProgressNote,
+  ENTRY_SEPARATOR,
+  initialProgress,
+  lastEntryFor,
+  oneLine,
+  parseProgress,
+  PATTERNS_HEADER,
+  type ProgressEntry,
+  progressContext,
+} from "./ultragoal-runtime/progress.js";
 
 // ---------------------------------------------------------------------------
 // goals.json
@@ -94,15 +106,6 @@ function text(value: unknown, max: number): value is string {
 
 function optionalText(value: unknown, max: number): boolean {
   return value === undefined || text(value, max);
-}
-
-/** At least five words and 32 characters after trimming (decision 9). */
-export function isSubstantive(value: string): boolean {
-  const trimmed = value.trim();
-  return (
-    trimmed.split(/\s+/).filter(Boolean).length >= MIN_SUBSTANTIVE_WORDS &&
-    trimmed.length >= MIN_SUBSTANTIVE_CHARS
-  );
 }
 
 function amendmentError(value: unknown, at: string): string | undefined {
@@ -301,211 +304,6 @@ export function goalStatusLabel(goal: Goal): string {
   if (effectiveVerified(goal)) return "verified";
   if (effectivePasses(goal)) return "complete, awaiting verification";
   return "pending";
-}
-
-// ---------------------------------------------------------------------------
-// progress.txt (OMC progress.ts)
-// ---------------------------------------------------------------------------
-
-export const PATTERNS_HEADER = "## Codebase Patterns";
-export const ENTRY_SEPARATOR = "---";
-const NO_PATTERNS = "(No patterns discovered yet)";
-
-export type ProgressEntry = {
-  timestamp: string;
-  goalId: string;
-  implementation: string[];
-  filesChanged: string[];
-  learnings: string[];
-};
-
-/** Items are single lines; OMC's parser reads the log line by line. */
-export function oneLine(value: string): string {
-  return value.replace(/\s*\r?\n\s*/g, " ").trim();
-}
-
-export function initialProgress(now: string): string {
-  return `# Ultragoal Progress Log
-Started: ${now}
-
-${PATTERNS_HEADER}
-${NO_PATTERNS}
-
-${ENTRY_SEPARATOR}
-
-`;
-}
-
-function stamp(now: string): string {
-  const [date, time] = now.split("T");
-  return `${date} ${time.slice(0, 5)}`;
-}
-
-/** OMC `appendProgress`. */
-export function appendProgressEntry(
-  progress: string,
-  entry: Omit<ProgressEntry, "timestamp">,
-  now: string,
-): string {
-  const lines = ["", `## [${stamp(now)}] - ${entry.goalId}`, ""];
-  for (const [title, items] of [
-    ["**What was implemented:**", entry.implementation],
-    ["**Files changed:**", entry.filesChanged],
-    ["**Learnings for future iterations:**", entry.learnings],
-  ] as const) {
-    if (items.length === 0) continue;
-    lines.push(title, ...items.map((item) => `- ${oneLine(item)}`), "");
-  }
-  lines.push(ENTRY_SEPARATOR, "");
-  return progress + lines.join("\n");
-}
-
-/** START, HANDOFF, RESUME and CANCEL entries carry the op's reason (plan §3.3). */
-export function appendProgressNote(
-  progress: string,
-  label: "START" | "HANDOFF" | "RESUME" | "CANCEL",
-  reason: string,
-  now: string,
-): string {
-  return (
-    progress +
-    ["", `## [${stamp(now)}] - ${label}`, "", "**Reason:**", `- ${oneLine(reason)}`, "", ENTRY_SEPARATOR, ""].join(
-      "\n",
-    )
-  );
-}
-
-/** OMC `addPattern`: insert before the separator that closes the section. */
-export function addProgressPattern(progress: string, pattern: string): string {
-  const content = progress.replace(`${NO_PATTERNS}\n`, "");
-  const start = content.indexOf(PATTERNS_HEADER);
-  const separator = start === -1 ? -1 : content.indexOf(ENTRY_SEPARATOR, start);
-  if (separator === -1)
-    throw new Error("progress.txt has no Codebase Patterns section");
-  return (
-    content.slice(0, separator) + `- ${pattern}\n\n` + content.slice(separator)
-  );
-}
-
-/**
- * OMC `parseProgress`. One deviation: the bold section titles
- * (`**What was implemented:**`) are skipped, where OMC's `startsWith('*')`
- * reads the first one as an implementation item.
- */
-export function parseProgress(content: string): {
-  patterns: string[];
-  entries: ProgressEntry[];
-} {
-  const patterns: string[] = [];
-  const entries: ProgressEntry[] = [];
-  let inPatterns = false;
-  let current: ProgressEntry | null = null;
-  let section = "";
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed === PATTERNS_HEADER) {
-      inPatterns = true;
-      continue;
-    }
-    if (trimmed === ENTRY_SEPARATOR) {
-      inPatterns = false;
-      if (current) entries.push(current);
-      current = null;
-      section = "";
-      continue;
-    }
-    if (inPatterns && trimmed.startsWith("-")) {
-      patterns.push(trimmed.slice(1).trim());
-      continue;
-    }
-    const header = trimmed.match(/^##\s*\[(.+?)\]\s*-\s*(.+)$/);
-    if (header) {
-      if (current) entries.push(current);
-      current = {
-        timestamp: header[1],
-        goalId: header[2],
-        implementation: [],
-        filesChanged: [],
-        learnings: [],
-      };
-      section = "";
-      continue;
-    }
-    if (!current) continue;
-    const lower = trimmed.toLowerCase();
-    if (/^\*\*.*\*\*$/.test(trimmed)) {
-      if (lower.includes("learnings")) section = "learnings";
-      else if (lower.includes("files changed")) section = "files";
-      else section = "";
-      continue;
-    }
-    if (trimmed.startsWith("-") || trimmed.startsWith("*")) {
-      const item = trimmed.slice(1).trim();
-      if (section === "learnings") current.learnings.push(item);
-      else if (section === "files") current.filesChanged.push(item);
-      else current.implementation.push(item);
-    }
-  }
-  if (current) entries.push(current);
-  return { patterns, entries };
-}
-
-/**
- * OMC `getProgressContext` (progress.ts:409-511): every pattern, the
- * deduplicated learnings of the last 10 entries and the last 2 entries. No
- * truncation (decision 18).
- */
-export function progressContext(content: string | undefined): string {
-  if (!content) return "";
-  const { patterns, entries } = parseProgress(content);
-  const blocks: string[] = [];
-  if (patterns.length > 0)
-    blocks.push(
-      [
-        "<codebase-patterns>",
-        "",
-        "## Known Patterns from Previous Iterations",
-        "",
-        ...patterns.map((pattern) => `- ${pattern}`),
-        "",
-        "</codebase-patterns>",
-        "",
-      ].join("\n"),
-    );
-  const learnings = [
-    ...new Set(entries.slice(-10).flatMap((entry) => entry.learnings)),
-  ];
-  if (learnings.length > 0)
-    blocks.push(
-      [
-        "<learnings>",
-        "",
-        "## Learnings from Previous Iterations",
-        "",
-        ...learnings.map((learning) => `- ${learning}`),
-        "",
-        "</learnings>",
-        "",
-      ].join("\n"),
-    );
-  if (entries.length > 0) {
-    const lines = ["<recent-progress>", "", "## Recent Progress", ""];
-    for (const entry of entries.slice(-2)) {
-      lines.push(`### ${entry.goalId} (${entry.timestamp})`);
-      lines.push(...entry.implementation.map((item) => `- ${item}`), "");
-    }
-    lines.push("</recent-progress>", "");
-    blocks.push(lines.join("\n"));
-  }
-  return blocks.join("\n");
-}
-
-/** The last progress entry for a goal: the brief's completion claim. */
-export function lastEntryFor(content: string | undefined, goalId: string) {
-  if (!content) return undefined;
-  return parseProgress(content)
-    .entries.filter((entry) => entry.goalId === goalId)
-    .at(-1);
 }
 
 // ---------------------------------------------------------------------------
