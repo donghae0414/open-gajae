@@ -10,7 +10,8 @@
 //
 // Source: oh-my-claudecode v5.4.0 (MIT). `<ralplan-continuation>` and
 // `<session-restore>` are OMC's own wrappers; the other markers are host
-// additions, noted per entry. Moved unchanged from `src/ralplan.ts:22-50`.
+// additions, noted per entry. Moved from `src/ralplan.ts:22-50`; the goal
+// markers were added afterwards (ultragoal revision plan S2).
 
 export const INJECTION_MARKERS = [
   "<ralplan-continuation>", // OMC src/hooks/persistent-mode/index.ts:2147
@@ -30,6 +31,11 @@ export const INJECTION_MARKERS = [
   "<ultragoal-notice>",
   "<ultragoal-verification-brief>",
   "<ultragoal-compaction-context>",
+  // Host additions for the goal loop (ultragoal revision plan C-9, C-12): the
+  // continuation, the goal context and the goal notices.
+  "<goal-continuation>",
+  "<goal-context>",
+  "<goal-notice>",
 ] as const;
 
 export type InjectionMarker = (typeof INJECTION_MARKERS)[number];
