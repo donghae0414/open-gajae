@@ -1,7 +1,8 @@
 // The workflow doctor (ultragoal revision plan DR-15, ralplan D-T13): a
 // read-only scan of the registered skills' mode-states, the active rows and
 // the snapshot, returned as a summary object; `renderDoctorText` is gjc's text
-// form of it (C-14). The ralplan tool keeps returning the object as JSON.
+// form of it (C-14), which the ultragoal tool returns. The ralplan tool keeps
+// returning the object as JSON.
 // Nothing is fixed. Every `*Tx` function takes the `tx` of one
 // `StateStore.workflowTransaction` (C-1). Moved from
 // `src/ralplan-runtime/store.ts` (plan S1).
@@ -27,6 +28,7 @@
 import path from "node:path";
 import { isKnownPhase, RALPLAN_PHASE_LOCK } from "../ralplan-runtime/manifest.js";
 import type { StateMode, WorkflowTx } from "../state.js";
+import { isUltragoalPhase } from "../ultragoal-runtime/manifest.js";
 
 type Json = Record<string, unknown>;
 
@@ -47,8 +49,11 @@ type DoctorSkill = {
   isKnownPhase(phase: string): boolean;
 };
 
-/** The registered skills, in scan order. */
-const DOCTOR_SKILLS: readonly DoctorSkill[] = [{ skill: "ralplan", isKnownPhase }];
+/** The registered skills, in scan order (ultragoal: plan S2 op table). */
+const DOCTOR_SKILLS: readonly DoctorSkill[] = [
+  { skill: "ralplan", isKnownPhase },
+  { skill: "ultragoal", isKnownPhase: isUltragoalPhase },
+];
 
 /** gjc `validateWorkflowStateEnvelope`; an error string or `undefined`. */
 export function workflowEnvelopeError(skill: string, state: unknown): string | undefined {

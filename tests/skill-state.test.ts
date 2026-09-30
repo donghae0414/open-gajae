@@ -296,7 +296,27 @@ test("doctor: the ralplan summary is unchanged and renders as gjc's doctor text"
     };
     const summary = await run(doctorTx);
     expect(summary).toEqual(expected as never);
-    expect(await run((tx) => collectDoctorSummaryTx(tx))).toEqual(summary);
+    // Unfiltered, the doctor also checks the registered ultragoal skill (plan
+    // S2): its active row has no live mode-state.
+    expect(await run((tx) => collectDoctorSummaryTx(tx))).toEqual({
+      ...summary,
+      summary: {
+        skills_scanned: 2,
+        files_scanned: 4,
+        findings_total: 3,
+        by_kind: { schema_violation: 0, stale_active_state: 3 },
+      },
+      problems: [
+        ...summary.problems,
+        {
+          type: "stale_active_state",
+          skill: "ultragoal",
+          path: file("state", "active", "ultragoal.json"),
+          message: "active entry for ultragoal does not match a live active mode-state",
+          fixCommand: "ultragoal clear",
+        },
+      ],
+    } as never);
     expect(renderDoctorText(summary)).toBe(
       [
         "ok: false",
