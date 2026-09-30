@@ -1,11 +1,9 @@
 // Ralplan pure logic: injected-message builders and the continuation
 // decision. No `fs`, no client, no host imports beyond types.
 //
-// n6/a3: no bare marker token is added. Every injected message is wrapped in an
-// OMC-style tag, and `wrapInjected` is the ONLY way this module produces text,
-// so a future injection site structurally cannot omit the marker. `wrapInjected`
-// is deliberately not exported: callers outside this module can only obtain text
-// through a builder, and therefore only marked text.
+// n6/a3: every message this module builds goes through `wrapInjected`, so it
+// carries a marker. The markers and the wrapper live in `./injection.ts`
+// (ultragoal revision plan C-12) and are re-exported here from their old path.
 //
 // Source: oh-my-claudecode v5.4.0 (MIT). `<ralplan-continuation>` and
 // `<session-restore>` are OMC's own wrappers; `<ralplan-notice>` is a host
@@ -17,37 +15,15 @@
 // `active: false` (deviation 10), with its breaker counter kept in the
 // hook-only `state/ralplan-continuation.json` (R-O3, deviation 26).
 
+import { wrapInjected } from "./injection.js";
 import { isKnownPhase, TERMINAL_PHASES } from "./ralplan-runtime/manifest.js";
 
-export const INJECTION_MARKERS = [
-  "<ralplan-continuation>", // OMC src/hooks/persistent-mode/index.ts:2147
-  // OMC src/hooks/bridge.ts:2074; now only the ultragoal restore notice uses it.
-  "<session-restore>",
-  "<ralplan-notice>", // host addition: wraps the keyword and breaker notices
-  // Host addition (plan D-H2/AC19): the ralplan compaction recovery context,
-  // rendered by `./ralplan-runtime/recovery.ts`.
-  "<ralplan-compaction-context>",
-  // Host addition: wraps OMC's `[MAGIC KEYWORD: DEEP-INTERVIEW]` guide, which
-  // OMC emitted bare as `additionalContext` (scripts/keyword-detector.mjs:1544).
-  "<deep-interview-notice>",
-  // Host additions for ultragoal (plan §5.3): the loop message OMC's
-  // `<ralph-continuation>` carried, the plugin notices, the reviewer brief the
-  // plugin appends to a `subagent` prompt, and the compaction system part.
-  "<ultragoal-continuation>",
-  "<ultragoal-notice>",
-  "<ultragoal-verification-brief>",
-  "<ultragoal-compaction-context>",
-] as const;
-
-export type InjectionMarker = (typeof INJECTION_MARKERS)[number];
-
-/** The markers `src/ultragoal.ts` may wrap its messages in. */
-export type UltragoalMarker =
-  | "<ultragoal-continuation>"
-  | "<ultragoal-notice>"
-  | "<ultragoal-verification-brief>"
-  | "<ultragoal-compaction-context>"
-  | "<session-restore>";
+export {
+  INJECTION_MARKERS,
+  type InjectionMarker,
+  type UltragoalMarker,
+  wrapUltragoalInjected,
+} from "./injection.js";
 
 /** A ralplan state snapshot as read from disk; every field is untrusted. */
 export type RalplanStateSnapshot = Record<string, unknown> | null | undefined;
@@ -71,16 +47,6 @@ export const DEEP_INTERVIEW_SKILL_NAME = "deep-interview";
 
 /** OMC scripts/keyword-detector.mjs:37. */
 const SKILL_INVOCATION_USER_REQUEST_MAX = 1200;
-
-function wrapInjected(tag: InjectionMarker, body: string): string {
-  const name = tag.slice(1, -1);
-  return `<${name}>\n\n${body}\n\n</${name}>\n\n---\n\n`;
-}
-
-/** The one wrapper `src/ultragoal.ts` builds its messages with. */
-export function wrapUltragoalInjected(tag: UltragoalMarker, body: string) {
-  return wrapInjected(tag, body);
-}
 
 // OMC persistent-mode/index.ts:2147-2160, with the final sentence replaced:
 // this port exits through `ralplan clear` (plan DR-17), not an OMC command.

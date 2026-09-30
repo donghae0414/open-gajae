@@ -18,7 +18,9 @@ export type StateWriter =
   | "ralplan_hook"
   | "ultragoal_hook"
   | "ultragoal_tool"
-  | "ralplan_tool";
+  | "ralplan_tool"
+  | "goal_tool"
+  | "goal_hook";
 
 export type StateMeta = {
   mode: StateMode;
@@ -61,7 +63,10 @@ export type ExplicitStatePatch = {
 
 export type UltragoalFile = "goals.json" | "progress.txt";
 
-/** The operations `ultragoalTransaction` hands its body; none of them queue. */
+/**
+ * The operations `ultragoalTransaction` hands its body (the old ultragoal tool
+ * and hooks); none of them queue.
+ */
 export type UltragoalTx = {
   readonly paths: {
     dir: string;
@@ -117,6 +122,35 @@ export type RalplanTx = {
   /** Sorted entry names; `[]` when the directory is missing. */
   list(dir: string): Promise<string[]>;
   remove(file: string): Promise<"deleted" | "missing">;
+};
+
+/**
+ * Plan C-1 (E-1): the operations `workflowTransaction` hands its body; none
+ * of them queue. A superset of `RalplanTx`, whose ralplan paths it keeps, with
+ * every other workflow file of the session reachable by name.
+ */
+export type WorkflowTx = RalplanTx & {
+  readonly paths: RalplanTx["paths"] & {
+    /** `state/active/<skill>.json`; `skill` must be one safe path component. */
+    activeRow(skill: string): string;
+    /** `state/transactions` (handoff journals). */
+    transactionsDir: string;
+    /** `state/<mode>-state.json` */
+    modeState(mode: StateMode): string;
+    /** `ultragoal/` and its `goals.json`, `progress.txt`, `ledger.jsonl`. */
+    ultragoal: { dir: string; goals: string; progress: string; ledger: string };
+    /** `state/goal-state.json` */
+    goalState: string;
+    /** `state/goal-continuation.json` (hook-only, PQ-2 B) */
+    goalContinuation: string;
+  };
+  readModeState(mode: StateMode): Promise<InterviewState | undefined>;
+  /** Replaces the whole state (not a merge); `_meta` is regenerated. */
+  writeModeState(
+    mode: StateMode,
+    state: Record<string, unknown>,
+    updatedBy: StateWriter,
+  ): Promise<InterviewState>;
 };
 
 export type SessionPaths = {
@@ -293,6 +327,13 @@ export function validateSessionID(sessionID: string): string {
   if (sessionID.length > MAX_SESSION_COMPONENT_BYTES - SESSION_DIR_FIXED_BYTES)
     throw new Error("native session ID exceeds the filesystem component limit");
   return sessionID;
+}
+
+/** gjc `assertSafePathComponent` (`gjc-runtime/workflow-cli-common.ts:24-30`). */
+function safeComponent(value: string, name: string): string {
+  if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$/.test(value) || value.includes(".."))
+    throw new Error(`invalid path component for ${name}: ${value}`);
+  return value;
 }
 
 function pad(value: number, width: number): string {
@@ -552,18 +593,18 @@ export class StateStore {
    * resolution of a session still has to await the directory scan. The root is
    * part of the key, so two stores on one worktree share the queue.
    */
-  private queueKey(sessionID: string, mode: StateMode): string {
-    // Every ultragoal state access and every ultragoal op share one queue, so
-    // an op's goals/progress/state writes never interleave (plan §3.5).
-    const target = mode === ULTRAGOAL_MODE ? "ultragoal-op" : mode;
-    return `${this.root}\u0000${sessionID}\u0000${target}`;
+  private queueKey(sessionID: string): string {
+    // Plan C-1 (E-1): every mode's state access and every transaction of a
+    // session share one queue, so no workflow file of the session changes
+    // outside it and a cross-skill write never interleaves.
+    return `${this.root}\u0000${sessionID}\u0000workflow`;
   }
 
   async read(
     sessionID: string,
     mode: StateMode = DEEP_INTERVIEW_MODE,
   ): Promise<InterviewState | undefined> {
-    return enqueue(this.queueKey(sessionID, mode), async () =>
+    return enqueue(this.queueKey(sessionID), async () =>
       this.readFile(await this.statePath(sessionID, mode), sessionID),
     );
   }
@@ -580,7 +621,7 @@ export class StateStore {
     if (payload) throw new Error(payload);
     validateExplicitPatch(explicitSnapshot);
 
-    return enqueue(this.queueKey(sessionID, mode), async () => {
+    return enqueue(this.queueKey(sessionID), async () => {
       const target = await this.statePath(sessionID, mode);
       await this.readFile(target, sessionID);
       const next: InterviewState = {
@@ -614,7 +655,7 @@ export class StateStore {
     const explicitSnapshot = { ...explicit };
     validateExplicitPatch(explicitSnapshot);
 
-    return enqueue(this.queueKey(sessionID, mode), async () => {
+    return enqueue(this.queueKey(sessionID), async () => {
       const target = await this.statePath(sessionID, mode);
       const current = (await this.readFile(target, sessionID)) ?? {};
       return this.writeMerged(target, sessionID, mode, updatedBy, {
@@ -642,15 +683,16 @@ export class StateStore {
   }
 
   /**
-   * Run `fn` holding the session's ultragoal queue (plan §3.5). `fn` must only
-   * use `tx`: calling a queued StateStore method for ultragoal inside it would
-   * wait on its own queue forever. Host calls belong outside the transaction.
+   * Run `fn` holding the session's workflow queue (plan C-1) with the old
+   * ultragoal operations. `fn` must only use `tx`: calling a queued
+   * StateStore method inside it would wait on its own queue forever. Host
+   * calls belong outside the transaction.
    */
   async ultragoalTransaction<T>(
     sessionID: string,
     fn: (tx: UltragoalTx) => Promise<T>,
   ): Promise<T> {
-    return enqueue(this.queueKey(sessionID, ULTRAGOAL_MODE), async () => {
+    return enqueue(this.queueKey(sessionID), async () => {
       const sessionDir = await this.resolveSessionDir(sessionID);
       const statePath = await this.statePath(sessionID, ULTRAGOAL_MODE);
       const dir = path.join(sessionDir, "ultragoal");
@@ -687,19 +729,22 @@ export class StateStore {
   }
 
   /**
-   * Run `fn` holding the session's ralplan queue, the one `read`/`patch` use for
-   * ralplan. `fn` must only use `tx`: calling a queued StateStore method for
-   * ralplan inside it waits on its own queue forever, and taking another
-   * queue (ultragoal) inside it is not allowed either (plan C-1.1, C-1.2).
+   * Plan C-1 (E-1): run `fn` holding the session's one workflow queue, the
+   * one every `read`/`write`/`patch`/`clear` and transaction of `owner` uses.
+   * `fn` must only use `tx`: calling a queued StateStore method inside it
+   * waits on its own queue forever (C-1.3). Host calls belong outside it.
    */
-  async ralplanTransaction<T>(
+  async workflowTransaction<T>(
     owner: string,
-    fn: (tx: RalplanTx) => Promise<T>,
+    fn: (tx: WorkflowTx) => Promise<T>,
   ): Promise<T> {
-    return enqueue(this.queueKey(owner, RALPLAN_MODE), async () => {
+    return enqueue(this.queueKey(owner), async () => {
       const sessionDir = await this.resolveSessionDir(owner);
-      const statePath = await this.statePath(owner, RALPLAN_MODE);
       const stateDir = path.join(sessionDir, "state");
+      const ultragoalDir = path.join(sessionDir, "ultragoal");
+      const modeState = (mode: StateMode) =>
+        path.join(stateDir, `${mode}-state.json`);
+      const statePath = modeState(RALPLAN_MODE);
       const inside = (file: string) => {
         const resolved = path.resolve(file);
         const relative = path.relative(sessionDir, resolved);
@@ -708,10 +753,10 @@ export class StateStore {
           relative.startsWith("..") ||
           path.isAbsolute(relative)
         )
-          throw new Error("ralplan path escapes the session directory");
+          throw new Error("workflow path escapes the session directory");
         return resolved;
       };
-      const tx: RalplanTx = {
+      const tx: WorkflowTx = {
         paths: {
           sessionDir,
           statePath,
@@ -719,15 +764,20 @@ export class StateStore {
           auditPath: path.join(stateDir, "audit.jsonl"),
           activeRowPath: path.join(stateDir, "active", "ralplan.json"),
           snapshotPath: path.join(stateDir, "skill-active-state.json"),
-          // gjc `assertSafePathComponent` (`gjc-runtime/workflow-cli-common.ts:24-30`).
-          runDir: (runId) => {
-            if (
-              !/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$/.test(runId) ||
-              runId.includes("..")
-            )
-              throw new Error(`invalid path component for run_id: ${runId}`);
-            return path.join(sessionDir, "plans", "ralplan", runId);
+          runDir: (runId) =>
+            path.join(sessionDir, "plans", "ralplan", safeComponent(runId, "run_id")),
+          activeRow: (skill) =>
+            path.join(stateDir, "active", `${safeComponent(skill, "skill")}.json`),
+          transactionsDir: path.join(stateDir, "transactions"),
+          modeState,
+          ultragoal: {
+            dir: ultragoalDir,
+            goals: path.join(ultragoalDir, "goals.json"),
+            progress: path.join(ultragoalDir, "progress.txt"),
+            ledger: path.join(ultragoalDir, "ledger.jsonl"),
           },
+          goalState: path.join(stateDir, "goal-state.json"),
+          goalContinuation: path.join(stateDir, "goal-continuation.json"),
         },
         readState: () => this.readFile(statePath, owner),
         writeState: (state, updatedBy) =>
@@ -735,6 +785,15 @@ export class StateStore {
             statePath,
             owner,
             RALPLAN_MODE,
+            updatedBy,
+            snapshotState(state),
+          ),
+        readModeState: (mode) => this.readFile(modeState(mode), owner),
+        writeModeState: (mode, state, updatedBy) =>
+          this.writeMerged(
+            modeState(mode),
+            owner,
+            mode,
             updatedBy,
             snapshotState(state),
           ),
@@ -777,6 +836,14 @@ export class StateStore {
       };
       return fn(tx);
     });
+  }
+
+  /** The ralplan name of `workflowTransaction` (plan C-1.2). */
+  async ralplanTransaction<T>(
+    owner: string,
+    fn: (tx: WorkflowTx) => Promise<T>,
+  ): Promise<T> {
+    return this.workflowTransaction(owner, fn);
   }
 
   /** `O_NOFOLLOW` closes the gap between the check and the open. */
@@ -823,7 +890,7 @@ export class StateStore {
     sessionID: string,
     mode: StateMode = DEEP_INTERVIEW_MODE,
   ): Promise<"deleted" | "missing"> {
-    return enqueue(this.queueKey(sessionID, mode), async () => {
+    return enqueue(this.queueKey(sessionID), async () => {
       const target = await this.statePath(sessionID, mode);
       const current = await this.readFile(target, sessionID);
       if (!current) return "missing";

@@ -461,35 +461,59 @@ test("a v2 session creation time is read as a number or a DateTime", () => {
   expect(epochMillis("2026-09-18")).toBeNaN();
 });
 
-test("ultragoal transactions serialize with ultragoal patches and validate state fields", async () => {
+test("C-1: one workflow queue per session serializes every mode and transaction", async () => {
   await fixture(async (root) => {
     const store = storeAt(root);
     const order: string[] = [];
     let release!: () => void;
     const held = new Promise<void>((resolve) => (release = resolve));
-    const tx = store.ultragoalTransaction("ses_u", async (t) => {
-      order.push("tx start");
-      await t.writeFile("goals.json", '{"version":1}\n');
+    const tx = store.workflowTransaction("ses_u", async (t) => {
+      order.push("workflow tx start");
+      await t.writeModeState("ultragoal", { active: true, iteration: 1 }, "goal_tool");
       await held;
-      await t.writeState({ active: true, iteration: 1 }, "ultragoal_tool");
-      order.push("tx end");
+      order.push("workflow tx end");
     });
-    // Queued behind the transaction: same queue key for every ultragoal access.
-    const patch = store
-      .patch("ses_u", { iteration: 2 }, "ultragoal", "ultragoal_hook")
-      .then(() => order.push("patch"));
+    // Queued behind the transaction, whatever the mode or transaction kind.
+    const queued = [
+      store
+        .ultragoalTransaction("ses_u", (t) => t.writeFile("goals.json", '{"version":1}\n'))
+        .then(() => order.push("ultragoal tx")),
+      store
+        .ralplanTransaction("ses_u", (t) => t.writeState({ active: true }, "ralplan_tool"))
+        .then(() => order.push("ralplan tx")),
+      store
+        .patch("ses_u", { iteration: 2 }, "ultragoal", "ultragoal_hook")
+        .then(() => order.push("ultragoal patch")),
+      store.write("ses_u", { note: "n" }).then(() => order.push("deep-interview write")),
+    ];
+    // Another session has its own queue.
+    await store.write("ses_other", { note: "free" });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(order).toEqual(["tx start"]);
+    expect(order).toEqual(["workflow tx start"]);
     release();
-    await Promise.all([tx, patch]);
-    expect(order).toEqual(["tx start", "tx end", "patch"]);
+    await Promise.all([tx, ...queued]);
+    expect(order).toEqual([
+      "workflow tx start",
+      "workflow tx end",
+      "ultragoal tx",
+      "ralplan tx",
+      "ultragoal patch",
+      "deep-interview write",
+    ]);
     const state = await store.read("ses_u", "ultragoal");
     expect(state).toMatchObject({ active: true, iteration: 2 });
-    expect(state?._meta?.updatedBy).toBe("ultragoal_hook");
+    expect(state?._meta).toMatchObject({ mode: "ultragoal", updatedBy: "ultragoal_hook" });
     const { sessionDir } = await store.resolveSessionPaths("ses_u");
     expect(
       await readFile(join(sessionDir, "ultragoal/goals.json"), "utf8"),
     ).toBe('{"version":1}\n');
+    await store.workflowTransaction("ses_u", async (t) => {
+      expect(t.paths.modeState("deep-interview")).toBe(join(sessionDir, "state/deep-interview-state.json"));
+      expect(t.paths.activeRow("ultragoal")).toBe(join(sessionDir, "state/active/ultragoal.json"));
+      expect(t.paths.ultragoal.ledger).toBe(join(sessionDir, "ultragoal/ledger.jsonl"));
+      expect(() => t.paths.activeRow("../x")).toThrow("invalid path component for skill");
+      expect(await t.readModeState("ralplan")).toMatchObject({ active: true });
+    });
     // `undefined` removes a field; malformed ultragoal fields are refused.
     await store.patch("ses_u", { iteration: undefined }, "ultragoal");
     expect((await store.read("ses_u", "ultragoal"))?.iteration).toBeUndefined();

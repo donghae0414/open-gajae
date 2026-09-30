@@ -3,11 +3,14 @@
 // active row `state/active/ralplan.json` and the snapshot
 // `state/skill-active-state.json`, with one `state/audit.jsonl` row per file
 // change (DR-18). Every `*Tx` function takes the `tx` of one
-// `StateStore.ralplanTransaction` and never calls a queued StateStore method
-// (plan C-1.1); the exported entry points wrap exactly one transaction each,
-// and the cross-skill ones run their transactions one after another, never
-// nested (C-1.2, C-1.3). The ultragoal entry gate reads before any
-// transaction (C-1.4).
+// `StateStore.ralplanTransaction` (the session's one workflow queue, ultragoal
+// revision plan C-1) and never calls a queued StateStore method (C-1.1); the
+// exported entry points wrap exactly one transaction each, and the
+// cross-skill ones run their transactions one after another, never nested
+// (C-1.2, C-1.3). The ultragoal entry gate reads before any transaction
+// (C-1.4). The audit rows, the rows and snapshot, and the doctor are shared
+// with the other workflow skills in `../skill-state/` (audit.ts, rows.ts,
+// doctor.ts).
 //
 // Source: gajae-code 5c5231418930673e42cc5d08ebe4376e03187533 (MIT),
 // `packages/coding-agent/src/`:
@@ -21,21 +24,17 @@
 //   (`buildDeduplicatedResult`), `:2382-2475` (`seedRalplanState`,
 //   `handleConsensusHandoff`)
 // - `gjc-runtime/state-runtime.ts:244-270` (`readActivePhaseForSkill`,
-//   `describeStaleClearState`), `:317-600` (doctor), `:826-839`
+//   `describeStaleClearState`), `:826-839`
 //   (`mergeWithNullDelete`), `:973-999` (`syncWorkflowSkillState`),
 //   `:1156-1222` (`handleRead`), `:1235-1400` (`handleWrite`), `:1402-1490`
 //   (`handleClear`), `:1739-1763` (handoff caller state)
-// - `gjc-runtime/state-writer.ts:396-411` (`buildActiveSnapshot`), `:517-532`
-//   (`maybeAudit`), `:958-1067` (`readPersistedPhase`,
+// - `gjc-runtime/state-writer.ts:958-1067` (`readPersistedPhase`,
 //   `recordInvalidWorkflowTransition`, `writeWorkflowEnvelopeAtomic`),
-//   `:1234-1257` (`appendJsonlIdempotent`), `:1322-1413` (active entry write
-//   and removal, `rebuildActiveSnapshot`)
+//   `:1234-1257` (`appendJsonlIdempotent`)
 // - `gjc-runtime/state-migrations.ts:62-127` (`migrateWorkflowState` v1→v2)
-// - `gjc-runtime/state-validation.ts` (`validateWorkflowStateEnvelope`)
 // - `gjc-runtime/state-renderer.ts:82-190` (`STATE_FIELD_ALLOWLIST`,
 //   `projectStateFields`)
-// - `skill-state/active-state.ts:65-83,914-952` (`SkillActiveEntry`,
-//   `syncSkillActiveState`), `:886-898` (stale entry replacement, gate ⑤),
+// - `skill-state/active-state.ts:886-898` (stale entry replacement, gate ⑤),
 //   `:507-546,666-683` (`readModeStatePhase`, `withCanonicalRalplanPhase`,
 //   `mergeVisibleEntries`; the clear's stale check, R-OD14)
 // - `skill-state/workflow-state-contract.ts:59-84` (state-write receipt on the
@@ -45,8 +44,9 @@
 //   `ralplan clear`) instead of `--force`/`gjc state …`.
 // - 12: the repository binding is recorded, never enforced.
 // - 13: doctor has no checksum or orphan-journal checks.
-// - 14: only the ralplan row is written; the snapshot is rebuilt from
-//   whatever rows exist, without gjc's planning-pipeline supersession.
+// - 14: only the ralplan row is written; the snapshot follows gjc's planning
+//   pipeline rank and a ralplan row removes an upstream deep-interview row
+//   (`../skill-state/rows.ts`).
 // - 17: no gjc envelope receipt, checksum or `state_revision`; the StateStore
 //   `_meta` stays. Rows and the snapshot carry no `source_state_revision` /
 //   `state_revision` and there is no stale-skip (R-OD6).
@@ -65,25 +65,30 @@
 // `current_phase`. The HUD sync is best-effort like gjc's (`:1908-1931`,
 // `state-runtime.ts:973-999`); row removal on handoff and at the gate is not.
 
-import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { Settings } from "../config.js";
+import { type AuditOwner, appendAudit, HOOK_OWNER, RUNTIME_OWNER } from "../skill-state/audit.js";
+import {
+  activeFlag,
+  collectDoctorSummaryTx,
+  type DoctorSummary,
+  modeStatePhase,
+  readRawJsonTx,
+  rowPhase,
+  workflowEnvelopeError,
+} from "../skill-state/doctor.js";
+import { syncActiveRowTx } from "../skill-state/rows.js";
 import {
   type InterviewState,
   RALPLAN_MODE,
-  type RalplanTx,
   type StateStore,
   ULTRAGOAL_MODE,
+  type WorkflowTx,
 } from "../state.js";
 import { isUltragoalRunning } from "../ultragoal.js";
 import { seedUltragoal } from "../ultragoal-hooks.js";
 import { captureRepositoryBinding } from "./binding.js";
-import {
-  buildRalplanHud,
-  buildRalplanHudFromState,
-  normalizeWorkflowHudSummary,
-  type WorkflowHudSummary,
-} from "./hud.js";
+import { buildRalplanHud, buildRalplanHudFromState } from "./hud.js";
 import {
   buildDeduplicatedReceipt,
   buildLaneBudgetStuckResult,
@@ -134,10 +139,7 @@ import {
   TERMINAL_PHASES,
 } from "./manifest.js";
 
-/** Deviation 21: gjc `gjc-runtime` / `gjc-hook`. */
-export const RUNTIME_OWNER = "open-gajae-runtime" as const;
-export const HOOK_OWNER = "open-gajae-hook" as const;
-export type AuditOwner = typeof RUNTIME_OWNER | typeof HOOK_OWNER;
+export { type AuditOwner, HOOK_OWNER, RUNTIME_OWNER } from "../skill-state/audit.js";
 
 export type RalplanSettings = Settings["ralplan"];
 
@@ -183,41 +185,6 @@ function isManifestState(phase: string): boolean {
 // Audit rows and the state envelope
 // ---------------------------------------------------------------------------
 
-type AuditInput = {
-  category: "state" | "artifact" | "ledger";
-  verb: string;
-  owner: AuditOwner;
-  /** gjc sets it for mode-state, artifact and ledger rows, not active rows. */
-  skill?: string;
-  mutationId?: string;
-  fromPhase?: string;
-  toPhase?: string;
-  forced?: boolean;
-  path: string;
-};
-
-/**
- * gjc `maybeAudit`: `{ts, skill, category, verb, owner, mutation_id,
- * from_phase, to_phase, forced, paths}`; absent optional keys are omitted.
- */
-async function appendAudit(tx: RalplanTx, row: AuditInput): Promise<void> {
-  await tx.appendLine(
-    tx.paths.auditPath,
-    JSON.stringify({
-      ts: now(),
-      skill: row.skill,
-      category: row.category,
-      verb: row.verb,
-      owner: row.owner,
-      mutation_id: row.mutationId ?? randomUUID(),
-      from_phase: row.fromPhase,
-      to_phase: row.toPhase,
-      forced: row.forced ?? false,
-      paths: [row.path],
-    }),
-  );
-}
-
 type StateWriteAudit = {
   owner: AuditOwner;
   verb?: string;
@@ -234,7 +201,7 @@ type StateWriteAudit = {
  * (spec D-T11); then the state is replaced and audited.
  */
 async function writeStateTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   prior: Json | undefined,
   next: Json,
   audit: StateWriteAudit,
@@ -290,7 +257,7 @@ async function writeStateTx(
 }
 
 /** gjc `readExistingStateForMutation` + corrupt refusal. */
-async function readStateForMutation(tx: RalplanTx): Promise<Json | undefined> {
+async function readStateForMutation(tx: WorkflowTx): Promise<Json | undefined> {
   try {
     const state = await tx.readState();
     return state === undefined ? undefined : payloadOf(state);
@@ -321,118 +288,9 @@ function migrateRalplanState(state: Json): Json {
   return migrated;
 }
 
-/** gjc `validateWorkflowStateEnvelope` for ralplan; an error string or undefined. */
-function envelopeError(state: unknown): string | undefined {
-  if (!isRecord(state)) return "state for ralplan must be a JSON object";
-  if ("skill" in state && state.skill !== SKILL)
-    return "state skill must match selected mode ralplan";
-  if ("active" in state && typeof state.active !== "boolean")
-    return "state.active must be a boolean when present";
-  if ("current_phase" in state && typeof state.current_phase !== "string")
-    return "state.current_phase must be a string when present";
-  if ("version" in state && typeof state.version !== "number")
-    return "state.version must be a number when present";
-  if ("updated_at" in state && typeof state.updated_at !== "string")
-    return "state.updated_at must be a string when present";
-  if ("receipt" in state && state.receipt !== undefined && !isRecord(state.receipt))
-    return "state.receipt must be an object when present";
-  return undefined;
-}
-
 // ---------------------------------------------------------------------------
 // Active row and snapshot
 // ---------------------------------------------------------------------------
-
-type ActiveRowInput = {
-  active: boolean;
-  phase?: string;
-  sessionId: string;
-  hud?: WorkflowHudSummary;
-  receipt?: Json;
-  handoff_from?: string;
-  handoff_at?: string;
-};
-
-/**
- * gjc `syncSkillActiveState` for ralplan: an active entry is written, an
- * inactive one removed (`persistActiveEntry`, `active-state.ts:849-866`), then
- * the snapshot is rebuilt. `activated_at` is the sync time, as in gjc.
- */
-async function syncActiveRowTx(
-  tx: RalplanTx,
-  input: ActiveRowInput,
-  owner: AuditOwner,
-): Promise<void> {
-  const rowPath = tx.paths.activeRowPath;
-  if (!input.active) {
-    if ((await tx.remove(rowPath)) === "deleted")
-      await appendAudit(tx, {
-        category: "state",
-        verb: "remove-active-entry",
-        owner,
-        path: rowPath,
-      });
-  } else {
-    const at = now();
-    const hud = normalizeWorkflowHudSummary(input.hud);
-    const entry = {
-      skill: SKILL,
-      phase: input.phase,
-      active: true,
-      activated_at: at,
-      updated_at: at,
-      session_id: input.sessionId,
-      ...(input.handoff_from ? { handoff_from: input.handoff_from } : {}),
-      ...(input.handoff_at ? { handoff_at: input.handoff_at } : {}),
-      ...(hud ? { hud } : {}),
-      ...(input.receipt ? { receipt: input.receipt } : {}),
-    };
-    await tx.writeText(rowPath, `${JSON.stringify(entry, null, 2)}\n`);
-    await appendAudit(tx, {
-      category: "state",
-      verb: "write-active-entry",
-      owner,
-      path: rowPath,
-    });
-  }
-  await rebuildSnapshotTx(tx, owner);
-}
-
-/** gjc `readActiveEntries` + `buildActiveSnapshot` + `rebuildActiveSnapshot`. */
-async function rebuildSnapshotTx(tx: RalplanTx, owner: AuditOwner): Promise<void> {
-  const dir = path.dirname(tx.paths.activeRowPath);
-  const entries: Json[] = [];
-  for (const name of await tx.list(dir)) {
-    if (!name.endsWith(".json")) continue;
-    const text = await tx.readText(path.join(dir, name));
-    if (text === undefined) continue;
-    const raw: unknown = JSON.parse(text);
-    if (!isRecord(raw) || !trimmed(raw.skill)) continue;
-    entries.push(raw);
-  }
-  const updatedAt = (entry: Json) => Date.parse(String(entry.updated_at ?? "")) || 0;
-  const visible = entries
-    .filter((entry) => entry.active !== false)
-    .sort((a, b) => updatedAt(b) - updatedAt(a));
-  const primary = visible[0];
-  const snapshot = {
-    version: 1,
-    active: visible.length > 0,
-    skill: primary?.skill ?? "",
-    phase: primary?.phase ?? "",
-    updated_at: primary?.updated_at ?? "",
-    session_id: primary?.session_id,
-    active_skills: entries,
-    active_subskills: [],
-  };
-  await tx.writeText(tx.paths.snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`);
-  await appendAudit(tx, {
-    category: "state",
-    verb: "rebuild-active-snapshot",
-    owner,
-    path: tx.paths.snapshotPath,
-  });
-}
 
 /** gjc's HUD sync never changes the command's outcome. */
 async function bestEffort(run: () => Promise<void>): Promise<void> {
@@ -445,7 +303,7 @@ async function bestEffort(run: () => Promise<void>): Promise<void> {
 
 /** gjc `buildWorkflowStateReceipt`, carried on the row after a `state` op. */
 function stateWriteReceipt(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   owner: AuditOwner,
   at: string,
   mutationId: string,
@@ -473,7 +331,7 @@ function indexPathOf(runDir: string): string {
 }
 
 /** gjc `loadRalplanIndexForCap`: an unreadable index is present but untrusted. */
-async function loadIndexTx(tx: RalplanTx, runDir: string): Promise<RalplanIndexLoad> {
+async function loadIndexTx(tx: WorkflowTx, runDir: string): Promise<RalplanIndexLoad> {
   let text: string | undefined;
   try {
     text = await tx.readText(indexPathOf(runDir));
@@ -485,7 +343,7 @@ async function loadIndexTx(tx: RalplanTx, runDir: string): Promise<RalplanIndexL
 
 /** gjc `appendJsonlIdempotent`: append unless a row with the same key exists. */
 async function appendJsonlIdempotentTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   file: string,
   entry: unknown,
   key: (entry: unknown) => string | undefined,
@@ -505,7 +363,7 @@ async function appendJsonlIdempotentTx(
 }
 
 async function writeArtifactTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   file: string,
   content: string,
   owner: AuditOwner,
@@ -522,7 +380,7 @@ async function writeArtifactTx(
 
 /** gjc `persistArtifact`: stage file, ledger row, then the final's approval copy. */
 async function persistArtifactTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   runDir: string,
   stage: RalplanStage,
   stageN: number,
@@ -558,7 +416,7 @@ async function persistArtifactTx(
 
 /** gjc `ensureFinalPendingApproval`: a deduplicated final keeps its byte-identical copy. */
 async function ensureFinalPendingApprovalTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   runDir: string,
   stageN: number,
   artifact: { path: string; sha256: string },
@@ -590,7 +448,7 @@ async function ensureFinalPendingApprovalTx(
 
 /** gjc `repairMissingStageArtifactLedger`: the row a crash left unwritten. */
 async function repairLedgerTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   runDir: string,
   stage: RalplanStage,
   stageN: number,
@@ -647,7 +505,7 @@ async function repairLedgerTx(
 // ---------------------------------------------------------------------------
 
 /** The state's `run_id`, checked as a path component (gjc `readActiveRunId`). */
-function activeRunId(tx: RalplanTx, state: Json | undefined): string | undefined {
+function activeRunId(tx: WorkflowTx, state: Json | undefined): string | undefined {
   const candidate = trimmed(state?.run_id);
   if (!candidate) return undefined;
   tx.paths.runDir(candidate);
@@ -663,7 +521,7 @@ function activeRunId(tx: RalplanTx, state: Json | undefined): string | undefined
  * leaves the state inactive on `final` / `complete`, as in gjc.
  */
 async function persistActiveRunIdTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   state: Json | undefined,
   runId: string,
   stage: RalplanStage,
@@ -698,7 +556,7 @@ async function persistActiveRunIdTx(
 
 /** gjc `applyPersistedRoleStateUpdate` / `applyLaneVerdictUpdate` (shared body). */
 async function mergeRunStateTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   state: Json | undefined,
   fields: Json,
   expectedRunId: string | undefined,
@@ -718,7 +576,7 @@ async function mergeRunStateTx(
 
 /** gjc `recordRalplanPlanningStuck`: one stuck row per run, then the state flag. */
 async function recordPlanningStuckTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   state: Json | undefined,
   runDir: string,
   runId: string,
@@ -744,7 +602,7 @@ async function recordPlanningStuckTx(
 
 /** gjc `persistRalplanFinalAdmission`: only onto the same run. */
 async function persistFinalAdmissionTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   state: Json,
   runId: string,
   admission: RalplanAutoHandoffResolution,
@@ -785,7 +643,7 @@ export type StageWriteResult =
  * a PLANNING-STUCK outcome is a result, not an error.
  */
 export async function writeStageTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   input: StageWriteInput,
   owner: AuditOwner = RUNTIME_OWNER,
 ): Promise<StageWriteResult> {
@@ -995,6 +853,7 @@ export async function writeStageTx(
     syncActiveRowTx(
       tx,
       {
+        skill: SKILL,
         active: true,
         phase: stage,
         sessionId,
@@ -1060,7 +919,7 @@ export type StartRunSummary = {
  * capture, and the active row.
  */
 async function startRunTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   sessionId: string,
   input: StartRunInput,
   projectDir: string,
@@ -1105,6 +964,7 @@ async function startRunTx(
     syncActiveRowTx(
       tx,
       {
+        skill: SKILL,
         active: true,
         phase: RALPLAN_INITIAL_STATE,
         sessionId,
@@ -1163,7 +1023,7 @@ export async function startRun(
  * plan R-O3).
  */
 export async function patchStateTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   sessionId: string,
   patch: Record<string, unknown>,
   owner: AuditOwner = RUNTIME_OWNER,
@@ -1187,7 +1047,7 @@ export async function patchStateTx(
     if (value === null) delete merged[key];
     else merged[key] = value;
   }
-  const preError = envelopeError(merged);
+  const preError = workflowEnvelopeError(SKILL, merged);
   if (preError) throw new Error(preError);
   merged.skill = SKILL;
   if (incomingPhase) merged.current_phase = incomingPhase;
@@ -1208,7 +1068,7 @@ export async function patchStateTx(
     !isValidTransition(fromPhase, toPhase)
   )
     throw new Error(`invalid ralplan phase transition from ${fromPhase} to ${toPhase}`);
-  const postError = envelopeError(merged);
+  const postError = workflowEnvelopeError(SKILL, merged);
   if (postError) throw new Error(postError);
   await writeStateTx(tx, existing, merged, {
     owner,
@@ -1222,6 +1082,7 @@ export async function patchStateTx(
     syncActiveRowTx(
       tx,
       {
+        skill: SKILL,
         active,
         phase: toPhase,
         sessionId,
@@ -1254,7 +1115,7 @@ export async function patchStateTx(
  * files as gjc's does, still reports it.
  */
 async function describeStaleClearTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   existing: Json,
 ): Promise<string | undefined> {
   const phase = trimmed(existing.current_phase);
@@ -1301,7 +1162,7 @@ async function describeStaleClearTx(
  * files kept, and the row removed as in gjc.
  */
 export async function clearStateTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   sessionId: string,
   force: boolean,
   owner: AuditOwner = RUNTIME_OWNER,
@@ -1340,7 +1201,7 @@ export async function clearStateTx(
     toPhase: "complete",
     forced: force,
   });
-  await bestEffort(() => syncActiveRowTx(tx, { active: false, sessionId }, owner));
+  await bestEffort(() => syncActiveRowTx(tx, { skill: SKILL, active: false, sessionId }, owner));
   return {
     ok: true,
     skill: SKILL,
@@ -1428,7 +1289,7 @@ function projectStateFields(
  * projection of `fields`. An unreadable state reads as `{}` with a warning.
  */
 export async function readStatusTx(
-  tx: RalplanTx,
+  tx: WorkflowTx,
   fields?: readonly StateProjectionField[],
 ): Promise<{ result: Json; warning?: string }> {
   let state: Json = {};
@@ -1445,179 +1306,9 @@ export async function readStatusTx(
   };
 }
 
-type DoctorProblemType = "schema_violation" | "stale_active_state";
-
-type DoctorProblem = {
-  type: DoctorProblemType;
-  skill: "ralplan";
-  path: string;
-  message: string;
-  fixCommand: string;
-};
-
-export type DoctorSummary = {
-  ok: boolean;
-  root: string;
-  summary: {
-    skills_scanned: number;
-    files_scanned: number;
-    findings_total: number;
-    by_kind: Record<DoctorProblemType, number>;
-  };
-  problems: DoctorProblem[];
-};
-
-async function readRawJsonTx(
-  tx: RalplanTx,
-  file: string,
-): Promise<{ exists: boolean; value?: unknown; error?: string }> {
-  try {
-    const text = await tx.readText(file);
-    if (text === undefined) return { exists: false };
-    return { exists: true, value: JSON.parse(text) };
-  } catch (error) {
-    return { exists: true, error: message(error) };
-  }
-}
-
-function activeFlag(value: unknown): boolean {
-  return isRecord(value) && value.active !== false;
-}
-
-function rowPhase(value: unknown): string | undefined {
-  return isRecord(value) ? trimmed(value.phase) : undefined;
-}
-
-/** gjc `modeStatePhase`: an inactive state's phase counts only when locked. */
-function modeStatePhase(value: unknown): string | undefined {
-  if (!isRecord(value)) return undefined;
-  const phase = trimmed(value.current_phase);
-  if (!phase) return undefined;
-  if (
-    value.active === false &&
-    !(RALPLAN_PHASE_LOCK as readonly string[]).includes(phase)
-  )
-    return undefined;
-  return phase;
-}
-
-/**
- * gjc `collectDoctorSummary` for ralplan (D-T13): `schema_violation` for an
- * unreadable or invalid envelope or an unknown phase (DR-21), and
- * `stale_active_state` for a row or snapshot entry that is active without a
- * live active state, has no row behind it, or names another phase. Reports
- * only; nothing is fixed.
- */
-export async function doctorTx(tx: RalplanTx): Promise<DoctorSummary> {
-  const problems: DoctorProblem[] = [];
-  const problem = (
-    type: DoctorProblemType,
-    file: string,
-    text: string,
-  ): DoctorProblem => ({
-    type,
-    skill: SKILL,
-    path: file,
-    message: text,
-    // gjc `gjc state ralplan migrate` / `clear` (deviation 1, no migrate op).
-    fixCommand: type === "schema_violation" ? "ralplan clear (force: true)" : "ralplan clear",
-  });
-  let filesScanned = 0;
-  let invalidState = false;
-
-  const statePath = tx.paths.statePath;
-  const state = await readRawJsonTx(tx, statePath);
-  if (state.exists) {
-    filesScanned += 1;
-    if (state.error) {
-      problems.push(
-        problem("schema_violation", statePath, `mode-state JSON is unreadable: ${state.error}`),
-      );
-      invalidState = true;
-    } else {
-      const error = envelopeError(state.value);
-      const phase = isRecord(state.value) ? state.value.current_phase : undefined;
-      if (error) problems.push(problem("schema_violation", statePath, error));
-      else if (typeof phase === "string" && !isKnownPhase(phase))
-        problems.push(
-          problem("schema_violation", statePath, `unknown ralplan phase "${phase}"`),
-        );
-      invalidState = problems.length > 0;
-    }
-  }
-
-  const drift = (file: string, kind: string, entry: unknown) => {
-    const entryPhase = rowPhase(entry);
-    const statePhase = modeStatePhase(state.value);
-    if (!entryPhase || !statePhase || entryPhase === statePhase) return;
-    problems.push(
-      problem(
-        "stale_active_state",
-        file,
-        `${kind} for ralplan phase ${entryPhase} differs from canonical mode-state phase ${statePhase}`,
-      ),
-    );
-  };
-
-  const activeDir = path.dirname(tx.paths.activeRowPath);
-  const rowSkills = new Set<string>();
-  for (const name of (await tx.list(activeDir)).filter((n) => n.endsWith(".json"))) {
-    filesScanned += 1;
-    const file = path.join(activeDir, name);
-    const entry = await readRawJsonTx(tx, file);
-    const skill =
-      (isRecord(entry.value) && typeof entry.value.skill === "string"
-        ? entry.value.skill
-        : undefined) ?? path.basename(name, ".json");
-    rowSkills.add(skill);
-    // Deviation 14: rows of other skills are not checked.
-    if (skill !== SKILL) continue;
-    if (activeFlag(entry.value) && (!state.exists || !activeFlag(state.value)))
-      problems.push(
-        problem(
-          "stale_active_state",
-          file,
-          "active entry for ralplan does not match a live active mode-state",
-        ),
-      );
-    if (activeFlag(entry.value) && !invalidState) drift(file, "active entry", entry.value);
-  }
-
-  const snapshotPath = tx.paths.snapshotPath;
-  const snapshot = await readRawJsonTx(tx, snapshotPath);
-  if (snapshot.exists) filesScanned += 1;
-  if (isRecord(snapshot.value) && Array.isArray(snapshot.value.active_skills)) {
-    for (const entry of snapshot.value.active_skills as unknown[]) {
-      if (!isRecord(entry) || entry.skill !== SKILL) continue;
-      if (activeFlag(entry) && !rowSkills.has(SKILL))
-        problems.push(
-          problem(
-            "stale_active_state",
-            snapshotPath,
-            "active snapshot lists ralplan but no raw per-skill active entry exists",
-          ),
-        );
-      if (activeFlag(entry) && !invalidState) drift(snapshotPath, "active snapshot", entry);
-    }
-  }
-
-  problems.sort((a, b) => a.type.localeCompare(b.type) || a.path.localeCompare(b.path));
-  const byKind: Record<DoctorProblemType, number> = {
-    schema_violation: 0,
-    stale_active_state: 0,
-  };
-  for (const found of problems) byKind[found.type] += 1;
-  return {
-    ok: problems.length === 0,
-    root: path.dirname(statePath),
-    summary: {
-      skills_scanned: 1,
-      files_scanned: filesScanned,
-      findings_total: problems.length,
-      by_kind: byKind,
-    },
-    problems,
-  };
+/** gjc `collectDoctorSummary` for ralplan (D-T13), in `../skill-state/doctor.ts`. */
+export function doctorTx(tx: WorkflowTx): Promise<DoctorSummary> {
+  return collectDoctorSummaryTx(tx, SKILL);
 }
 
 // ---------------------------------------------------------------------------
@@ -1635,7 +1326,7 @@ export type RalplanHandoffMeta = {
 export class RalplanNotActiveError extends Error {}
 
 /** The run's `pending-approval.md`, when it exists. */
-async function pendingApprovalPathTx(tx: RalplanTx, state: Json): Promise<string | undefined> {
+async function pendingApprovalPathTx(tx: WorkflowTx, state: Json): Promise<string | undefined> {
   const runId = activeRunId(tx, state);
   const runDir = runId ? tx.paths.runDir(runId) : undefined;
   return runDir && (await tx.list(runDir)).includes(RALPLAN_PENDING_APPROVAL_FILE)
@@ -1706,7 +1397,7 @@ export async function demoteRalplanForUltragoalEntry(
         toPhase: "handoff",
       },
     );
-    await syncActiveRowTx(tx, { active: false, sessionId }, owner);
+    await syncActiveRowTx(tx, { skill: SKILL, active: false, sessionId }, owner);
     const pending = await pendingApprovalPathTx(tx, state);
     return {
       handoff_from: "ralplan",
@@ -1793,7 +1484,7 @@ export async function ultragoalEntryGate(
     if (current?.active === true) return;
     const rows = await tx.list(path.dirname(tx.paths.activeRowPath));
     if (!rows.includes(path.basename(tx.paths.activeRowPath))) return;
-    await syncActiveRowTx(tx, { active: false, sessionId }, owner);
+    await syncActiveRowTx(tx, { skill: SKILL, active: false, sessionId }, owner);
   });
   return { status: "pass" };
 }
