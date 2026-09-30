@@ -9,7 +9,9 @@
 //   (`buildUltragoalHudSummary`: blocked, goals, current, status, ledger)
 // - `gjc-runtime/state-runtime.ts:873-925` (the ultragoal branch of
 //   `buildHudForMode`: counts from the goal rows, current = first active,
-//   else first pending)
+//   else first pending; the status is the state's `status`, else its phase),
+//   used by the reconcile, the `state` op and both sides of a handoff
+//   (`:1824,1838`)
 // The chip helpers are shared in `../skill-state/hud.ts`. No deviation.
 
 import {
@@ -20,6 +22,10 @@ import {
   type WorkflowHudSummary,
 } from "../skill-state/hud.js";
 import type { LatestLedgerEvent } from "./ledger.js";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 export type UltragoalHudGoal = { id: string; title: string; status: string };
 
@@ -54,4 +60,29 @@ export function buildUltragoalHud(state: UltragoalHudState): WorkflowHudSummary 
     ]),
     ...(state.updatedAt ? { updated_at: state.updatedAt } : {}),
   };
+}
+
+/**
+ * gjc `buildHudForMode("ultragoal", state)`: the goal rows, `status` (else the
+ * phase, else `pending`) and `latestLedgerEvent` of an ultragoal mode-state.
+ */
+export function buildUltragoalHudFromState(state: Record<string, unknown>, at: string): WorkflowHudSummary {
+  const goals: UltragoalHudGoal[] = Array.isArray(state.goals)
+    ? (state.goals as unknown[]).filter(
+        (goal): goal is UltragoalHudGoal =>
+          isRecord(goal) &&
+          typeof goal.id === "string" &&
+          typeof goal.title === "string" &&
+          typeof goal.status === "string",
+      )
+    : [];
+  const phase = typeof state.current_phase === "string" ? state.current_phase.trim() : "";
+  const latest = state.latestLedgerEvent;
+  return buildUltragoalHud({
+    status: typeof state.status === "string" ? state.status : phase || "pending",
+    goals,
+    latestLedgerEvent:
+      isRecord(latest) && typeof latest.event === "string" ? (latest as LatestLedgerEvent) : undefined,
+    updatedAt: at,
+  });
 }

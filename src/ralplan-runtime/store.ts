@@ -7,10 +7,9 @@
 // revision plan C-1) and never calls a queued StateStore method (C-1.1); the
 // exported entry points wrap exactly one transaction each, and the
 // cross-skill ones run their transactions one after another, never nested
-// (C-1.2, C-1.3). The ultragoal entry gate reads before any transaction
-// (C-1.4). The audit rows, the rows and snapshot, and the doctor are shared
-// with the other workflow skills in `../skill-state/` (audit.ts, rows.ts,
-// doctor.ts).
+// (C-1.2, C-1.3). The audit rows, the rows and snapshot, the doctor and the
+// cross-skill handoff are shared with the other workflow skills in
+// `../skill-state/` (audit.ts, rows.ts, doctor.ts, handoff.ts).
 //
 // Source: gajae-code 5c5231418930673e42cc5d08ebe4376e03187533 (MIT),
 // `packages/coding-agent/src/`:
@@ -50,20 +49,19 @@
 // - 17: no gjc envelope receipt, checksum or `state_revision`; the StateStore
 //   `_meta` stays. Rows and the snapshot carry no `source_state_revision` /
 //   `state_revision` and there is no stale-skip (R-OD6).
-// - 19: `handoff` removes the ralplan row, where gjc keeps an inactive caller
-//   row with `handoff_to` (`active-state.ts:868,969-1014`) (AC14). `clear`
-//   removes the row as gjc does (`syncWorkflowSkillState({active: false})` →
-//   `persistActiveEntry` → `removeActiveEntry`, `active-state.ts:849-866`).
+// - `clear` removes the row as gjc does (`syncWorkflowSkillState({active:
+//   false})` → `persistActiveEntry` → `removeActiveEntry`,
+//   `active-state.ts:849-866`); `handoff` keeps an inactive `handoff_to`
+//   row, as gjc does, through `../skill-state/handoff.ts` (PQ-6 A).
 // - 35: an unreadable active-row file stops an unforced `clear`, as in gjc,
 //   but a forced clear skips reading it; gjc's clear throws on it even with
 //   `--force` (`state-writer.ts:425-431` via `readActiveEntries`) (R-OD16).
 // - 21: audit `owner` is `open-gajae-runtime` / `open-gajae-hook`.
-// - 25: `ralplanHandoff` seeds ultragoal state (R-O2).
 // - 34: the handoff requires a phase in T (DR-7).
 // DR-8 (R-OD5, gjc as-is): after a write the row `phase` and the `stage` chip
 // are the stage just written; after start/state they are the resulting
 // `current_phase`. The HUD sync is best-effort like gjc's (`:1908-1931`,
-// `state-runtime.ts:973-999`); row removal on handoff and at the gate is not.
+// `state-runtime.ts:973-999`); the handoff's row writes are not.
 
 import path from "node:path";
 import type { Settings } from "../config.js";
@@ -78,15 +76,8 @@ import {
   workflowEnvelopeError,
 } from "../skill-state/doctor.js";
 import { syncActiveRowTx } from "../skill-state/rows.js";
-import {
-  type InterviewState,
-  RALPLAN_MODE,
-  type StateStore,
-  ULTRAGOAL_MODE,
-  type WorkflowTx,
-} from "../state.js";
-import { isUltragoalRunning } from "../ultragoal.js";
-import { seedUltragoal } from "../ultragoal-hooks.js";
+import { type HandoffReceipt, handoffWorkflowTx } from "../skill-state/handoff.js";
+import { type InterviewState, type StateStore, type WorkflowTx } from "../state.js";
 import { captureRepositoryBinding } from "./binding.js";
 import { buildRalplanHud, buildRalplanHudFromState } from "./hud.js";
 import {
@@ -129,7 +120,6 @@ import {
 import {
   advanceCurrentPhase,
   GUARD_RELEASE_PHASES,
-  isKnownPhase,
   isValidTransition,
   RALPLAN_INITIAL_STATE,
   RALPLAN_PHASE_LOCK,
@@ -149,7 +139,10 @@ const WORKFLOW_STATE_VERSION = 2;
 const RECEIPT_FRESH_MS = 30 * 60 * 1000;
 const SKILL = "ralplan";
 
-/** C-4 ③: ultragoal entry refused while ralplan planning runs (R-O5 label). */
+/**
+ * The `skill ultragoal` turn gate's refusal while this execution loaded an
+ * active ralplan outside T (ultragoal revision plan C-10, I-7; R-O5 label).
+ */
 export const RALPLAN_RUNNING_REFUSAL =
   'ralplan planning is running; finish it first: choose "Approve execution via ultragoal" at its approval step, or stop ralplan (`ralplan state` with {"active": false}) and try again.';
 
@@ -1312,15 +1305,8 @@ export function doctorTx(tx: WorkflowTx): Promise<DoctorSummary> {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-skill handoff and the ultragoal entry gate (C-1.3, C-4)
+// Cross-skill handoff (ultragoal revision plan C-5, PQ-6 A)
 // ---------------------------------------------------------------------------
-
-export type RalplanHandoffMeta = {
-  handoff_from: "ralplan";
-  handoff_at: string;
-  /** The run's `pending-approval.md`, when it exists (the approved plan). */
-  pending_approval_path?: string;
-};
 
 /** The `ralplan handoff` op's refusal of an inactive ralplan (R-OD18). */
 export class RalplanNotActiveError extends Error {}
@@ -1334,157 +1320,71 @@ async function pendingApprovalPathTx(tx: WorkflowTx, state: Json): Promise<strin
     : undefined;
 }
 
+export type RalplanHandoffResult = {
+  receipt: HandoffReceipt;
+  /** The run's `pending-approval.md`, when it exists (the approved plan). */
+  pendingApprovalPath?: string;
+};
+
 /**
- * The ralplan side of a handoff to ultragoal, in one transaction: the phase
- * must be in T (DR-7, deviation 34), then the gjc caller state `{active:
- * false, current_phase: "handoff", handoff_to, handoff_at}` over the kept
- * fields, the row removed (deviation 19: gjc keeps an inactive caller row with
- * `handoff_to`) and the snapshot rebuilt.
- *
- * `requireActive` (R-OD18): after the phase check, an inactive ralplan —
- * after Stop here, `clear` or an earlier handoff — is refused with a
- * `RalplanNotActiveError`. gjc's `state handoff` verb checks neither the phase
- * nor `active`, but Stop here ends the turn, and a later turn's `ultragoal`
- * load finds no active skill to hand off (`tools/skill.ts:170-171,203-221`;
- * the skill is tracked per turn, `session/agent-session.ts:8038-8046,
- * 13620-13622`). The entry gate passes on that error, which it can only meet
- * when a concurrent handoff wins the race.
+ * The ralplan → ultragoal handoff in one transaction, shared by the `ralplan
+ * handoff` op and the `skill ultragoal` turn gate (PQ-6 A). The phase must be
+ * in T (DR-7, deviation 34); then an inactive ralplan — after Stop here,
+ * `clear` or an earlier handoff — is refused with a `RalplanNotActiveError`
+ * (R-OD18), as gjc's Stop here ends the turn and a later turn's `ultragoal`
+ * load finds no active skill to hand off (`tools/skill.ts:170-171,203-221`).
+ * gjc's `state handoff` verb checks neither. Then the common journaled
+ * handoff (`handoffWorkflowTx`): ultragoal active on `goal-planning` over its
+ * kept fields, ralplan inactive on `handoff` over its kept fields, an
+ * inactive ralplan `handoff_to` row and an active ultragoal row.
  */
-export async function demoteRalplanForUltragoalEntry(
-  store: StateStore,
+export async function ralplanHandoffTx(
+  tx: WorkflowTx,
   sessionId: string,
-  owner: AuditOwner = RUNTIME_OWNER,
-  { requireActive = false }: { requireActive?: boolean } = {},
-): Promise<RalplanHandoffMeta> {
-  return store.ralplanTransaction(sessionId, async (tx) => {
-    const state = await readStateForMutation(tx);
-    if (state === undefined)
-      throw new Error("there is no ralplan state in this session to hand off");
-    const phase = trimmed(state.current_phase) ?? "";
-    if (!TERMINAL_PHASES.has(phase))
-      throw new Error(
-        `ralplan can hand off to ultragoal only from a finished phase (${[...TERMINAL_PHASES].join(", ")}); the current phase is ${phase || "(none)"}. Record the final plan first.`,
-      );
-    if (requireActive && state.active !== true) {
-      if (phase === "handoff")
-        throw new RalplanNotActiveError(
-          "ralplan was already handed off (inactive, phase handoff); continue in the `ultragoal` skill.",
-        );
-      const pending = await pendingApprovalPathTx(tx, state);
-      throw new RalplanNotActiveError(
-        `ralplan is not active (phase ${phase}), so there is nothing to hand off: Stop here or \`clear\` ended the run. To execute the plan, load the \`ultragoal\` skill, call \`ultragoal start\` with a reason, then \`ultragoal create\` with the plan's goals${pending ? ` and source_plan ${pending}` : ""}.`,
-      );
-    }
-    const at = now();
-    await writeStateTx(
-      tx,
-      state,
-      {
-        ...state,
-        skill: SKILL,
-        version: WORKFLOW_STATE_VERSION,
-        active: false,
-        current_phase: "handoff",
-        handoff_to: "ultragoal",
-        handoff_at: at,
-        updated_at: at,
-      },
-      {
-        owner,
-        verb: "handoff",
-        mutationId: `${SKILL}:handoff:${at}`,
-        fromPhase: phase,
-        toPhase: "handoff",
-      },
+  owner: AuditOwner,
+  reason: string,
+): Promise<RalplanHandoffResult> {
+  const state = await readStateForMutation(tx);
+  if (state === undefined)
+    throw new Error("there is no ralplan state in this session to hand off");
+  const phase = trimmed(state.current_phase) ?? "";
+  if (!TERMINAL_PHASES.has(phase))
+    throw new Error(
+      `ralplan can hand off to ultragoal only from a finished phase (${[...TERMINAL_PHASES].join(", ")}); the current phase is ${phase || "(none)"}. Record the final plan first.`,
     );
-    await syncActiveRowTx(tx, { skill: SKILL, active: false, sessionId }, owner);
-    const pending = await pendingApprovalPathTx(tx, state);
-    return {
-      handoff_from: "ralplan",
-      handoff_at: at,
-      ...(pending ? { pending_approval_path: pending } : {}),
-    };
+  const pendingApprovalPath = await pendingApprovalPathTx(tx, state);
+  if (state.active !== true) {
+    if (phase === "handoff")
+      throw new RalplanNotActiveError(
+        "ralplan was already handed off (inactive, phase handoff); continue in the `ultragoal` skill.",
+      );
+    throw new RalplanNotActiveError(
+      `ralplan is not active (phase ${phase}), so there is nothing to hand off: Stop here or \`clear\` ended the run. To execute the plan, load the \`ultragoal\` skill, then call \`ultragoal create\` with the plan's goals${pendingApprovalPath ? ` (the approved plan: ${pendingApprovalPath})` : ""}.`,
+    );
+  }
+  const receipt = await handoffWorkflowTx(tx, {
+    caller: SKILL,
+    callee: "ultragoal",
+    sessionId,
+    owner,
+    reason,
   });
+  return { receipt, ...(pendingApprovalPath ? { pendingApprovalPath } : {}) };
 }
 
 /**
- * `ralplan handoff {to: "ultragoal"}` (R-O2): demote ralplan, and only after
- * that transaction seed ultragoal confirmed with the handoff meta. If the
- * seed fails, ralplan stays in `handoff` and the error says how to continue
- * (R-19).
+ * `ralplan handoff {to: "ultragoal"}`: `ralplanHandoffTx` in one transaction.
+ * The result names the approved plan (D-HE1: the path rides the text only),
+ * then gjc's handoff receipt.
  */
 export async function ralplanHandoff(
   store: StateStore,
   sessionId: string,
   owner: AuditOwner = RUNTIME_OWNER,
 ): Promise<string> {
-  const meta = await demoteRalplanForUltragoalEntry(store, sessionId, owner, {
-    requireActive: true,
-  });
-  const plan = meta.pending_approval_path
-    ? ` with source_plan ${meta.pending_approval_path}`
-    : "";
-  try {
-    await seedUltragoal(store, sessionId, {
-      awaiting: false,
-      handoff_from: meta.handoff_from,
-      handoff_at: meta.handoff_at,
-    });
-  } catch (error) {
-    throw new Error(
-      `ralplan was handed off (inactive, phase handoff) but ultragoal could not be activated: ${message(error)}. Call \`ultragoal start\` with a reason to start it, then \`ultragoal create\` the goals${plan}.`,
-      { cause: error },
-    );
-  }
-  return `Handed off to ultragoal: ralplan is inactive (phase handoff) and ultragoal is active. Load the \`ultragoal\` skill now and call \`ultragoal create\` with the approved plan's goals${plan}.`;
-}
-
-export type UltragoalEntryGateResult =
-  | { status: "pass" }
-  | { status: "refused"; message: string }
-  | ({ status: "handoff" } & RalplanHandoffMeta);
-
-/**
- * C-4, before any transaction (C-1.4): ① a running ultragoal passes without
- * reading ralplan (R-O9); ② a missing, unreadable or unknown-phase ralplan
- * state passes (DR-21); ③ an active ralplan outside T is refused; ④ an active
- * one in T is demoted and the caller records the handoff meta on ultragoal;
- * ⑤ an inactive one whose active row remains has the row removed (gjc
- * `active-state.ts:886-898`), then passes.
- */
-export async function ultragoalEntryGate(
-  store: StateStore,
-  sessionId: string,
-  owner: AuditOwner = RUNTIME_OWNER,
-): Promise<UltragoalEntryGateResult> {
-  const ultragoal = await store.read(sessionId, ULTRAGOAL_MODE).catch(() => undefined);
-  if (isUltragoalRunning(ultragoal)) return { status: "pass" };
-  const ralplan = await store.read(sessionId, RALPLAN_MODE).catch(() => undefined);
-  if (!ralplan || !isKnownPhase(ralplan.current_phase)) return { status: "pass" };
-  if (ralplan.active === true) {
-    if (!TERMINAL_PHASES.has(ralplan.current_phase))
-      return { status: "refused", message: RALPLAN_RUNNING_REFUSAL };
-    // The read above is outside the lock: if a `ralplan handoff` op commits
-    // first, the demote finds ralplan inactive and the gate passes instead of
-    // demoting it a second time.
-    try {
-      return {
-        status: "handoff",
-        ...(await demoteRalplanForUltragoalEntry(store, sessionId, owner, {
-          requireActive: true,
-        })),
-      };
-    } catch (error) {
-      if (error instanceof RalplanNotActiveError) return { status: "pass" };
-      throw error;
-    }
-  }
-  await store.ralplanTransaction(sessionId, async (tx) => {
-    const current = await tx.readState().catch(() => undefined);
-    if (current?.active === true) return;
-    const rows = await tx.list(path.dirname(tx.paths.activeRowPath));
-    if (!rows.includes(path.basename(tx.paths.activeRowPath))) return;
-    await syncActiveRowTx(tx, { skill: SKILL, active: false, sessionId }, owner);
-  });
-  return { status: "pass" };
+  const { receipt, pendingApprovalPath } = await store.ralplanTransaction(sessionId, (tx) =>
+    ralplanHandoffTx(tx, sessionId, owner, "ralplan handoff to ultragoal"),
+  );
+  const plan = pendingApprovalPath ? ` (the approved plan: ${pendingApprovalPath})` : "";
+  return `Handed off to ultragoal: ralplan is inactive (phase handoff) and ultragoal is active in goal-planning. Load the \`ultragoal\` skill now and call \`ultragoal create\` with the approved plan's goals${plan}.\n${JSON.stringify(receipt, null, 2)}`;
 }

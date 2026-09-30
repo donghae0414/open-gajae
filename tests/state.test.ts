@@ -476,7 +476,7 @@ test("C-1: one workflow queue per session serializes every mode and transaction"
     // Queued behind the transaction, whatever the mode or transaction kind.
     const queued = [
       store
-        .ultragoalTransaction("ses_u", (t) => t.writeFile("goals.json", '{"version":1}\n'))
+        .workflowTransaction("ses_u", (t) => t.writeText(t.paths.ultragoal.goals, '{"version":1}\n'))
         .then(() => order.push("ultragoal tx")),
       store
         .ralplanTransaction("ses_u", (t) => t.writeState({ active: true }, "ralplan_tool"))
@@ -514,14 +514,8 @@ test("C-1: one workflow queue per session serializes every mode and transaction"
       expect(() => t.paths.activeRow("../x")).toThrow("invalid path component for skill");
       expect(await t.readModeState("ralplan")).toMatchObject({ active: true });
     });
-    // `undefined` removes a field; malformed ultragoal fields are refused.
+    // `undefined` removes a field.
     await store.patch("ses_u", { iteration: undefined }, "ultragoal");
     expect((await store.read("ses_u", "ultragoal"))?.iteration).toBeUndefined();
-    await expect(
-      store.patch("ses_u", { verification_request: { goal_id: "G001" } }, "ultragoal"),
-    ).rejects.toThrow("verification_request");
-    await expect(
-      store.patch("ses_u", { reject_counts: { G001: "x" as never } }, "ultragoal"),
-    ).rejects.toThrow("reject_counts");
   });
 });

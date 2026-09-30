@@ -1,4 +1,4 @@
-// The unwired `ultragoal` tool and store (plan S2): the R17 ops over a temp
+// The `ultragoal` tool and store (plan S2, wired in S3): the R17 ops over a temp
 // worktree and a fake lineage (root + one child), checked on the C-14 text
 // lines (PQ-18 B) and the files they write. The `goal complete` guard is
 // S2c's (`src/goal/tool.ts`).
@@ -153,8 +153,8 @@ test("the op list is R17's, and checkpoint takes complete|failed|blocked|pending
       "clear",
     ]);
     for (const op of ULTRAGOAL_OPS) expect(tool.input.safeParse({ op }).success).toBe(true);
-    for (const op of ["start", "resume", "cancel", "complete", "request_final_review", "record_verdict"])
-      expect(tool.input.safeParse({ op }).success).toBe(false);
+    // Any other op is refused (the op list above is the whole contract, AC19).
+    for (const op of ["begin", "finish", "goal"]) expect(tool.input.safeParse({ op }).success).toBe(false);
     expect([...CHECKPOINT_STATUSES]).toEqual(["complete", "failed", "blocked", "pending"]);
     for (const status of ["active", "review_blocked", "superseded"])
       expect(tool.input.safeParse({ op: "checkpoint", status }).success).toBe(false);
@@ -252,6 +252,13 @@ test("create does not arm over another open goal and says why (D-TL10); an exact
     expect(await create(h, 1)).toEndWith("\nGoal armed: the open ultragoal goal (active) already tracks this plan.");
 
     await h.put(userGoal("a goal of the user", "dropped"), "state", "goal-state.json");
+    expect(await create(h, 1)).toEndWith(`\nGoal armed: ${h.objective}`);
+    expect(await h.json("state", "goal-state.json")).toMatchObject({ source: "ultragoal", status: "active" });
+
+    // R6 (gjc `normalizeGoal`): a corrupt goal state is no goal; status says
+    // so without failing, and create arms over it.
+    await h.put("{", "state", "goal-state.json");
+    expect((await h.call({ op: "status" })).split("\n")).toContain("- goal: none");
     expect(await create(h, 1)).toEndWith(`\nGoal armed: ${h.objective}`);
     expect(await h.json("state", "goal-state.json")).toMatchObject({ source: "ultragoal", status: "active" });
   });
@@ -607,10 +614,18 @@ for (const to of ["ralplan", "deep-interview"] as const)
         current_phase: initial,
         handoff_from: "ultragoal",
       });
+      // The caller row keeps gjc's HUD (`buildHudForMode`) of the merged state.
       expect(await h.json("state", "active", "ultragoal.json")).toMatchObject({
         active: false,
         phase: "handoff",
         handoff_to: to,
+        hud: {
+          version: 1,
+          chips: expect.arrayContaining([
+            expect.objectContaining({ label: "goals", value: "0/1" }),
+            expect.objectContaining({ label: "current", value: "G001:Goal 1" }),
+          ]),
+        },
       });
       const calleeRow = await h.text("state", "active", `${to}.json`);
       if (to === "ralplan") expect(JSON.parse(calleeRow!)).toMatchObject({ active: true, phase: "planner" });

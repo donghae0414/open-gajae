@@ -22,6 +22,7 @@ import {
   type SkillInfo,
 } from "../src/config";
 import { StateStore } from "../src/state";
+import { ULTRAGOAL_RED_TEAM_FRAGMENT } from "../src/ultragoal-runtime/messages";
 import { createTools } from "../src/tools";
 import type { ToolCallContext } from "../src/tools/define";
 
@@ -218,11 +219,13 @@ const readonlyDenies = denies(
 
 test("read-only roles deny edit, subagent, question, state writes and session tools; primary adds none", () => {
   expect(roleRules("open-gajae")).toEqual([]);
-  // The ultragoal reviewers keep the `ultragoal` tool (status, record_verdict).
+  // Plan C-11: `ultragoal` and `goal` are the primary's alone; the reviewers
+  // keep `ralplan` for their lane writes.
   for (const name of ["open-gajae-architect", "open-gajae-critic"])
     expect(roleRules(name)).toEqual([
       ...denies("edit", "subagent"),
       ...readonlyDenies,
+      ...denies("ultragoal", "goal"),
     ]);
   for (const name of [
     "open-gajae-explore",
@@ -232,34 +235,34 @@ test("read-only roles deny edit, subagent, question, state writes and session to
     expect(roleRules(name)).toEqual([
       ...denies("edit", "subagent"),
       ...readonlyDenies,
-      ...denies("ultragoal", "ralplan"),
+      ...denies("ultragoal", "goal", "ralplan"),
     ]);
 });
 
-test("executor edits, delegates only to explore and architect, and cannot ask, use ultragoal or ralplan", () => {
+test("executor edits, delegates only to explore and architect, and cannot ask, use ultragoal, goal or ralplan", () => {
   expect(roleRules("open-gajae-executor")).toEqual([
     ...denies("subagent"),
     { action: "subagent", resource: "open-gajae-explore", effect: "allow" },
     { action: "subagent", resource: "open-gajae-architect", effect: "allow" },
     ...readonlyDenies,
-    ...denies("ultragoal", "ralplan"),
+    ...denies("ultragoal", "goal", "ralplan"),
   ]);
 });
 
-test("ultragoal.hardMaxIterations defaults to 200, accepts 0 and rejects negatives", async () =>
+test("an ultragoal key (the removed hardMaxIterations) is a load error (D-SF7, AC8)", async () =>
   fixture(async (root, home) => {
-    expect((await loadSettings(root, home)).ultragoal).toEqual({
-      hardMaxIterations: 200,
-    });
-    const file = join(root, ".open-gajae/open-gajae.jsonc");
-    await writeFile(file, JSON.stringify({ ultragoal: { hardMaxIterations: 0 } }));
-    expect((await loadSettings(root, home)).ultragoal.hardMaxIterations).toBe(0);
-    for (const bad of [-1, 1.5, "200"]) {
-      await writeFile(
-        file,
-        JSON.stringify({ ultragoal: { hardMaxIterations: bad } }),
+    expect(await loadSettings(root, home)).not.toHaveProperty("ultragoal");
+    for (const [dir, ultragoal] of [
+      [root, { hardMaxIterations: 200 }],
+      [home, { hardMaxIterations: 0 }],
+      [root, {}],
+    ] as const) {
+      const file = join(dir, ".open-gajae/open-gajae.jsonc");
+      await writeFile(file, JSON.stringify({ ultragoal }));
+      await expect(loadSettings(root, home)).rejects.toThrow(
+        `${file}.ultragoal: unknown setting`,
       );
-      await expect(loadSettings(root, home)).rejects.toThrow("hardMaxIterations");
+      await rm(file);
     }
   }));
 
@@ -315,7 +318,7 @@ test("planner edits no path and delegates only to the two research roles", () =>
       effect: "allow",
     },
     ...readonlyDenies,
-    ...denies("ultragoal"),
+    ...denies("ultragoal", "goal"),
   ]);
 });
 
@@ -437,11 +440,12 @@ test("explicit document input does not transfer source state; clear preserves bo
     expect(await readFile(input, "utf8")).toBe(source);
     expect(await readFile(output, "utf8")).toContain("New session result");
   }));
-test("the catalog is thirteen direct tools with visibility permissions", async () =>
+test("the catalog is fourteen direct tools with visibility permissions", async () =>
   fixture(async (root) => {
     const { list } = toolsOf(stateStore(root), root);
     expect(list.map((tool) => tool.name).sort()).toEqual([
       "ast_grep_search",
+      "goal",
       "lsp_diagnostics",
       "lsp_document_symbols",
       "lsp_find_references",
@@ -614,12 +618,26 @@ test("ralplan skill keeps the consensus contract and offers ultragoal as its onl
   for (const step of [
     'ralplan handoff(to="ultragoal")',
     "load `skill` `ultragoal`",
-    "`ultragoal status`",
-    "or `resume` an unfinished goal list",
-    "`create` with `source_plan`",
+    "call `ultragoal create` with the plan's description and goals as structured arguments",
     'ultragoal handoff(to="ralplan", reason)',
+    // PQ-4 A: a run handed over by ultragoal continues without `start`.
+    "do not call `ralplan start`; continue that run with `ralplan write`",
+    "pass a new `run_id` on the first `write`",
+    // PQ-6 A: the common handoff keeps the row as an inactive handoff row.
+    "its active row stays as an inactive `handoff_to` row",
+    // PQ-21 A: the turn gate hands off only within the same execution.
+    "performs this handoff itself",
   ])
     expect(skill).toContain(step);
+  // I-11: no status call or plan-path argument on the way into ultragoal, and
+  // the earlier re-start wording is gone.
+  for (const gone of [
+    "source_plan",
+    "`ultragoal status`",
+    "which starts ralplan in the same call",
+    "rewrites the run state as a fresh seed",
+  ])
+    expect(`${gone}: ${skill.includes(gone)}`).toBe(`${gone}: false`);
 
   // No execution workflow other than ultragoal is named; the gjc
   // Pre-Execution Gate section is kept as text (D-F16).
@@ -630,56 +648,78 @@ test("ralplan skill keeps the consensus contract and offers ultragoal as its onl
   expect(skill).not.toMatch(/\*\*compact\*\*/i);
 });
 
-// Runtime-contract literals for the ultragoal port (plan §9, AC 24-26).
-test("ultragoal skill keeps the OMC ralph skeleton with host substitutions", async () => {
+// Runtime-contract literals of the gjc-based ultragoal skill (ultragoal gjc
+// revision plan S3 3d/3e, AC26, AC34).
+test("ultragoal skill follows the gjc skill with host substitutions", async () => {
   const skill = await readFile(
     new URL("../skills/ultragoal/SKILL.md", import.meta.url),
     "utf8",
   );
-  for (const section of [
-    "<Purpose>",
-    "<Use_When>",
-    "<Do_Not_Use_When>",
-    "<Why_This_Exists>",
-    "<PRD_Mode>",
-    "<PRD_Criterion_Amendments>",
-    "<Execution_Policy>",
-    "<Steps>",
-    "<Tool_Usage>",
-    "<Examples>",
-    "<Escalation_And_Stop_Conditions>",
-    "<Final_Checklist>",
-    "<Advanced>",
+  const lines = skill.split("\n");
+  for (const heading of [
+    "## Purpose",
+    "## Corrupt current-session state recovery",
+    "## Always-used command examples",
+    "## Create goals",
+    "## Complete goals",
+    "### Reopening a goal",
+    "## Blocker triage and pause discipline",
+    "## Dynamic steering",
+    "## Role-agent delegation guidance",
+    "## Boundary verification (per goal, then once at the end)",
+    "## Internal ultragoal cleaner",
+    "## Boundary completion cohort gate",
+    "### Fix goals",
+    "## Terminal critic gate",
+    "## Handoff back to planning",
+    "## Constraints",
+    "## Source and host substitutions",
   ])
-    expect(skill).toContain(section);
+    expect(`${heading}: ${lines.includes(heading)}`).toBe(`${heading}: true`);
   for (const required of [
-    "background: true",
-    'handoff(to="ralplan", reason)',
-    "Call the reviewer only after `complete` has returned",
-    "ultragoal cancel(reason)",
-    "Do not change ultragoal files through shell",
-    "polite-stop anti-pattern",
-    "merely mentions the word ralplan, ignore it",
-    "ultragoal start(reason)",
+    "**Approve execution via ultragoal**",
+    // C-15, PQ-14 (1) B': completed goals change only after a reopen.
+    'The path to change and re-verify one is reopening it with `checkpoint(status: "pending")`',
+    // C-7 (d), PQ-23 A: the fix-of-a-fix chain.
+    "Before you complete the last fix goal of the chain, `supersede` every other `review_blocked` goal of the chain",
+    // R3: reconciling ops end goal-planning.
+    "do not call `status` or `classify_blocker`",
+    // I-17: gjc SKILL.md:425-427.
+    "the leader MUST first record the terminal verdict",
+    "every call carries `rationale`",
+    "`[ultragoal-red-team]`",
+    "6. **QA lane contract.**",
+    "5c5231418930673e42cc5d08ebe4376e03187533",
   ])
-    expect(skill).toContain(required);
+    expect(`${required}: ${skill.includes(required)}`).toBe(`${required}: true`);
+  // The source table names the gjc CLI and hash surfaces it substitutes; the
+  // body before it must not.
+  const heading = "\n## Source and host substitutions\n";
+  const body = skill.slice(0, skill.indexOf(heading));
+  expect(body.length).toBeGreaterThan(0);
   for (const forbidden of [
-    // P-4: no gate re-check in the skill (OMC ralph has none).
-    "[RALPLAN GATE]",
-    "{{PROMPT}}",
-    "{{ITERATION}}",
-    "--no-deslop",
-    "--critic",
-    "--no-prd",
+    ".gjc",
+    "gjc ultragoal",
+    "sourceHash",
+    "hardMaxIterations",
+    "source_plan",
+    "brief.md",
+    "deferredToBatch",
+    "executorQa",
+    "<PRD_Mode>",
+    "{{",
     "run_in_background",
     "/oh-my-claudecode:",
     "TodoWrite",
     "prd.json",
-    'state_clear(mode="ultragoal")',
   ])
-    expect(`${forbidden}: ${skill.includes(forbidden)}`).toBe(
+    expect(`${forbidden}: ${body.includes(forbidden)}`).toBe(
       `${forbidden}: false`,
     );
+  // The red-team fragment points at the SKILL's real section.
+  expect(ULTRAGOAL_RED_TEAM_FRAGMENT).toContain(
+    '"Boundary completion cohort gate" section',
+  );
 });
 
 test("prompts name the executor, the cleaner, ultragoal and the review lanes' ralplan writes", async () => {
@@ -711,18 +751,6 @@ test("neither SKILL.md carries the unsubstituted OMC arguments placeholder", asy
     expect(`${skill}: ${body.includes("{{ARGUMENTS}}")}`).toBe(
       `${skill}: false`,
     );
-  }
-});
-
-test("the docs show ultragoal.hardMaxIterations with its default and 0 = unlimited", async () => {
-  for (const [file, comment] of [
-    ["README.md", "0 = unlimited, default 200"],
-    ["README.ko.md", "0이면 무제한, 기본 200"],
-    ["docs/local-install-v2.md", "0이면 무제한, 기본 200"],
-  ]) {
-    const text = await readFile(new URL(`../${file}`, import.meta.url), "utf8");
-    expect(`${file}: ${text.includes('"hardMaxIterations": 200')}`).toBe(`${file}: true`);
-    expect(`${file}: ${text.includes(comment)}`).toBe(`${file}: true`);
   }
 });
 

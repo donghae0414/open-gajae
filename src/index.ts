@@ -42,23 +42,21 @@ export default Plugin.define({
       prompts,
     });
     await registerSkills(ctx.skill, skills);
-    // The hooks come first: the `ultragoal` tool resolves a reviewer's parent
-    // through the hooks' fail-closed `parentSession` (plan §2 A1″), and the
-    // `ralplan` tool its owner through `rootSession` (plan DR-1). The ralplan
-    // settings are resolved once here (DR-13); `projectDir` rides `paths`.
+    // The hooks come first: the `ralplan`, `ultragoal` and `goal` tools
+    // resolve their owner through the hooks' fail-closed `rootSession` (plan
+    // DR-1, D-SF6). The ralplan settings are resolved once here (DR-13);
+    // `projectDir` rides `paths`.
     const hooks = createHooks(
       store,
       ctx.session,
       packageRoot,
       locationDir,
       projectDir,
-      { hardMax: settings.ultragoal.hardMaxIterations },
     );
     const tools = createTools(
       store,
       { locationDir, projectDir },
       {
-        parentSession: hooks.parentSession,
         rootSession: hooks.rootSession,
         ralplanSettings: settings.ralplan,
       },
@@ -69,10 +67,11 @@ export default Plugin.define({
     // 5. Prompt and tool hooks.
     await ctx.session.hook("prompt", hooks.prompt);
     // Plan C-11: tool hiding on every request that carries an agent's tools,
-    // as the host's patch plugin registers its own.
+    // as the host's patch plugin registers its own; the `context` request
+    // also carries the goal context (C-9).
     await ctx.session.hook("context", hooks.context);
-    await ctx.session.hook("compaction", hooks.context);
-    await ctx.session.hook("generate", hooks.context);
+    await ctx.session.hook("compaction", hooks.hideTools);
+    await ctx.session.hook("generate", hooks.hideTools);
     await ctx.session.hook("compaction", hooks.compaction);
     await ctx.tool.hook("execute.before", hooks.executeBefore);
     await ctx.tool.hook("execute.after", hooks.executeAfter);

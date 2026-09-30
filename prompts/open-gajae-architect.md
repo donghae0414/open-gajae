@@ -112,4 +112,4 @@ Source: Gajae Code `packages/coding-agent/src/prompts/agents/architect.md` with 
 | "If `repository_binding.worktreeRoot` is missing, do not persist" | Removed | Deviation 12 |
 | `yield.result.data` | The final response body | Deviation 33 |
 
-This prompt replaces the OMC-derived architect prompt (OMC v5.4.0 `agents/architect.md`); none of its text is retained. The ultragoal verification brief (`src/ultragoal.ts`) still reuses this role unchanged; its known conflicts with this prompt are recorded in README.md. See THIRD-PARTY-NOTICES.md and licenses/.
+This prompt replaces the OMC-derived architect prompt (OMC v5.4.0 `agents/architect.md`); none of its text is retained. Ultragoal reuses this role with this prompt unchanged (no brief is appended): its leader delegates each goal's architect review and the boundary cohort's architect lane here, and records `architectureStatus`, `productStatus`, and `codeStatus` in its quality gate from this prompt's single architectural status (`skills/ultragoal/SKILL.md`; ultragoal deviation 13). See THIRD-PARTY-NOTICES.md and licenses/.

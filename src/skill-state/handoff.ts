@@ -14,7 +14,8 @@
 //   the audit-only `invalid_transition_detected` row of an active write)
 // - `skill-state/initial-phase.ts:13-19` (`initialPhaseForSkill`)
 // - `skill-state/active-state.ts:969-1015` (`applyHandoffToActiveState`, via
-//   `./rows.ts`)
+//   `./rows.ts`); both rows carry gjc `buildHudForMode` of their merged
+//   state (`state-runtime.ts:1824,1838`), ralplan's and ultragoal's alike
 // Deviations:
 // - ultragoal 33 (PQ-5 (1) B, (2) A): a deep-interview callee gets the phase
 //   `"deep-interview"` (gjc `interviewing`) and no row.
@@ -33,6 +34,7 @@ import {
   RALPLAN_STATES,
 } from "../ralplan-runtime/manifest.js";
 import type { InterviewState, StateWriter, WorkflowTx } from "../state.js";
+import { buildUltragoalHudFromState } from "../ultragoal-runtime/hud.js";
 import { type AuditOwner, appendAudit, HOOK_OWNER, RUNTIME_OWNER } from "./audit.js";
 import type { WorkflowHudSummary } from "./hud.js";
 import {
@@ -74,7 +76,7 @@ const HANDOFF_SKILLS: Record<HandoffCallee, HandoffSkill> = {
     hud: buildRalplanHudFromState,
     row: true,
   },
-  ultragoal: { initialPhase: "goal-planning", row: true },
+  ultragoal: { initialPhase: "goal-planning", hud: buildUltragoalHudFromState, row: true },
   "deep-interview": { initialPhase: "deep-interview", row: false },
 };
 

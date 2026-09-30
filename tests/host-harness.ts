@@ -14,12 +14,16 @@
 // one assistant message, a text, a delayed text, or an HTTP error). A
 // `<ralplan-continuation>` message is answered with
 // `ralplan clear` (plan DR-17) once its reinforcement count reaches the
-// thread's `clearAfter` (default 1), so a continuation loop always ends. An
-// `<ultragoal-continuation>` is answered the same way with `ultragoal cancel`
-// once `iteration - 1` reaches `clearAfter`. A `{{request_id}}` inside scripted
-// tool arguments is replaced with the `request_id "…"` found in the thread's
-// messages, which is how a scripted reviewer answers the plugin's brief. A
-// `{{subagent_session:<agent>}}` is replaced with the child `sessionID` of the
+// thread's `clearAfter` (default 1), so a continuation loop always ends. A
+// `<goal-continuation>` is answered the same way with `ultragoal clear` and
+// then `goal drop` once the number of `<goal-continuation>` messages in the
+// thread reaches `clearAfter`. The plugin's `<goal-context>` and
+// `<goal-notice>` messages and the host's `<conversation-checkpoint>` (which
+// quotes earlier directives) are context, not a new instruction: they never
+// count as the last user message. The host's compaction summary request is
+// answered with a summary in its template (`core/src/session/compaction.ts:
+// 46-77,364-393`), so a compaction completes. A `{{subagent_session:<agent>}}` inside
+// scripted tool arguments is replaced with the child `sessionID` of the
 // newest `subagent` result whose call named that agent, which is how a
 // scripted parent resumes a child it spawned earlier. Title requests (no
 // tools) and every other message get a plain text.
@@ -45,6 +49,7 @@ export const HOST_VERSION = "opencode v2.0.15";
 
 export const OUR_TOOLS = [
   "ast_grep_search",
+  "goal",
   "lsp_diagnostics",
   "lsp_document_symbols",
   "lsp_find_references",
@@ -182,7 +187,12 @@ export const directive = (value: Directive) =>
 
 const DIRECTIVE_LINE = /#ACTION (\{.*\})\s*$/m;
 const CONTINUATION = /<ralplan-continuation>[\s\S]*?REINFORCEMENT (\d+)\//;
-const ULTRAGOAL_CONTINUATION = /<ultragoal-continuation>[\s\S]*?ITERATION (\d+)\//;
+const GOAL_CONTINUATION = "<goal-continuation>";
+/** Plugin messages a model reads as context, never as its next instruction. */
+const PASSIVE_USER = /^(<goal-(context|notice)>|<conversation-checkpoint>)/;
+/** The host's compaction prompts (`core/src/session/compaction.ts:364-390`). */
+const COMPACTION_PROMPT = /^(You MUST summarize the conversation above|Update the existing checkpoint in the conversation above)/;
+const COMPACTION_SUMMARY = "## Objective\n- Probe the plugin's hooks.\n\n## Next Move\n1. (none)\n";
 
 export type ProviderEntry = {
   t: number;
@@ -266,13 +276,8 @@ export function subagentResults(messages: any[]) {
 }
 
 /** Scripted tool arguments with the `{{…}}` placeholders filled in. */
-function scriptedArgs(action: ToolAction, entry: ProviderEntry, messages: any[]): string {
-  let args = action.rawArgs ?? JSON.stringify(action.args ?? {});
-  if (args.includes("{{request_id}}")) {
-    const id = [...entry.messages].reverse().map((m) => m.text.match(/request_id "([^"]+)"/)?.[1]).find(Boolean);
-    // Left in place when absent, so a parent passes it to its child.
-    if (id) args = args.replaceAll("{{request_id}}", id);
-  }
+function scriptedArgs(action: ToolAction, messages: any[]): string {
+  const args = action.rawArgs ?? JSON.stringify(action.args ?? {});
   return args.replace(
     /\{\{subagent_session:([\w-]+)\}\}/g,
     (placeholder, agent) =>
@@ -283,7 +288,7 @@ function scriptedArgs(action: ToolAction, entry: ProviderEntry, messages: any[])
 function classify(messages: any[]) {
   let lastUser = -1;
   messages.forEach((m, i) => {
-    if (m.role === "user") lastUser = i;
+    if (m.role === "user" && !PASSIVE_USER.test(contentText(m.content))) lastUser = i;
   });
   const step = messages
     .slice(lastUser + 1)
@@ -294,13 +299,16 @@ function classify(messages: any[]) {
     thread = parseDirective(contentText(m.content)) ?? thread;
   }
   const last = lastUser >= 0 ? contentText(messages[lastUser].content) : "";
-  // Checked first: its `Original task:` line can quote the user's directive.
-  const ultragoal = last.match(ULTRAGOAL_CONTINUATION);
-  if (ultragoal) {
-    const count = Number(ultragoal[1]) - 1;
+  if (COMPACTION_PROMPT.test(last))
+    return { kind: "other" as const, step, thread, steps: [{ text: COMPACTION_SUMMARY }] as Action[] };
+  if (last.startsWith(GOAL_CONTINUATION)) {
+    // The thread's goal continuations so far, this one included.
+    const count = messages.filter(
+      (m) => m.role === "user" && contentText(m.content).startsWith(GOAL_CONTINUATION),
+    ).length;
     const clear = count >= (thread?.clearAfter ?? 1);
     const steps: Action[] = clear
-      ? [{ tool: "ultragoal", args: { op: "cancel", reason: "probe clear" } }, { text: "cancelled" }]
+      ? [{ tool: "ultragoal", args: { op: "clear" } }, { tool: "goal", args: { op: "drop" } }, { text: "dropped" }]
       : [{ text: `continuing ${count}` }];
     return { kind: "continuation" as const, step, thread, steps, count };
   }
@@ -369,7 +377,7 @@ export class FakeProvider {
           return toolResponse(
             ("parallel" in action ? action.parallel : [action]).map((call) => ({
               name: call.tool,
-              args: scriptedArgs(call, entry, messages),
+              args: scriptedArgs(call, messages),
             })),
           );
         return textResponse(action.text);
@@ -632,6 +640,12 @@ export class Host {
   /** The ultragoal state file of a session, or undefined. */
   ultragoalState(sessionID: string): Record<string, unknown> | undefined {
     const text = this.sessionFile(sessionID, "state/ultragoal-state.json");
+    return text === undefined ? undefined : JSON.parse(text);
+  }
+
+  /** The goal state file of a session, or undefined. */
+  goalState(sessionID: string): Record<string, unknown> | undefined {
+    const text = this.sessionFile(sessionID, "state/goal-state.json");
     return text === undefined ? undefined : JSON.parse(text);
   }
 

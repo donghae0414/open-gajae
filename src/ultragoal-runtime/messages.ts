@@ -16,6 +16,9 @@
 //   (create), `:5534-5539` (quality-gate list), `:5576` (review blockers),
 //   `:5595` (blocker classification), `:5623` (critic verdict)
 // - `gjc-runtime/cli-write-receipt.ts:25-31` (`renderCliWriteReceipt`)
+// - `tools/skill.ts:205-209` (chain refusal),
+//   `skill-state/workflow-mutation-guard.ts:28-29` (goal-planning block),
+//   `prompts/agents/executor.md:34-46` (red-team fragment)
 // Deviations (plan §7.1):
 // - 41: gjc command names become op calls (`ultragoal next`,
 //   `ultragoal record_review_blockers` …) and `checkpoint requires=` names the
@@ -30,6 +33,9 @@
 // - 10: `status` has no nudge line.
 // - 12 (D-TL10): `create` says when another open goal keeps the plan's goal
 //   from being armed.
+// - 20 (D-VF11): the red-team fragment is appended by the `execute.before`
+//   hook for the `[ultragoal-red-team]` marker, with the C-12 substitutions.
+// - The entry notices are open-gajae text (gjc has no keyword notices).
 
 import { wrapUltragoalInjected } from "../injection.js";
 import type { GateDiagnostic } from "./gate.js";
@@ -149,6 +155,83 @@ export function goalDropNotice(status: string): string {
 }
 
 export const PATTERN_ADDED = "Pattern added to progress.txt.";
+
+// ---------------------------------------------------------------------------
+// Entry, guards and red-team (plan C-10, D-HE3~6, D-VF11)
+// ---------------------------------------------------------------------------
+
+/** D-HE4: the keyword gets a notice only; loading the skill seeds the state. */
+export function ultragoalKeywordNotice(): string {
+  return wrapUltragoalInjected(
+    "<ultragoal-notice>",
+    "[MODE: ULTRAGOAL] Persistent goal execution requested. Load the `ultragoal` skill and follow it for this request.",
+  );
+}
+
+/**
+ * D-HE4: the `@ultragoal` mention attaches the skill text but makes no `skill`
+ * call, so its notice asks for the load that starts goal planning.
+ */
+export function ultragoalMentionNotice(): string {
+  return wrapUltragoalInjected(
+    "<ultragoal-notice>",
+    "[MODE: ULTRAGOAL] Persistent goal execution requested through the `@ultragoal` mention. Load the `ultragoal` skill with the `skill` tool, which starts its goal-planning phase, and follow it for this request.",
+  );
+}
+
+/**
+ * PQ-5 (1) B: `@ralplan`, `@deep-interview` and their keywords while
+ * ultragoal is the visible primary skill.
+ */
+export function ultragoalHandoffNotice(skill: "ralplan" | "deep-interview"): string {
+  return wrapUltragoalInjected(
+    "<ultragoal-notice>",
+    `[ULTRAGOAL ACTIVE] ${skill} was not started because an ultragoal run is active. To switch, call ultragoal handoff(to="${skill}", reason); the goals and progress are kept and can be resumed later.`,
+  );
+}
+
+/**
+ * DR-23: gjc `tools/skill.ts:205-209` chain refusal with the op call for the
+ * `gjc state … handoff` command. Its "finalize the current skill first" route
+ * (`gjc state ultragoal write current_phase=handoff`) becomes finishing or
+ * clearing the run, because the guard here follows the active row (D-HE3).
+ */
+export function ultragoalChainRefusal(phase: string, skill: string): string {
+  return `open-gajae: refusing to chain from "ultragoal" (phase=${phase}) into "${skill}". Run ultragoal handoff(to: "${skill}", reason) directly, or finish or clear the ultragoal run first.`;
+}
+
+/**
+ * DR-22: gjc `skill-state/workflow-mutation-guard.ts:28-29`
+ * (`ULTRAGOAL_GOAL_PLANNING_MUTATION_BLOCK_MESSAGE`), `gjc ultragoal` →
+ * `ultragoal create`.
+ */
+export const ULTRAGOAL_GOAL_PLANNING_MUTATION_BLOCK_MESSAGE =
+  "Ultragoal goal-planning phase boundary: finish goal planning and record goals through `ultragoal create` before editing code. Product-code mutation tools and patch execution are blocked until goal planning completes and execution begins.";
+
+/** D-VF11: the marker a `subagent(open-gajae-executor)` prompt carries. */
+export const ULTRAGOAL_RED_TEAM_MARKER = "[ultragoal-red-team]";
+
+/**
+ * D-VF11 (deviation 20): gjc `prompts/agents/executor.md:34-46`, the
+ * `ultragoal_red_team_mode` fragment, with the host substitutions of plan
+ * C-12: the marker activates it, the lightweight QA lane contract replaces
+ * the `executorQa` matrix/artifact/replay sentence, a prose claim without a
+ * command is not evidence (for `inlineEvidence`), `ask` → `question` with
+ * findings reported to the leader (for `gjc ultragoal
+ * record-review-blockers`), and "missing artifact refs" is gone.
+ */
+export const ULTRAGOAL_RED_TEAM_FRAGMENT = [
+  "<ultragoal_red_team_mode>",
+  `This mode is active because the assignment carries the \`${ULTRAGOAL_RED_TEAM_MARKER}\` marker: you are the Ultragoal completion QA/red-team lane. Without the marker, preserve ordinary Executor behavior.`,
+  "",
+  "When active:",
+  "- Report the QA lane in the contract the assignment gives: `status` (`passed` only when every case passed), `commands` (each command you ran), `adversarialCases` (each adversarial case you tried, with its result), `evidence` and `blockers`. If the assignment omits the contract, read the QA lane contract step of the ultragoal SKILL's \"Boundary completion cohort gate\" section before producing evidence.",
+  "- Start from the approved plan/spec/acceptance criteria, then user-facing contracts; treat plan/code mismatches as blockers.",
+  "- Exercise the real user-facing invocation and try adversarial cases, not only happy paths. A prose claim without a command you ran is not evidence.",
+  "- Do not call `question`; report unresolved decisions and findings to the leader as blockers.",
+  "- Report blockers for missing plan/spec/acceptance source, contract ambiguity, plan/code mismatch, untestable surface, failed adversarial case, or shallow evidence.",
+  "</ultragoal_red_team_mode>",
+].join("\n");
 
 /** The system part the compaction hook adds (marker kept, plan C-12). */
 export function ultragoalCompactionMessage(lines: readonly string[]): string {

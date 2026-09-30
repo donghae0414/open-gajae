@@ -13,7 +13,8 @@
 // artifact), `:2033-2261` (`handleArtifactWrite`), `:2382-2475` (seed),
 // `gjc-runtime/workflow-cli-common.ts:24-30` (`assertSafePathComponent`, via
 // `RalplanTx.paths.runDir`), and `gjc-runtime/state-runtime.ts` (read, write,
-// clear, doctor). Op-tool shape and actor checks follow `src/ultragoal-tool.ts`.
+// clear, doctor). The handoff is the shared journaled one
+// (`../skill-state/handoff.ts`, ultragoal revision plan PQ-6 A).
 // Deviations (plan §7.1): 1 (CLI → ops), 2 (roles pass `content` only; the
 // primary may pass an OS temp `path`, R-O4), 5 (the role session id is
 // recorded from `context.sessionID`; one `resumable` input), 30 (a primary
@@ -25,7 +26,6 @@
 import { z } from "zod";
 import { type StateStore, ULTRAGOAL_MODE } from "../state.js";
 import { defineTool, type ToolCallContext } from "../tools/define.js";
-import { isUltragoalRunning, RALPLAN_ACTIVATION_REFUSAL } from "../ultragoal.js";
 import {
   parseLaneVerdict,
   parsePersistedRoleState,
@@ -57,6 +57,13 @@ const ROLES: Record<string, PersistedRole> = {
   "open-gajae-critic": "critic",
 };
 const ROLE_OPS = new Set(["write", "status", "state"]);
+
+/**
+ * `ralplan start` while ultragoal is active (ultragoal revision plan C-3: its
+ * state is readable and `active: true`).
+ */
+export const RALPLAN_ACTIVATION_REFUSAL =
+  'ralplan cannot be started while ultragoal is active; call ultragoal handoff(to="ralplan", reason) instead, which makes ralplan active in its planner phase.';
 
 /** gjc defaults with `source: "default"` (spec D-S1, DR-13). */
 export const DEFAULT_RALPLAN_SETTINGS: RalplanSettings = {
@@ -168,9 +175,10 @@ export function ralplanTool(store: StateStore, deps: RalplanToolDeps) {
   }
 
   async function start(args: Args, owner: string): Promise<string> {
-    // Read before the ralplan transaction (C-1.2); only a running ultragoal refuses.
+    // Read before the ralplan transaction (C-1.2); only an active ultragoal
+    // refuses (ultragoal revision plan C-3). An unreadable state is not active.
     const ultragoal = await store.read(owner, ULTRAGOAL_MODE).catch(() => undefined);
-    if (isUltragoalRunning(ultragoal)) throw new Error(RALPLAN_ACTIVATION_REFUSAL);
+    if (ultragoal?.active === true) throw new Error(RALPLAN_ACTIVATION_REFUSAL);
     const summary = await startRun(
       store,
       owner,

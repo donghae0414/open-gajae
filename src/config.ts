@@ -25,8 +25,6 @@ type RalplanSettings = {
 };
 export interface Settings {
   deepInterview: { ambiguityThreshold: number; maxRounds: number };
-  /** `hardMaxIterations`: 0 = unlimited, default 200 (decision 19). */
-  ultragoal: { hardMaxIterations: number };
   agents: Partial<Record<AgentName, ModelSettings>>;
   /**
    * gjc 5c52314 `gjc.ralplan.*` (`gjc-runtime/ralplan-runtime.ts:93-112,388-524`):
@@ -71,7 +69,9 @@ async function load(path: string): Promise<Layer> {
       `${path}:${errors[0].offset}: ${printParseErrorCode(errors[0].error)}`,
     );
   const value = object(parsed, path);
-  keys(value, ["deepInterview", "ultragoal", "agents", "ralplan"], path);
+  // Ultragoal revision plan D-SF7: the `ultragoal` key and its iteration cap
+  // are gone, so a file that still sets it fails to load as an unknown setting.
+  keys(value, ["deepInterview", "agents", "ralplan"], path);
   const result: Layer = {};
   if ("deepInterview" in value) {
     const config = object(value.deepInterview, `${path}.deepInterview`);
@@ -96,20 +96,6 @@ async function load(path: string): Promise<Layer> {
         `${path}.deepInterview.maxRounds: expected positive integer`,
       );
     result.deepInterview = config as Settings["deepInterview"];
-  }
-  if ("ultragoal" in value) {
-    const config = object(value.ultragoal, `${path}.ultragoal`);
-    keys(config, ["hardMaxIterations"], `${path}.ultragoal`);
-    if (
-      "hardMaxIterations" in config &&
-      (typeof config.hardMaxIterations !== "number" ||
-        !Number.isSafeInteger(config.hardMaxIterations) ||
-        config.hardMaxIterations < 0)
-    )
-      throw new Error(
-        `${path}.ultragoal.hardMaxIterations: expected integer >= 0 (0 = unlimited)`,
-      );
-    result.ultragoal = config as Settings["ultragoal"];
   }
   if ("ralplan" in value) {
     const config = object(value.ralplan, `${path}.ralplan`);
@@ -200,11 +186,6 @@ export async function loadSettings(
       ...user.deepInterview,
       ...project.deepInterview,
     },
-    ultragoal: {
-      hardMaxIterations: 200,
-      ...user.ultragoal,
-      ...project.ultragoal,
-    },
     agents,
     ralplan: {
       maxIterations: 5,
@@ -282,10 +263,17 @@ const readonlyDenies = [
  */
 export function roleRules(id: string): Rule[] {
   if (id === "open-gajae") return [];
-  // Ultragoal reviewers keep the `ultragoal` tool for `status` and their own
-  // `record_verdict`; every other owned role is denied it (plan §4).
+  // Ultragoal revision plan C-11: `ultragoal` and `goal` belong to the primary
+  // alone, so every role is denied both; the reviewers keep `ralplan` for
+  // their lane writes. The `context` hook hides the tools as well.
   if (id === "open-gajae-architect" || id === "open-gajae-critic")
-    return [deny("edit"), deny("subagent"), ...readonlyDenies];
+    return [
+      deny("edit"),
+      deny("subagent"),
+      ...readonlyDenies,
+      deny("ultragoal"),
+      deny("goal"),
+    ];
   // OMC executor: writes code, delegates only to explore and architect, and
   // never asks the user (decision 24).
   if (id === "open-gajae-executor")
@@ -296,8 +284,9 @@ export function roleRules(id: string): Rule[] {
       ),
       ...readonlyDenies,
       deny("ultragoal"),
+      deny("goal"),
       // Plan S2: the executor doesn't drive ralplan (unlike the planner and
-      // the ultragoal reviewers, who keep it with no extra rule).
+      // the reviewers, who keep it with no extra rule).
       deny("ralplan"),
     ];
   // The planner delegates its own research, as in OMC, and records its plan
@@ -312,6 +301,7 @@ export function roleRules(id: string): Rule[] {
       ),
       ...readonlyDenies,
       deny("ultragoal"),
+      deny("goal"),
     ];
   // explore, document-specialist and the cleaner. The cleaner keeps `shell`
   // for read-only inspection; its prompt forbids changing files (decision 23).
@@ -321,6 +311,7 @@ export function roleRules(id: string): Rule[] {
     deny("subagent"),
     ...readonlyDenies,
     deny("ultragoal"),
+    deny("goal"),
     deny("ralplan"),
   ];
 }

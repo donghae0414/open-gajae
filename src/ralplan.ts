@@ -3,11 +3,11 @@
 //
 // n6/a3: every message this module builds goes through `wrapInjected`, so it
 // carries a marker. The markers and the wrapper live in `./injection.ts`
-// (ultragoal revision plan C-12) and are re-exported here from their old path.
+// (ultragoal revision plan C-12).
 //
-// Source: oh-my-claudecode v5.4.0 (MIT). `<ralplan-continuation>` and
-// `<session-restore>` are OMC's own wrappers; `<ralplan-notice>` is a host
-// addition that wraps the keyword and breaker notices OMC emitted bare.
+// Source: oh-my-claudecode v5.4.0 (MIT). `<ralplan-continuation>` is OMC's
+// own wrapper; `<ralplan-notice>` is a host addition that wraps the keyword
+// and breaker notices OMC emitted bare.
 // Plan S3 (gajae-code 5c5231418930673e42cc5d08ebe4376e03187533): the ralplan
 // keyword and mention seed nothing (D-F13, R-O6) and the OMC ralplan restore
 // notice is gone (R-O11); continuation stops on the gjc terminal set T (C-2)
@@ -17,13 +17,6 @@
 
 import { wrapInjected } from "./injection.js";
 import { isKnownPhase, TERMINAL_PHASES } from "./ralplan-runtime/manifest.js";
-
-export {
-  INJECTION_MARKERS,
-  type InjectionMarker,
-  type UltragoalMarker,
-  wrapUltragoalInjected,
-} from "./injection.js";
 
 /** A ralplan state snapshot as read from disk; every field is untrusted. */
 export type RalplanStateSnapshot = Record<string, unknown> | null | undefined;

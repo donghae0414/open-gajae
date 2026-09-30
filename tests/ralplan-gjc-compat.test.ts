@@ -72,9 +72,6 @@ test("ledger rows, file names, receipts and disposition match the gjc shapes (AC
   try {
     const store = new StateStore(root, async () => 0);
     const tool = createTools(store, { locationDir: root, projectDir: root }, {
-      async parentSession() {
-        return undefined;
-      },
       async rootSession() {
         return ROOT;
       },

@@ -47,42 +47,6 @@ export type ExplicitStatePatch = {
   breaker_updated_at?: string;
   deactivated_reason?: string;
   restored_at?: string;
-  // Ultragoal fields (plan §3.4). An `undefined` value removes the field.
-  prd_created_at?: string;
-  paused_reason?: string;
-  paused_target?: string;
-  tool_less_turns?: number;
-  verification_request?: Record<string, unknown>;
-  reject_counts?: Record<string, number>;
-  last_rejections?: Record<string, Record<string, unknown>>;
-  handoff_to?: string;
-  handoff_at?: string;
-  /** Plan S2, C-1.3: the skill a handoff arrived from (e.g. "ralplan"). */
-  handoff_from?: string;
-};
-
-export type UltragoalFile = "goals.json" | "progress.txt";
-
-/**
- * The operations `ultragoalTransaction` hands its body (the old ultragoal tool
- * and hooks); none of them queue.
- */
-export type UltragoalTx = {
-  readonly paths: {
-    dir: string;
-    statePath: string;
-    goalsPath: string;
-    progressPath: string;
-  };
-  readState(): Promise<InterviewState | undefined>;
-  /** Replaces the whole state (not a merge); `_meta` is regenerated. */
-  writeState(
-    state: ExplicitStatePatch & Record<string, unknown>,
-    updatedBy: StateWriter,
-  ): Promise<InterviewState>;
-  deleteState(): Promise<"deleted" | "missing">;
-  readFile(name: UltragoalFile): Promise<string | undefined>;
-  writeFile(name: UltragoalFile, text: string): Promise<void>;
 };
 
 /**
@@ -227,12 +191,6 @@ function validateExplicitPatch(patch: ExplicitStatePatch) {
     ["breaker_updated_at", 100],
     ["restored_at", 100],
     ["deactivated_reason", 200],
-    ["prd_created_at", 100],
-    ["paused_reason", 200],
-    ["paused_target", 200],
-    ["handoff_to", 200],
-    ["handoff_at", 100],
-    ["handoff_from", 200],
   ] as const) {
     const value = patch[key];
     if (
@@ -252,7 +210,6 @@ function validateExplicitPatch(patch: ExplicitStatePatch) {
     "iteration",
     "max_iterations",
     "breaker_count",
-    "tool_less_turns",
   ] as const) {
     const value = patch[key];
     if (
@@ -260,37 +217,6 @@ function validateExplicitPatch(patch: ExplicitStatePatch) {
       (typeof value !== "number" || !Number.isFinite(value))
     )
       throw new Error(`${key} must be a finite number`);
-  }
-  const request = patch.verification_request;
-  if (request !== undefined) {
-    if (!isRecord(request))
-      throw new Error("verification_request must be an object");
-    for (const key of [
-      "request_id",
-      "goal_id",
-      "reviewer",
-      "criteria_revision",
-      "created_at",
-    ])
-      if (typeof request[key] !== "string" || request[key] === "")
-        throw new Error(`verification_request.${key} must be a non-empty string`);
-    if (typeof request.attempt !== "number" || !Number.isFinite(request.attempt))
-      throw new Error("verification_request.attempt must be a finite number");
-  }
-  const counts = patch.reject_counts;
-  if (counts !== undefined) {
-    if (!isRecord(counts)) throw new Error("reject_counts must be an object");
-    for (const value of Object.values(counts))
-      if (typeof value !== "number" || !Number.isFinite(value))
-        throw new Error("reject_counts values must be finite numbers");
-  }
-  const rejections = patch.last_rejections;
-  if (rejections !== undefined) {
-    if (!isRecord(rejections))
-      throw new Error("last_rejections must be an object");
-    for (const value of Object.values(rejections))
-      if (!isRecord(value))
-        throw new Error("last_rejections values must be objects");
   }
 }
 
@@ -680,52 +606,6 @@ export class StateStore {
     if (error) throw new Error(error);
     await this.atomicWrite(target, next);
     return next;
-  }
-
-  /**
-   * Run `fn` holding the session's workflow queue (plan C-1) with the old
-   * ultragoal operations. `fn` must only use `tx`: calling a queued
-   * StateStore method inside it would wait on its own queue forever. Host
-   * calls belong outside the transaction.
-   */
-  async ultragoalTransaction<T>(
-    sessionID: string,
-    fn: (tx: UltragoalTx) => Promise<T>,
-  ): Promise<T> {
-    return enqueue(this.queueKey(sessionID), async () => {
-      const sessionDir = await this.resolveSessionDir(sessionID);
-      const statePath = await this.statePath(sessionID, ULTRAGOAL_MODE);
-      const dir = path.join(sessionDir, "ultragoal");
-      const filePath = (name: UltragoalFile) => path.join(dir, name);
-      const tx: UltragoalTx = {
-        paths: {
-          dir,
-          statePath,
-          goalsPath: filePath("goals.json"),
-          progressPath: filePath("progress.txt"),
-        },
-        readState: () => this.readFile(statePath, sessionID),
-        writeState: (state, updatedBy) => {
-          const snapshot = snapshotState(state) as ExplicitStatePatch;
-          validateExplicitPatch(snapshot);
-          return this.writeMerged(
-            statePath,
-            sessionID,
-            ULTRAGOAL_MODE,
-            updatedBy,
-            snapshot,
-          );
-        },
-        deleteState: async () => {
-          if (!(await this.readFile(statePath, sessionID))) return "missing";
-          await fs.unlink(statePath);
-          return "deleted";
-        },
-        readFile: (name) => this.readText(filePath(name)),
-        writeFile: (name, text) => this.atomicWriteText(filePath(name), text),
-      };
-      return fn(tx);
-    });
   }
 
   /**

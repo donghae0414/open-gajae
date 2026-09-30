@@ -1,6 +1,6 @@
 // `goal` (plan S2): the goal-state transitions and texts (DR-9), the ultragoal
-// guards of `complete` and `pause` (DR-10, DR-11), and the unwired tool over a
-// real store with a fake lineage (guard-first order, actor, root owner).
+// guards of `complete` and `pause` (DR-10, DR-11), and the tool over a real
+// store with a fake lineage (guard-first order, actor, root owner).
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,7 +20,9 @@ import {
   PAUSE_NEEDS_CRITIC_OKAY,
   PAUSE_NEEDS_HUMAN_BLOCKED,
   pauseNotActive,
+  pauseStateUnverifiable,
   RESUME_COMPLETE_GOAL,
+  ULTRAGOAL_PLAN_MISSING,
 } from "../src/goal/messages";
 import {
   completeGoalState,
@@ -159,7 +161,7 @@ describe("goal state (pure)", () => {
     expect(create(dropped).status).toBe("active");
   });
 
-  test("goal-state.json fails closed; the continuation record starts over for a new goal", () => {
+  test("goal-state.json outside the schema parses as invalid; the continuation record starts over for a new goal", () => {
     expect(parseGoalState(undefined)).toEqual({ kind: "missing" });
     expect(parseGoalState("{").kind).toBe("invalid");
     const goal = createGoalState(undefined, { id: "g1", objective: "Ship X", source: "user", now: T });
@@ -182,6 +184,11 @@ describe("goal state (pure)", () => {
     expect(context).toContain("<objective>\nship &lt;b&gt; &amp; c\n</objective>");
     const continuation = goalContinuationText("ship it");
     expect(continuation.startsWith("<goal-continuation>\n\n<system-reminder>\nYou stopped while a goal is still active and uncleared.\n")).toBe(true);
+    // Host substitution: gjc's hidden-steer HTML comment is gone.
+    expect(continuation).toContain(
+      "until it is verified complete, paused, or dropped.\n\nContinue work on the active goal.\n\n<objective>\nship it\n</objective>",
+    );
+    expect(continuation).not.toContain("<!--");
     expect(continuation).toContain("Write them down (in your reasoning).");
     expect(continuation).not.toContain("todo_write");
     expect(continuation).toContain("</system-reminder>\n\n</goal-continuation>");
@@ -260,6 +267,12 @@ describe("ultragoal guards (pure)", () => {
       expect(refusedFor(built)).toBe(PAUSE_NEEDS_CRITIC_OKAY);
     }
 
+    // gjc `isUltragoalAskBlocked`: the ultragoal directory without goals.json
+    // is unverifiable for pause; complete reads it as no run.
+    const orphan: UltragoalGuardInput = { ...guardInput(undefined), dirExists: true };
+    expect(goalPauseGuard(orphan)?.split("\n")[0]).toBe(pauseStateUnverifiable(ULTRAGOAL_PLAN_MISSING));
+    expect(goalCompleteGuard(orphan)).toBeUndefined();
+
     // A run-complete plan has no active run to guard.
     const closed = plan(1);
     const closedRows: LedgerRow[] = [];
@@ -268,7 +281,7 @@ describe("ultragoal guards (pure)", () => {
   });
 });
 
-describe("goal tool (unwired)", () => {
+describe("goal tool", () => {
   async function fixture(
     body: (h: {
       call: (args: Record<string, unknown>, agent?: string, sessionID?: string) => Promise<string>;
@@ -324,8 +337,17 @@ describe("goal tool (unwired)", () => {
       expect(audit.length).toBe(6);
       expect(audit.every((row) => row.skill === "goal" && row.paths[0] === file("state", "goal-state.json"))).toBe(true);
 
+      // R6 (gjc `normalizeGoal`): a corrupt goal state is no goal for every
+      // op, and the next create overwrites it.
       await writeFile(file("state", "goal-state.json"), "{");
-      expect(await call({ op: "drop" })).toBe("Error: goal state is invalid; it was preserved: goal-state.json is not valid JSON");
+      expect(await call({ op: "get" })).toBe("No active goal.");
+      expect(await call({ op: "drop" })).toBe("No active goal.");
+      expect(await call({ op: "pause" })).toBe("No active goal.");
+      expect(await call({ op: "resume" })).toBe(`Error: ${NO_PAUSED_GOAL}`);
+      expect(await call({ op: "complete" })).toBe(`Error: ${NO_GOAL_TO_COMPLETE}`);
+      expect(await readFile(file("state", "goal-state.json"), "utf8")).toBe("{");
+      expect(await call({ op: "create", objective: "Again" })).toBe("Goal: Again\nStatus: active");
+      expect(JSON.parse(await readFile(file("state", "goal-state.json"), "utf8"))).toMatchObject({ objective: "Again" });
     });
   });
 
@@ -348,6 +370,16 @@ describe("goal tool (unwired)", () => {
       // Unreadable ultragoal state fails closed.
       await writeFile(file("ultragoal", "goals.json"), "{");
       expect((await call({ op: "complete" })).startsWith("Error: Unable to read durable Ultragoal state:")).toBe(true);
+
+      // The ultragoal directory without goals.json (a handoff before create):
+      // pause is refused as unverifiable, complete sees no run (gjc).
+      await rm(file("ultragoal", "goals.json"));
+      await writeFile(file("ultragoal", "progress.txt"), "# Ultragoal Progress Log\n");
+      await call({ op: "create", objective: "Another user goal" });
+      expect(
+        (await call({ op: "pause" })).startsWith(`Error: ${pauseStateUnverifiable(ULTRAGOAL_PLAN_MISSING)}\n`),
+      ).toBe(true);
+      expect(await call({ op: "complete" })).toBe("Goal: Another user goal\nStatus: complete");
     });
   });
 

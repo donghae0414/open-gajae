@@ -1,8 +1,8 @@
 // The `goal` tool (plan S2, DR-9, D-TL1~3): gjc's goal ops `get`, `create`,
 // `complete`, `resume`, `drop` and `pause` over the lineage root's
 // `state/goal-state.json` (D-SF6), with gjc's ultragoal guards in front of
-// `pause` and `complete`. Each op runs in one `workflowTransaction`. Not
-// registered yet: S3 adds it to `createTools`.
+// `pause` and `complete`. Each op runs in one `workflowTransaction`.
+// Registered in `createTools` (plan S3).
 //
 // Source: gajae-code 5c5231418930673e42cc5d08ebe4376e03187533 (MIT),
 // `packages/coding-agent/src/`:
@@ -10,8 +10,9 @@
 //   (`executeGoalOperation`: `pause` and `complete` run their guard before the
 //   goal is looked up, `:100-111,126-137`)
 // - `gjc-runtime/ultragoal-guard.ts:532-644`
-//   (`verifyUltragoalDurableCompletionState`), `:646-771`
-//   (`isUltragoalAskBlocked`: a run is active until it is verified complete),
+//   (`verifyUltragoalDurableCompletionState`: no `goals.json` is no run),
+//   `:646-771` (`isUltragoalAskBlocked`: a run is active until it is verified
+//   complete, and an ultragoal directory without `goals.json` fails closed),
 //   `:866-886` (`assertCanCompleteCurrentGoal`), `:908-991`
 //   (`isUltragoalPauseBlocked`, `assertUltragoalPauseAllowed`)
 // - `gjc-runtime/ultragoal-receipt-freshness.ts:66-111`
@@ -28,8 +29,6 @@
 // - 37 (DR-9): a dropped goal is no goal for every op after the guards.
 // - 41 (DR-10): "complete" is the run completion of plan C-7
 //   (`runCompletion`), and a refusal over a receipt names the goal to reopen.
-// Open-gajae rule: a missing `goals.json` is no run, where gjc fails closed
-// when the ultragoal directory exists without it.
 
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -52,6 +51,7 @@ import {
   PAUSE_NEEDS_HUMAN_BLOCKED,
   pauseStateUnverifiable,
   renderGoal,
+  ULTRAGOAL_PLAN_MISSING,
   ultragoalStateUnreadable,
 } from "./messages.js";
 import {
@@ -73,13 +73,24 @@ const PRIMARY = "open-gajae";
 // Guards (pure over the parsed ultragoal files)
 // ---------------------------------------------------------------------------
 
-export type UltragoalGuardInput = { goals: GoalsRead; ledger: LedgerRead };
+export type UltragoalGuardInput = {
+  goals: GoalsRead;
+  ledger: LedgerRead;
+  /** gjc `fs.stat(paths.dir)`: whether the `ultragoal/` directory exists. */
+  dirExists?: boolean;
+};
 
-/** The root session's `goals.json` and `ledger.jsonl`, strictly parsed. */
+/**
+ * The root session's `goals.json` and `ledger.jsonl`, strictly parsed, and
+ * whether the `ultragoal/` directory exists. The store creates that
+ * directory only by writing a file into it, so a listing with an entry
+ * stands for gjc's `stat`.
+ */
 export async function readUltragoalGuardInput(tx: WorkflowTx): Promise<UltragoalGuardInput> {
   return {
     goals: parseGoals(await tx.readText(tx.paths.ultragoal.goals)),
     ledger: parseLedger(await tx.readText(tx.paths.ultragoal.ledger)),
+    dirExists: (await tx.list(tx.paths.ultragoal.dir)).length > 0,
   };
 }
 
@@ -93,6 +104,8 @@ function unreadable(input: UltragoalGuardInput): string | undefined {
 /**
  * DR-10: the refusal of `goal complete`, or undefined. Any goal is refused
  * while a plan exists that is not run-complete (C-7), whatever its source.
+ * No `goals.json` is no run, even when the directory exists (gjc
+ * `verifyUltragoalDurableCompletionState` reads a missing plan as inactive).
  */
 export function goalCompleteGuard(input: UltragoalGuardInput): string | undefined {
   const failure = unreadable(input);
@@ -112,14 +125,17 @@ export function goalCompleteGuard(input: UltragoalGuardInput): string | undefine
 }
 
 /**
- * DR-11: the refusal of `goal pause`, or undefined. While a plan exists that
- * is not run-complete, the latest `blocker_classified` must be
- * `human_blocked`, and the newest later pause `critic_verdict` bound to it
+ * DR-11: the refusal of `goal pause`, or undefined. An ultragoal directory
+ * without `goals.json` is unverifiable (gjc `isUltragoalAskBlocked`). While a
+ * plan exists that is not run-complete, the latest `blocker_classified` must
+ * be `human_blocked`, and the newest later pause `critic_verdict` bound to it
  * must be a clean OKAY (non-empty evidence, no blockers).
  */
 export function goalPauseGuard(input: UltragoalGuardInput): string | undefined {
   const failure = unreadable(input);
   if (failure) return goalPauseRefusal(pauseStateUnverifiable(failure));
+  if (input.goals.kind === "missing" && input.dirExists)
+    return goalPauseRefusal(pauseStateUnverifiable(ULTRAGOAL_PLAN_MISSING));
   if (input.goals.kind !== "valid" || input.ledger.kind !== "valid") return undefined;
   const rows = input.ledger.rows;
   if (runCompletion(input.goals.file, rows).complete) return undefined;

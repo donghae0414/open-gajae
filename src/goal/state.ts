@@ -1,7 +1,6 @@
 // Goal state (`state/goal-state.json`) and the hook-only continuation record
-// (`state/goal-continuation.json`) of plan C-9 (PQ-2 B): the schema, a
-// fail-closed reader, the gjc op transitions and the continuation record's
-// reset rule. Pure except the two `WorkflowTx` helpers, which the `goal` tool
+// (`state/goal-continuation.json`) of plan C-9 (PQ-2 B): the schema, the
+// reader, the gjc op transitions and the continuation record's reset rule. Pure except the two `WorkflowTx` helpers, which the `goal` tool
 // and `ultragoal create` (goal arming) share.
 //
 // Source: gajae-code 5c5231418930673e42cc5d08ebe4376e03187533 (MIT),
@@ -21,16 +20,17 @@
 // - 12: `source` stands for gjc `provenance` (no `runId`/`goalId`).
 // - 37 (DR-9): `drop` keeps the file with `status: "dropped"`, and every op
 //   treats a dropped goal as no goal (gjc deletes the state).
-// Open-gajae rule: a goal-state file that fails the schema is an error (fail
-// closed), where gjc `normalizeGoal` reads it as no goal. An unreadable
-// continuation record starts over, as the ralplan breaker does (R-O3).
+// A goal-state file that fails the schema is no goal, as gjc `normalizeGoal`
+// reads it (R6: the goal tool is gjc as-is): every goal op, the ultragoal
+// `status` and the hooks see no goal, and the next `create` overwrites the
+// file. An unreadable continuation record starts over, as the ralplan
+// breaker does (R-O3).
 
 import { appendAudit, RUNTIME_OWNER } from "../skill-state/audit.js";
 import type { WorkflowTx } from "../state.js";
 import {
   GOAL_ALREADY_COMPLETE,
   GOAL_ALREADY_EXISTS,
-  goalStateInvalid,
   NO_GOAL_TO_COMPLETE,
   NO_PAUSED_GOAL,
   OBJECTIVE_IS_COMMAND,
@@ -178,10 +178,12 @@ export function completeGoalState(goal: GoalState | undefined, now: string): Goa
 // Goal state I/O inside a workflow transaction
 // ---------------------------------------------------------------------------
 
-/** The stored goal (a dropped one included), failing closed on a bad file. */
+/**
+ * The stored goal (a dropped one included); a file that fails the schema is
+ * no goal (gjc `normalizeGoal`), left in place until the next write.
+ */
 export async function readGoalStateTx(tx: WorkflowTx): Promise<GoalState | undefined> {
   const read = parseGoalState(await tx.readText(tx.paths.goalState));
-  if (read.kind === "invalid") throw new Error(goalStateInvalid(read.error));
   return read.kind === "valid" ? read.goal : undefined;
 }
 

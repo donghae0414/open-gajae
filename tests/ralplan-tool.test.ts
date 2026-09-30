@@ -1,18 +1,15 @@
 // `ralplan` tool (plan S2): ops, actors, the gjc write flow, budgets, rows,
-// doctor, handoff and the ultragoal entry gate, over a fake lineage (root +
-// role children) and a fake ultragoal state.
+// doctor and the journaled handoff (ultragoal revision plan PQ-6 A), over a
+// fake lineage (root + role children) and a fake ultragoal state.
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Settings } from "../src/config";
-import { createHooks } from "../src/hooks";
-import { ultragoalEntryGate } from "../src/ralplan-runtime/store";
+import { RALPLAN_ACTIVATION_REFUSAL } from "../src/ralplan-runtime/tool";
 import { StateStore } from "../src/state";
 import { createTools } from "../src/tools";
-import { RALPLAN_ACTIVATION_REFUSAL } from "../src/ultragoal";
-import { seedUltragoal } from "../src/ultragoal-hooks";
 
 const T0 = Date.parse("2026-09-28T00:00:00.000Z");
 const ROOT = "ses_root";
@@ -57,9 +54,6 @@ async function fixture(body: (h: Harness) => Promise<void>, settings?: Partial<S
       ...settings,
     };
     const tool = createTools(store, { locationDir: root, projectDir: root }, {
-      async parentSession() {
-        return undefined;
-      },
       async rootSession(id) {
         if (!(id in LINEAGE)) throw new Error("unknown session");
         return LINEAGE[id];
@@ -94,9 +88,10 @@ function receipt(content: string): any {
 
 const sha = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
 const lines = async (path: string) => (await readFile(path, "utf8")).trim().split("\n").map((l) => JSON.parse(l));
+/** An active ultragoal state (ultragoal revision plan C-3: readable and `active: true`). */
 const runningUltragoal = (store: StateStore) =>
-  store.ultragoalTransaction(ROOT, (tx) =>
-    tx.writeState({ active: true, current_phase: "ultragoal", awaiting_confirmation: false, iteration: 1, max_iterations: 100 }, "ultragoal_tool"),
+  store.workflowTransaction(ROOT, (tx) =>
+    tx.writeModeState("ultragoal", { skill: "ultragoal", active: true, current_phase: "active", version: 2 }, "ultragoal_tool"),
   );
 
 test("AC1: seven ops; primary all, roles write/status/state, everyone else and a failed lineage refused", async () => {
@@ -365,26 +360,54 @@ test("status is gjc state read; write without start creates the run, a new run_i
   });
 });
 
-test("handoff needs a finished phase, demotes ralplan and confirms ultragoal with the meta; a failed seed leaves handoff (DR-7, P-AC7, R-O2)", async () => {
-  await fixture(async ({ call, write, json, file, store }) => {
+test("handoff needs a finished phase, then the journaled handoff: an inactive handoff_to row, ultragoal on goal-planning (DR-7, PQ-6 A)", async () => {
+  await fixture(async ({ call, write, json, file, audit, store }) => {
     await call({ op: "start", task: "t" });
     expect(await call({ op: "handoff", to: "ultragoal" })).toContain("only from a finished phase");
     await write("final", 1, "f");
-    // A keyword's awaiting seed first: the handoff confirms it and merges the meta.
-    await seedUltragoal(store, ROOT, { awaiting: true, task: "t" });
-    expect(await call({ op: "handoff", to: "ultragoal" })).toContain("source_plan");
-    const ralplan = await json("state", "ralplan-state.json");
-    expect(ralplan).toMatchObject({ active: false, current_phase: "handoff", handoff_to: "ultragoal", handoff_at: expect.any(String) });
-    expect(await Bun.file(file("state", "active", "ralplan.json")).exists()).toBe(false);
-    expect(await store.read(ROOT, "ultragoal")).toMatchObject({ active: true, awaiting_confirmation: false, handoff_from: "ralplan", handoff_at: ralplan.handoff_at });
+    // A field of an earlier ultragoal state survives the callee merge.
+    await store.workflowTransaction(ROOT, (tx) =>
+      tx.writeModeState("ultragoal", { skill: "ultragoal", active: false, current_phase: "complete", note: "kept" }, "ultragoal_tool"),
+    );
+    const out = await call({ op: "handoff", to: "ultragoal" });
+    const [line, ...rest] = out.split("\n");
+    expect(line).toBe(
+      `Handed off to ultragoal: ralplan is inactive (phase handoff) and ultragoal is active in goal-planning. Load the \`ultragoal\` skill now and call \`ultragoal create\` with the approved plan's goals (the approved plan: ${file("plans", "ralplan", ROOT, "pending-approval.md")}).`,
+    );
+    const receipt = JSON.parse(rest.join("\n"));
+    expect(receipt).toMatchObject({ ok: true, from: "ralplan", to: "ultragoal", phases: { from: "handoff", to: "goal-planning" } });
+    expect(await json("state", "ralplan-state.json")).toMatchObject({
+      active: false,
+      current_phase: "handoff",
+      handoff_to: "ultragoal",
+      handoff_at: receipt.handoff_at,
+      run_id: ROOT,
+    });
+    // gjc keeps the caller's row inactive with `handoff_to` (ralplan deviation 19 resolved).
+    expect(await json("state", "active", "ralplan.json")).toMatchObject({ active: false, phase: "handoff", handoff_to: "ultragoal" });
+    expect(await json("state", "active", "ultragoal.json")).toMatchObject({ active: true, phase: "goal-planning", handoff_from: "ralplan" });
+    expect(await json("state", "ultragoal-state.json")).toMatchObject({
+      active: true,
+      current_phase: "goal-planning",
+      handoff_from: "ralplan",
+      handoff_at: receipt.handoff_at,
+      note: "kept",
+    });
+    expect(await json("state", "skill-active-state.json")).toMatchObject({ skill: "ultragoal", phase: "goal-planning" });
+    // The journal was written, committed and removed.
+    expect(await readdir(file("state", "transactions"))).toEqual([]);
+    const verbs = (await audit()).map((row) => row.verb);
+    expect(verbs).toContain("write-transaction-journal");
+    expect(verbs).toContain("remove-transaction-journal");
   });
+  // A corrupt ultragoal state refuses the whole handoff before any write.
   await fixture(async ({ call, write, json, file }) => {
     await call({ op: "start", task: "t" });
     await write("final", 1, "f");
-    await mkdir(file("state"), { recursive: true });
     await writeFile(file("state", "ultragoal-state.json"), "{");
-    expect(await call({ op: "handoff", to: "ultragoal" })).toContain("Call `ultragoal start`");
-    expect(await json("state", "ralplan-state.json")).toMatchObject({ active: false, current_phase: "handoff" });
+    expect(await call({ op: "handoff", to: "ultragoal" })).toContain("existing state for ultragoal is corrupt or tampered");
+    expect(await json("state", "ralplan-state.json")).toMatchObject({ active: true, current_phase: "final" });
+    expect(await readFile(file("state", "ultragoal-state.json"), "utf8")).toBe("{");
   });
 });
 
@@ -397,7 +420,7 @@ test("handoff refuses an inactive ralplan after Stop here, clear or a handoff; a
     await call({ op: "state", patch: { active: false } });
     const stopped = await call({ op: "handoff", to: "ultragoal" });
     expect(stopped).toContain("ralplan is not active (phase final)");
-    expect(stopped).toContain("source_plan");
+    expect(stopped).toContain("load the `ultragoal` skill, then call `ultragoal create` with the plan's goals (the approved plan: ");
     expect(await json("state", "ralplan-state.json")).toMatchObject({ active: false, current_phase: "final" });
     expect(await store.read(ROOT, "ultragoal")).toBeUndefined();
     await call({ op: "state", patch: { active: true } });
@@ -409,63 +432,5 @@ test("handoff refuses an inactive ralplan after Stop here, clear or a handoff; a
     await write("final", 1, "f");
     await call({ op: "clear" });
     expect(await call({ op: "handoff", to: "ultragoal" })).toContain("ralplan is not active (phase complete)");
-  });
-});
-
-test("ultragoal entry gate: running ultragoal ①, refusal ③, handoff ④, stale row ⑤, legacy state ② (C-4)", async () => {
-  await fixture(async ({ call, write, file, json, store }) => {
-    await call({ op: "start", task: "t" });
-    await runningUltragoal(store);
-    const before = await readFile(file("state", "ralplan-state.json"), "utf8");
-    expect(await ultragoalEntryGate(store, ROOT)).toEqual({ status: "pass" });
-    expect(await readFile(file("state", "ralplan-state.json"), "utf8")).toBe(before);
-    await store.ultragoalTransaction(ROOT, (tx) => tx.deleteState());
-    const refused = await ultragoalEntryGate(store, ROOT);
-    expect(refused).toMatchObject({ status: "refused", message: expect.stringContaining('"Approve execution via ultragoal"') });
-    await write("final", 1, "f");
-    expect(await ultragoalEntryGate(store, ROOT)).toMatchObject({ status: "handoff", handoff_from: "ralplan", handoff_at: expect.any(String) });
-    expect(await json("state", "ralplan-state.json")).toMatchObject({ active: false, current_phase: "handoff" });
-    // ⑤: an inactive state with a row left by a refine write.
-    await write("revision", 2, "r");
-    expect(await json("state", "active", "ralplan.json")).toMatchObject({ active: true, phase: "revision" });
-    expect(await ultragoalEntryGate(store, ROOT)).toEqual({ status: "pass" });
-    expect(await Bun.file(file("state", "active", "ralplan.json")).exists()).toBe(false);
-    await store.ralplanTransaction(ROOT, (tx) => tx.writeState({ active: true, current_phase: "ralplan" }, "ralplan_tool"));
-    expect(await ultragoalEntryGate(store, ROOT)).toEqual({ status: "pass" });
-  });
-});
-
-test("C-1.6: ralplan handoff, a gated ultragoal create and one continuation run together all settle (no deadlock)", async () => {
-  await fixture(async ({ call, write, json, store, root }) => {
-    await call({ op: "start", task: "t" });
-    await write("final", 1, "f");
-    const ultragoal = createTools(store, { locationDir: root, projectDir: root }, {
-      async parentSession() {
-        return undefined;
-      },
-    }).find((t) => t.name === "ultragoal")!;
-    const hooks = createHooks(
-      store,
-      { get: async () => ({ location: { directory: root } }), synthetic: async () => ({}) },
-      root,
-      root,
-      root,
-    );
-    const create = { op: "create", description: "task", goals: [{ title: "g", description: "d", priority: 1, acceptanceCriteria: ["works"] }] };
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const settled = await Promise.race([
-      Promise.allSettled([
-        call({ op: "handoff", to: "ultragoal" }),
-        ultragoal.execute(ultragoal.input.parse(create) as never, { agent: "open-gajae", sessionID: ROOT, signal: new AbortController().signal }),
-        hooks.onEvent({ type: "session.execution.succeeded", data: { sessionID: ROOT } }),
-      ]),
-      new Promise<"timeout">((resolve) => {
-        timer = setTimeout(() => resolve("timeout"), 5000);
-      }),
-    ]);
-    clearTimeout(timer);
-    expect(settled).not.toBe("timeout");
-    expect(await json("state", "ralplan-state.json")).toMatchObject({ active: false, current_phase: "handoff" });
-    expect(await store.read(ROOT, "ultragoal")).toMatchObject({ active: true, handoff_from: "ralplan" });
   });
 });

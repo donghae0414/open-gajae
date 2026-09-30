@@ -36,6 +36,8 @@
 //   `../skill-state/handoff.ts`)
 // - `gjc-runtime/goal-mode-request.ts:145-162,195` (arming: the same run's
 //   goal, or a trimmed objective match, is kept)
+// - `hooks/skill-state.ts:429-470` (the skill-load seed: an active
+//   `goal-planning` state, then `syncSkillActiveState`)
 // Deviations (plan §7.1; the pure rules live in the S2a modules):
 // - 1 (PQ-10 A, PQ-15 A, PQ-25 B): `create` appends a `PLAN` note to
 //   `progress.txt`, `checkpoint(complete)` requires `implementation`,
@@ -51,6 +53,8 @@
 //   reopens a goal and keeps its receipt.
 // - 29 (E-20): a fix goal's gate kind and receipt kind both come from the
 //   completion view.
+// - 35 (DR-21): the skill-load seed raises a missing or inactive state to
+//   `goal-planning` over its kept fields (`seedUltragoalTx`).
 // - 36: `checkpoint(complete)` with its advance and `record_review_blockers`
 //   write `goals.json` once.
 // - 39: the `workflow_handoff` ledger row and the progress `HANDOFF` note of an
@@ -85,11 +89,10 @@ import {
   workflowEnvelopeError,
 } from "../skill-state/doctor.js";
 import { handoffWorkflowTx } from "../skill-state/handoff.js";
-import type { WorkflowHudSummary } from "../skill-state/hud.js";
 import { syncActiveRowTx } from "../skill-state/rows.js";
 import type { InterviewState, StateWriter, WorkflowTx } from "../state.js";
 import { validateGate } from "./gate.js";
-import { buildUltragoalHud, type UltragoalHudGoal } from "./hud.js";
+import { buildUltragoalHudFromState } from "./hud.js";
 import {
   type BlockerClassification,
   CRITIC_VERDICT_EVENT,
@@ -109,6 +112,7 @@ import {
 import {
   derivedFieldPatchError,
   ULTRAGOAL_GUARD_RELEASE_PHASES,
+  ULTRAGOAL_INITIAL_STATE,
   type UltragoalPhase,
   ultragoalPhasePatchError,
 } from "./manifest.js";
@@ -359,27 +363,6 @@ async function writeProgressTx(tx: WorkflowTx, text: string, owner: AuditOwner):
   });
 }
 
-/** gjc `buildHudForMode("ultragoal", state)`. */
-function hudFromState(state: Json, at: string): WorkflowHudSummary {
-  const goals: UltragoalHudGoal[] = Array.isArray(state.goals)
-    ? (state.goals as unknown[]).filter(
-        (goal): goal is UltragoalHudGoal =>
-          isRecord(goal) &&
-          typeof goal.id === "string" &&
-          typeof goal.title === "string" &&
-          typeof goal.status === "string",
-      )
-    : [];
-  const latest = state.latestLedgerEvent;
-  return buildUltragoalHud({
-    status: typeof state.status === "string" ? state.status : (trimmed(state.current_phase) ?? "pending"),
-    goals,
-    latestLedgerEvent:
-      isRecord(latest) && typeof latest.event === "string" ? (latest as LatestLedgerEvent) : undefined,
-    updatedAt: at,
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Reconcile (C-4, DR-20)
 // ---------------------------------------------------------------------------
@@ -447,7 +430,7 @@ export async function reconcileUltragoalTx(
     });
     await syncActiveRowTx(
       tx,
-      { skill: SKILL, active, phase: status, sessionId, hud: hudFromState(merged, at) },
+      { skill: SKILL, active, phase: status, sessionId, hud: buildUltragoalHudFromState(merged, at) },
       owner,
     );
   } catch (error) {
@@ -457,6 +440,69 @@ export async function reconcileUltragoalTx(
       // Best-effort audit; a secondary failure never changes the op's result.
     }
   }
+}
+
+/**
+ * DR-21 (deviation 35): the `skill ultragoal` load seed (gjc
+ * `hooks/skill-state.ts:429-470`). A missing or inactive ultragoal state is
+ * merged over its kept fields into an active `goal-planning` state, where gjc
+ * writes a new file only (`expectedRevision: 0`); an active one keeps its
+ * phase. Either way the row is written active, which removes the upstream
+ * ralplan and deep-interview rows (D-SF2, `syncSkillActiveState`), and the
+ * snapshot is rebuilt. A corrupt state is left in place and nothing is
+ * written. Returns what happened.
+ */
+export async function seedUltragoalTx(
+  tx: WorkflowTx,
+  sessionId: string,
+  owner: AuditOwner = HOOK_OWNER,
+): Promise<"seeded" | "kept" | "corrupt"> {
+  let existing: Json | undefined;
+  try {
+    const stored = await tx.readModeState(SKILL);
+    existing = stored === undefined ? undefined : payloadOf(stored);
+  } catch {
+    return "corrupt";
+  }
+  const at = now();
+  const kept = existing?.active === true;
+  let state: Json;
+  if (kept) {
+    state = existing!;
+  } else {
+    state = {
+      ...existing,
+      skill: SKILL,
+      version: WORKFLOW_STATE_VERSION,
+      active: true,
+      current_phase: ULTRAGOAL_INITIAL_STATE,
+      updated_at: at,
+    };
+    if (typeof state.session_id !== "string") state.session_id = sessionId;
+    await tx.writeModeState(SKILL, state, writerOf(owner));
+    await appendAudit(tx, {
+      category: "state",
+      verb: "write",
+      owner,
+      skill: SKILL,
+      mutationId: `${SKILL}:seed:${at}`,
+      fromPhase: trimmed(existing?.current_phase),
+      toPhase: ULTRAGOAL_INITIAL_STATE,
+      path: tx.paths.modeState(SKILL),
+    });
+  }
+  await syncActiveRowTx(
+    tx,
+    {
+      skill: SKILL,
+      active: true,
+      phase: trimmed(state.current_phase) ?? ULTRAGOAL_INITIAL_STATE,
+      sessionId,
+      hud: buildUltragoalHudFromState(state, at),
+    },
+    owner,
+  );
+  return kept ? "kept" : "seeded";
 }
 
 // ---------------------------------------------------------------------------
@@ -1131,7 +1177,7 @@ export async function patchStateTx(tx: WorkflowTx, sessionId: string, args: Ultr
   try {
     await syncActiveRowTx(
       tx,
-      { skill: SKILL, active, phase: toPhase, sessionId, hud: hudFromState(merged, at) },
+      { skill: SKILL, active, phase: toPhase, sessionId, hud: buildUltragoalHudFromState(merged, at) },
       RUNTIME_OWNER,
     );
   } catch {

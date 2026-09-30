@@ -1,22 +1,50 @@
-// Ralplan host hooks: continuation on durable execution events, keyword/mention
-// notices on the v2 `prompt` hook, the mutation guards and the ultragoal entry
-// gate on `execute.before`, the workflow-tool hiding on `context` (plan C-11),
-// and the compaction recovery context. Ultragoal
-// shares this one engine and these hooks through `src/ultragoal-hooks.ts`, one
-// mode at a time (plan §5). The prompt hook also carries the deep-interview
-// keyword and `@deep-interview` mention, which only inject OMC's magic-keyword
-// guide and seed no state at all.
+// Workflow host hooks, assembled here (ultragoal revision plan S3 3b): the
+// continuation on durable execution events (the goal loop first, then
+// ralplan), the keyword/mention notices, the goal hold release and the turn
+// marker on the v2 `prompt` hook, the mutation guards, the `skill` chain guard
+// and turn gate, and the red-team fragment on `execute.before`, the marker
+// revert on `execute.after`, the workflow-tool hiding and the goal context on
+// `context` (plan C-11, C-9), and the compaction recovery context. The goal
+// logic lives in `src/goal/hooks.ts`, the ultragoal seed and texts in
+// `src/ultragoal-runtime/`, the ralplan handoff in
+// `src/ralplan-runtime/store.ts`. The prompt hook also carries the
+// deep-interview keyword and `@deep-interview` mention, which only inject
+// OMC's magic-keyword guide and seed no state at all.
 //
-// Plan S3 (gajae-code 5c5231418930673e42cc5d08ebe4376e03187533, MIT): the
-// ralplan keyword and mention only add a notice (D-F13, R-O6) and the OMC
+// Ralplan plan S3 (gajae-code 5c5231418930673e42cc5d08ebe4376e03187533, MIT):
+// the ralplan keyword and mention only add a notice (D-F13, R-O6) and the OMC
 // restore notice is gone (R-O11); `execute.before` blocks the runtime-owned
-// paths for everyone and, while a ralplan run plans, every mutation outside a
-// neutral temp path (`skill-state/workflow-mutation-guard.ts:22-27,264-351,
-// 1767-1866`; deviations 11, 23, 28), and runs the ultragoal entry gate for
-// `skill ultragoal` and the `@ultragoal` mention (C-4; `tools/skill.ts:
-// 192-220`, deviation 29); continuation keeps OMC's loop over the gjc terminal
-// set with a hook-only counter file (deviations 10, 26); compaction adds the
-// gjc recovery contract (`session/agent-session.ts:667-710`, deviation 20).
+// paths for everyone and, while ralplan is the visible primary skill and
+// plans, every mutation outside a neutral temp path
+// (`skill-state/workflow-mutation-guard.ts:22-29,264-351,1767-1866`;
+// deviations 11, 23); continuation keeps OMC's loop over the gjc terminal set
+// with a hook-only counter file (deviations 10, 26); compaction adds the gjc
+// recovery contract (`session/agent-session.ts:667-710`, deviation 20).
+//
+// Ultragoal revision plan S3 (same gjc revision):
+// - C-9 (PQ-20 A, PQ-7 B, D-TL6): on each root `succeeded`, an active goal
+//   takes the goal path only (`session/agent-session.ts:21086-21121`,
+//   whatever the agent); otherwise ralplan continues only while it is the
+//   visible primary skill (ralplan deviation 10).
+// - C-10 (PQ-21 A): the turn marker is the workflow skill loaded in the
+//   current execution (`session/agent-session.ts:7448,8038-8046`): set by a
+//   `skill` call that passed the plugin guards or by an `@<skill>` mention,
+//   reverted when that call fails, and cleared at every execution end before
+//   the continuation decision. `skill ultragoal` hands off an active ralplan
+//   in T only when the marker is `ralplan` (`tools/skill.ts:170-222`, D-HE6);
+//   otherwise it seeds `goal-planning` (DR-21, deviation 35).
+// - D-HE3 (deviation 22): while ultragoal is the visible primary skill,
+//   `skill ralplan` and `skill deep-interview` are refused
+//   (`tools/skill.ts:205-209`).
+// - D-HE5 (PQ-13 A): while ultragoal is the visible primary skill on an active
+//   `goal-planning` state, mutations outside a neutral temp path are refused
+//   (`workflow-mutation-guard.ts:28-29,274`).
+// - D-VF11 (deviation 20): `subagent(open-gajae-executor)` with the
+//   `[ultragoal-red-team]` marker gets gjc's red-team fragment
+//   (`prompts/agents/executor.md:34-46`).
+// - PQ-5 (1) B: while ultragoal is the visible primary skill, `@ralplan`,
+//   `@deep-interview` and their keywords get the handoff notice; the
+//   ultragoal keyword and mention get a notice only (D-HE4).
 //
 // Notices are `session.synthetic({ resume: false })` messages. The host places
 // them before the user message of the same turn, while OMC and v1 appended after
@@ -32,12 +60,11 @@
 // prompt, because a host subagent-completion resume can still end in a later
 // `succeeded` (Phase 0 Q9).
 //
-// Source: oh-my-claudecode v5.4.0 (MIT) — `persistent-mode/index.ts` checkRalplan,
-// `bridge.ts` session restore, keyword seeding and confirmSkillModeStates (for
-// ultragoal only since plan S3) — and
-// oh-my-openagent d1557a4b48fdbec06a7144fdc4afa3e65c6523ed (Sustainable Use
-// License) for OpenCode-side in-flight, lineage and injection patterns, modified
-// for open-gajae. See THIRD-PARTY-NOTICES.md and licenses/OMO-SUL.txt.
+// Source: oh-my-claudecode v5.4.0 (MIT) — `persistent-mode/index.ts`
+// checkRalplan — and oh-my-openagent d1557a4b48fdbec06a7144fdc4afa3e65c6523ed
+// (Sustainable Use License) for OpenCode-side in-flight, lineage and injection
+// patterns, modified for open-gajae. See THIRD-PARTY-NOTICES.md and
+// licenses/OMO-SUL.txt.
 
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { Error as ToolError } from "@opencode/plugin/promise/tool";
@@ -51,6 +78,9 @@ import {
   projectRelative,
   sessionArtifactOwner,
 } from "./artifact-guard.js";
+import { createGoalHooks } from "./goal/hooks.js";
+import { GOAL_CONTEXT_DESCRIPTION } from "./goal/messages.js";
+import { INJECTION_MARKERS } from "./injection.js";
 import {
   breakerMessage,
   compactionMessage,
@@ -59,18 +89,17 @@ import {
   deepInterviewMessage,
   detectDeepInterviewKeyword,
   detectRalplanKeyword,
-  INJECTION_MARKERS,
+  detectUltragoalKeyword,
   keywordMessage,
   mentionMessage,
   RALPLAN_SKILL_NAME,
   RALPLAN_STOP_BLOCKER_MAX,
   type RalplanBreaker,
   shouldContinue,
-  detectUltragoalKeyword,
   ULTRAGOAL_SKILL_NAME,
 } from "./ralplan.js";
 import { RALPLAN_INDEX_FILE } from "./ralplan-runtime/ledger.js";
-import { GUARD_RELEASE_PHASES, isKnownPhase } from "./ralplan-runtime/manifest.js";
+import { GUARD_RELEASE_PHASES, isKnownPhase, TERMINAL_PHASES } from "./ralplan-runtime/manifest.js";
 import {
   projectRalplanRun,
   ralplanRecoveryRunFromState,
@@ -79,23 +108,22 @@ import {
 import {
   HOOK_OWNER,
   patchStateTx,
-  ultragoalEntryGate,
+  RALPLAN_RUNNING_REFUSAL,
+  ralplanHandoffTx,
 } from "./ralplan-runtime/store.js";
 import { isNeutralTempPath } from "./ralplan-runtime/temp-paths.js";
-import { RALPLAN_MODE, type RalplanTx, type StateStore } from "./state.js";
+import { readVisiblePrimaryTx } from "./skill-state/rows.js";
+import type { RalplanTx, StateStore } from "./state.js";
 import {
-  CHAIN_GUARD_REFUSAL,
-  isRalplanRunning,
-  isUltragoalRunning,
-  keywordMessage as ultragoalKeywordMessage,
-  mentionMessage as ultragoalMentionMessage,
-  ralplanMentionNotice,
-  ralplanRunningNotice,
-} from "./ultragoal.js";
-import {
-  type CompactionEvent,
-  createUltragoalHooks,
-} from "./ultragoal-hooks.js";
+  ULTRAGOAL_GOAL_PLANNING_MUTATION_BLOCK_MESSAGE,
+  ULTRAGOAL_RED_TEAM_FRAGMENT,
+  ULTRAGOAL_RED_TEAM_MARKER,
+  ultragoalChainRefusal,
+  ultragoalHandoffNotice,
+  ultragoalKeywordNotice,
+  ultragoalMentionNotice,
+} from "./ultragoal-runtime/messages.js";
+import { seedUltragoalTx } from "./ultragoal-runtime/store.js";
 
 /**
  * The `ctx.session` slice these hooks use, declared structurally so a fake in a
@@ -119,13 +147,27 @@ export type HostSession = {
 /** A synthetic notice and the one line the TUI shows for it. */
 type Notice = { text: string; description: string };
 
+/** The message fields the goal context compare reads (host `plan.ts:115-121`). */
+type ContextMessage = {
+  readonly role: string;
+  readonly content: ReadonlyArray<{ readonly type: string; readonly text?: unknown }>;
+};
+
 /**
  * The fields of the host's `context`, `compaction` and `generate` session hook
- * events (`SessionContext`) the tool-hiding hook reads or writes.
+ * events (`SessionContext`) the hiding and goal-context hooks read or write.
  */
 export type ContextEvent = {
+  readonly sessionID?: string;
   readonly agent?: string;
   tools?: Record<string, unknown>;
+  messages?: ContextMessage[];
+};
+
+/** The fields of the host's `compaction` session hook read or written here. */
+export type CompactionEvent = {
+  readonly sessionID: string;
+  system: Array<{ type: "text"; text: string }>;
 };
 
 /** The fields of the host's `prompt` hook event these hooks read or write. */
@@ -159,19 +201,25 @@ export type ExecuteAfterEvent = {
 };
 
 export type RalplanHooks = {
-  /** Fail-closed parent lookup, shared with the `ultragoal` tool (plan §2 A1″). */
+  /** Fail-closed parent lookup, used by `rootSession`. */
   parentSession(sessionID: string): Promise<string | undefined>;
-  /** Fail-closed lineage root, shared with the `ralplan` tool (plan DR-1). */
+  /** Fail-closed lineage root, shared with the workflow tools (plan DR-1, D-SF6). */
   rootSession(sessionID: string): Promise<string>;
   prompt(event: PromptEvent): Promise<void>;
   /**
-   * Plan C-11: registered on the `context`, `compaction` and `generate`
-   * session hooks; removes each workflow tool the request's agent does not own.
+   * The `context` session hook: `hideTools`, then the goal context of an
+   * active goal on a root `open-gajae` request (C-9).
    */
-  context(event: ContextEvent): void;
+  context(event: ContextEvent): Promise<void>;
   /**
-   * The `compaction` session hook: ultragoal context while it runs (plan §7),
-   * then the active ralplan run's recovery contract (plan D-H2/AC19).
+   * Plan C-11: registered on the `compaction` and `generate` session hooks
+   * (and run by `context`); removes each workflow tool the request's agent
+   * does not own.
+   */
+  hideTools(event: ContextEvent): void;
+  /**
+   * The `compaction` session hook: the root's ultragoal recovery context
+   * (DR-17), then the active ralplan run's recovery contract (D-H2/AC19).
    */
   compaction(event: CompactionEvent): Promise<void>;
   executeBefore(event: ExecuteBeforeEvent): Promise<void>;
@@ -183,14 +231,16 @@ export type RalplanHooks = {
 /** The primary this plugin drives; the only agent its workflow tools serve. */
 const PRIMARY_AGENT = "open-gajae";
 
+/** D-VF11: the role whose `subagent` prompt may carry the red-team marker. */
+const RED_TEAM_AGENT = "open-gajae-executor";
+
 /**
  * G1's deny-list: the five owned role subagents from `src/config.ts`. A
  * `subagent` turn runs in a child session carrying the child's agent, and a
  * role's brief can quote a workflow keyword, so the prompt hook skips these
- * roles: no keyword or mention notices, and no ultragoal seed (the only state
- * this hook seeds; ralplan gets a notice only) in a session whose agent has
- * `state_clear` denied. Any other agent except `open-gajae` gets no notice or
- * seed either (R-OD20) but still lifts the stop mark and the ultragoal pause;
+ * roles: no keyword or mention notices in a session whose agent has
+ * `state_clear` denied. Any other agent except `open-gajae` gets no notice
+ * either (R-OD20) but still lifts the stop mark and the goal hold;
  * `undefined` or a failed lookup proceeds.
  */
 const ROLE_SUBAGENTS = new Set([
@@ -204,13 +254,14 @@ const ROLE_SUBAGENTS = new Set([
 /**
  * Plan C-11 (D-HE8, E-2): each workflow tool and the agents that own it,
  * matching the tools' own actor checks — `ralplan` D-W3
- * (`src/ralplan-runtime/tool.ts`), `ultragoal` the primary and its two
- * reviewers (`src/ultragoal-tool.ts`; plan S3 narrows it to the primary). The
- * `context` hook deletes a tool from any other agent's request, host and
- * user-defined agents included, so the host neither offers it nor runs a call
- * to it (`core/src/session/model-request.ts:225-255`, `core/src/tool.ts:
- * 272-275`), as the host's patch plugin removes its tools
- * (`core/src/tool/plugin/patch.ts:296-309`). The owners' `roleRules` denies stay.
+ * (`src/ralplan-runtime/tool.ts`), `ultragoal` and `goal` the primary alone
+ * (`src/ultragoal-runtime/tool.ts`, `src/goal/tool.ts`, I-12). The `context`
+ * hook deletes a tool from any other agent's request, host and user-defined
+ * agents included, so the host neither offers it nor runs a call to it
+ * (`core/src/session/model-request.ts:225-255`, `core/src/tool.ts:272-275`),
+ * as the host's patch plugin removes its tools
+ * (`core/src/tool/plugin/patch.ts:296-309`). The owners' `roleRules` denies
+ * stay.
  */
 const TOOL_OWNERS: Record<string, ReadonlySet<string>> = {
   ralplan: new Set([
@@ -219,11 +270,8 @@ const TOOL_OWNERS: Record<string, ReadonlySet<string>> = {
     "open-gajae-architect",
     "open-gajae-critic",
   ]),
-  ultragoal: new Set([
-    PRIMARY_AGENT,
-    "open-gajae-architect",
-    "open-gajae-critic",
-  ]),
+  ultragoal: new Set([PRIMARY_AGENT]),
+  goal: new Set([PRIMARY_AGENT]),
 };
 
 /**
@@ -233,13 +281,27 @@ const TOOL_OWNERS: Record<string, ReadonlySet<string>> = {
  */
 const STOP_REASONS = new Set(["user", "shutdown"]);
 
+/** PQ-21 A: every execution end clears the turn marker first. */
+const EXECUTION_ENDS = new Set([
+  "session.execution.succeeded",
+  "session.execution.failed",
+  "session.execution.interrupted",
+]);
+
+/** The workflow skills whose load sets the turn marker (C-10). */
+const WORKFLOW_SKILLS: ReadonlySet<unknown> = new Set([
+  RALPLAN_SKILL_NAME,
+  ULTRAGOAL_SKILL_NAME,
+  DEEP_INTERVIEW_SKILL_NAME,
+]);
+
 /**
  * gajae-code 5c52314 `skill-state/workflow-mutation-guard.ts:24-25`
  * (`WORKFLOW_STATE_MUTATION_BLOCK_MESSAGE` + `Use:` line) with the host's
  * runtime-owned paths and tools substituted (plan S3, AC18).
  */
 const WORKFLOW_STATE_MUTATION_BLOCK_MESSAGE =
-  ".open-gajae workflow state and ralplan artifacts are runtime-owned. Agent mutation tools cannot edit `.open-gajae/_session-*/state/**` or `.open-gajae/_session-*/plans/ralplan/**`; use the sanctioned tool instead.\nUse: `ralplan` for ralplan state and plans, `state_write`/`state_clear` for deep-interview state.";
+  ".open-gajae workflow state and ralplan artifacts are runtime-owned. Agent mutation tools cannot edit `.open-gajae/_session-*/state/**` or `.open-gajae/_session-*/plans/ralplan/**`; use the sanctioned tool instead.\nUse: `ralplan` for ralplan state and plans, `ultragoal` for ultragoal state, `goal` for the goal, `state_write`/`state_clear` for deep-interview state.";
 
 /**
  * gajae-code 5c52314 `skill-state/workflow-mutation-guard.ts:26-27`
@@ -252,10 +314,12 @@ const RALPLAN_MUTATION_BLOCK_MESSAGE =
 const KEYWORD_NOTICE_MARKER = "[MODE: RALPLAN]";
 const ULTRAGOAL_NOTICE_MARKER = "[MODE: ULTRAGOAL]";
 const DEEP_INTERVIEW_MAGIC_MARKER = "[MAGIC KEYWORD: DEEP-INTERVIEW]";
+/** gjc `executor.md` fragment tag: its presence means it is attached. */
+const RED_TEAM_FRAGMENT_TAG = "<ultragoal_red_team_mode>";
 
 function log(message: string, error?: unknown) {
-  if (error === undefined) console.warn(`[open-gajae:ralplan] ${message}`);
-  else console.warn(`[open-gajae:ralplan] ${message}:`, error);
+  if (error === undefined) console.warn(`[open-gajae:hooks] ${message}`);
+  else console.warn(`[open-gajae:hooks] ${message}:`, error);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -268,13 +332,8 @@ export function createHooks(
   packageRoot: string,
   locationDir: string,
   projectDir: string,
-  { hardMax = 200 }: { hardMax?: number } = {},
 ): RalplanHooks {
-  const ultragoal = createUltragoalHooks(
-    store,
-    (input) => session.synthetic(input),
-    { hardMax },
-  );
+  const goal = createGoalHooks(store);
 
   // The absolute `Read fallback:` path OMC resolved through `resolveSkillPath`;
   // here it is always this package's own copy, so no existence probe is needed.
@@ -284,22 +343,6 @@ export function createHooks(
     DEEP_INTERVIEW_SKILL_NAME,
     "SKILL.md",
   );
-
-  /**
-   * Read ralplan state, treating any store error as "no active ralplan".
-   * The store preserves a corrupt or foreign state file; this never deletes or
-   * rewrites one, it just goes inert for the turn.
-   */
-  async function readState(
-    sessionID: string,
-  ): Promise<Record<string, unknown> | undefined> {
-    try {
-      return await store.read(sessionID, RALPLAN_MODE);
-    } catch (error) {
-      log("ralplan state unreadable; treating session as inactive", error);
-      return undefined;
-    }
-  }
 
   /**
    * One continuation in flight per session, so a repeated `succeeded` cannot
@@ -312,6 +355,14 @@ export function createHooks(
    * by the next real user prompt after the G2 marker check.
    */
   const interrupted = new Set<string>();
+
+  /**
+   * PQ-21 A (C-10): the workflow skill loaded in each session's current
+   * execution, and per `skill` call id the marker it replaced, so a failed
+   * call can put it back.
+   */
+  const turnSkill = new Map<string, string>();
+  const markerUndo = new Map<string, { sessionID: string; previous: string | undefined }>();
 
   /**
    * Whether a session belongs to this instance's location, and its parent.
@@ -351,14 +402,15 @@ export function createHooks(
     return entry;
   }
 
-  /** Start a run with `text` as a synthetic message. Never throws. */
+  /** Write one synthetic message. Never throws. */
   async function inject(
     sessionID: string,
     text: string,
     description: string,
+    resume = true,
   ): Promise<void> {
     try {
-      await session.synthetic({ sessionID, text, description, resume: true });
+      await session.synthetic({ sessionID, text, description, resume });
     } catch (error) {
       // No retry: the breaker count stays incremented, so the next run retries.
       log("continuation synthetic failed", error);
@@ -387,20 +439,24 @@ export function createHooks(
   }
 
   /**
-   * Plan C-1.5: one ralplan transaction reads the state and the counter,
+   * Plan C-1.5: one transaction reads the rows, the state and the counter,
    * decides, and writes the counter `{run_id, breaker_count,
-   * breaker_updated_at}`. Breaker exhaustion writes only `active: false` to
-   * the state, through the runtime writer with one audit row whose
-   * `mutation_id` carries `breaker-exhausted` (R-O3). A turn ultragoal handled
-   * only resets a finished run's breaker. A subagent's own session holds no
-   * ralplan state, so it skips at the first clause. Returns the message to
+   * breaker_updated_at}`. PQ-7 B: nothing happens unless ralplan is the
+   * visible primary skill (row). Breaker exhaustion writes only `active:
+   * false` to the state, through the runtime writer with one audit row whose
+   * `mutation_id` carries `breaker-exhausted` (R-O3). Returns the message to
    * inject after the transaction.
    */
-  async function decideRalplan(
-    sessionID: string,
-    ultragoalHandled: boolean,
-  ): Promise<Notice | undefined> {
+  async function decideRalplan(sessionID: string): Promise<Notice | undefined> {
     return store.ralplanTransaction(sessionID, async (tx) => {
+      let primary: Record<string, unknown> | undefined;
+      try {
+        primary = await readVisiblePrimaryTx(tx);
+      } catch (error) {
+        log("active rows unreadable; no ralplan continuation", error);
+        return undefined;
+      }
+      if (primary?.skill !== RALPLAN_SKILL_NAME) return undefined;
       let state: Record<string, unknown> | undefined;
       try {
         state = await tx.readState();
@@ -429,7 +485,6 @@ export function createHooks(
           await writeBreaker(0);
         return undefined;
       }
-      if (ultragoalHandled) return undefined;
       if (decision.kind === "breaker") {
         await patchStateTx(
           tx,
@@ -453,6 +508,7 @@ export function createHooks(
     });
   }
 
+  /** Plan C-9 for a lineage root's `succeeded`, after the marker is cleared. */
   async function continueSession(sessionID: string): Promise<void> {
     if (inFlight.has(sessionID)) {
       log(`continuation already in flight for ${sessionID}`);
@@ -461,8 +517,8 @@ export function createHooks(
     inFlight.add(sessionID);
     try {
       // Ahead of every state write: a stop the user asked for must neither
-      // inject nor advance the breaker. The ralplan state is left `active`, so
-      // the next real user turn resumes continuation normally.
+      // inject nor count. The goal and ralplan states are left as they are,
+      // so the next real user turn resumes continuation normally.
       if (interrupted.has(sessionID)) {
         log("user interrupt; skipping continuation");
         return;
@@ -475,16 +531,24 @@ export function createHooks(
         return;
       }
 
-      // One engine, one mode per turn: ultragoal first (OMC ralph priority,
-      // persistent-mode/index.ts:2471-2477), in its own transaction; the
-      // ralplan transaction starts only after it (plan C-1.2, C-1.5).
-      const handled = await ultragoal.continueLoop(
-        sessionID,
-        toolCallsOf(sessionID),
-      );
+      // D-TL6, I-6: an active goal takes the goal path only, held or not.
+      let decision: Awaited<ReturnType<typeof goal.decideContinuation>>;
+      try {
+        decision = await goal.decideContinuation(sessionID, toolCallsOf(sessionID));
+      } catch (error) {
+        log("goal continuation failed", error);
+        return;
+      }
+      if (decision.kind === "message") {
+        const { text, description, resume } = decision.message;
+        await inject(sessionID, text, description, resume);
+        return;
+      }
+      if (decision.kind === "held") return;
+
       let action: Notice | undefined;
       try {
-        action = await decideRalplan(sessionID, handled);
+        action = await decideRalplan(sessionID);
       } catch (error) {
         log("ralplan continuation failed", error);
       }
@@ -555,6 +619,14 @@ export function createHooks(
     return root;
   }
 
+  /** C-3: the visible primary skill's row at `sessionID`'s lineage root. */
+  async function visiblePrimary(
+    sessionID: string,
+  ): Promise<Record<string, unknown> | undefined> {
+    const root = await rootSession(sessionID);
+    return store.workflowTransaction(root, (tx) => readVisiblePrimaryTx(tx));
+  }
+
   /** The project root as the model addresses it from this location. */
   const prefix = projectPrefix(locationDir, projectDir);
 
@@ -611,16 +683,18 @@ export function createHooks(
   }
 
   /**
-   * Plan DR-10 (gjc `getActivePlanningSkill`, `isBlockingPlanningPhase`,
-   * `planningBlockedTargets`): while the lineage root's ralplan state is
-   * readable, active and on a phase outside R — final and handoff keep
-   * blocking — and ultragoal is not running at that root (R-O7), a
-   * `write`/`edit`/`patch` from any agent of the lineage is refused unless
-   * every target is a neutral temp path (DR-11). A call without a target is
-   * refused, as gjc refuses an unknown target. Returns the message, or
-   * `undefined`. Fails open on its own errors: a missing, unreadable or
-   * unknown-phase state (DR-21) or a failed lineage lookup releases the guard
-   * (gjc `:320`), unlike the fail-closed artifact guard.
+   * Plan D-HE5 (gjc `getActivePlanningSkill`, `isBlockingPlanningPhase`,
+   * `planningBlockedTargets`): the lineage root's visible primary skill
+   * decides. Ralplan blocks while its state is readable, active and on a
+   * phase outside R — final and handoff keep blocking (DR-10); ultragoal
+   * blocks while its state is active on `goal-planning` (DR-22). A
+   * `write`/`edit`/`patch` from any agent of the lineage is then refused
+   * unless every target is a neutral temp path (DR-11, PQ-13 A). A call
+   * without a target is refused, as gjc refuses an unknown target. Returns
+   * the message, or `undefined`. Fails open on its own errors: missing or
+   * unreadable rows or states, an unknown ralplan phase (DR-21) or a failed
+   * lineage lookup release the guard (gjc `:320`), unlike the fail-closed
+   * artifact guard.
    */
   async function guardPlanning(
     tool: string,
@@ -630,25 +704,80 @@ export function createHooks(
     if (!ARTIFACT_TOOLS.has(tool)) return undefined;
     try {
       const root = await rootSession(sessionID);
-      const state = await store.read(root, RALPLAN_MODE);
-      const phase = state?.current_phase;
-      if (
-        state?.active !== true ||
-        !isKnownPhase(phase) ||
-        GUARD_RELEASE_PHASES.has(phase)
-      )
+      const message = await store.workflowTransaction(root, async (tx) => {
+        const primary = await readVisiblePrimaryTx(tx);
+        if (primary?.skill === RALPLAN_SKILL_NAME) {
+          const state = await tx.readModeState("ralplan");
+          const phase = state?.current_phase;
+          return state?.active === true &&
+            isKnownPhase(phase) &&
+            !GUARD_RELEASE_PHASES.has(phase)
+            ? RALPLAN_MUTATION_BLOCK_MESSAGE
+            : undefined;
+        }
+        if (primary?.skill === ULTRAGOAL_SKILL_NAME) {
+          const state = await tx.readModeState("ultragoal");
+          const phase = String(state?.current_phase ?? "").trim().toLowerCase();
+          return state?.active === true && phase === "goal-planning"
+            ? ULTRAGOAL_GOAL_PLANNING_MUTATION_BLOCK_MESSAGE
+            : undefined;
+        }
         return undefined;
-      if (isUltragoalRunning(await ultragoal.read(root))) return undefined;
+      });
+      if (message === undefined) return undefined;
       const paths = artifactPathsOf(tool, input);
-      if (paths.length === 0) return RALPLAN_MUTATION_BLOCK_MESSAGE;
+      if (paths.length === 0) return message;
       for (const path of paths)
         if (!(await isNeutralTempPath(resolve(locationDir, path), projectDir)))
-          return RALPLAN_MUTATION_BLOCK_MESSAGE;
+          return message;
       return undefined;
     } catch (error) {
-      log("ralplan planning guard could not decide; allowing the call", error);
+      log("planning guard could not decide; allowing the call", error);
       return undefined;
     }
+  }
+
+  /**
+   * Plan C-10 (D-HE6, I-7, I-15): `skill ultragoal` at the lineage root. When
+   * this execution loaded ralplan (the turn marker) and ralplan is active, a
+   * phase in T is handed off through the shared journaled handoff (PQ-6 A)
+   * and a phase outside T refuses the load. Otherwise — no marker, an
+   * inactive, missing, unreadable or unknown-phase ralplan (DR-21) — the
+   * load seeds `goal-planning` (DR-21) and ralplan is left alone. Returns the
+   * refusal, or `undefined` when the load may run.
+   */
+  async function ultragoalGate(sessionID: string): Promise<string | undefined> {
+    const root = await rootSession(sessionID);
+    const marker = turnSkill.get(sessionID);
+    return store.workflowTransaction(root, async (tx) => {
+      if (marker === RALPLAN_SKILL_NAME) {
+        const ralplan = await tx.readState().catch(() => undefined);
+        const phase = ralplan?.current_phase;
+        if (ralplan?.active === true && isKnownPhase(phase)) {
+          if (!TERMINAL_PHASES.has(phase)) return RALPLAN_RUNNING_REFUSAL;
+          await ralplanHandoffTx(tx, root, HOOK_OWNER, "skill ultragoal loaded after ralplan");
+          return undefined;
+        }
+      }
+      await seedUltragoalTx(tx, root, HOOK_OWNER);
+      return undefined;
+    });
+  }
+
+  /** C-10: set the turn marker for a call that passed the guards. */
+  function markTurn(sessionID: string, callID: string | undefined, skill: string) {
+    if (callID !== undefined)
+      markerUndo.set(callID, { sessionID, previous: turnSkill.get(sessionID) });
+    turnSkill.set(sessionID, skill);
+  }
+
+  /** D-VF11: append the red-team fragment to a marked executor assignment. */
+  function attachRedTeam(input: unknown) {
+    if (!isRecord(input) || input.agent !== RED_TEAM_AGENT) return;
+    const prompt = input.prompt;
+    if (typeof prompt !== "string" || !prompt.includes(ULTRAGOAL_RED_TEAM_MARKER)) return;
+    if (prompt.includes(RED_TEAM_FRAGMENT_TAG)) return;
+    input.prompt = `${prompt}\n\n${ULTRAGOAL_RED_TEAM_FRAGMENT}`;
   }
 
   /** Guidance per blocked tool call id, consumed by `execute.after`. */
@@ -698,14 +827,28 @@ export function createHooks(
       }
 
       // A real user prompt lifts the stop mark. After G2, so a marker-wrapped
-      // fallback notice can never clear it. It also lifts an ultragoal pause
-      // (plan §5.5).
+      // fallback notice can never clear it. At the lineage root it also
+      // releases the goal hold (plan C-9), whatever the agent.
       interrupted.delete(sessionID);
+      let root: string | undefined;
       try {
-        await ultragoal.releasePause(sessionID);
+        root = await rootSession(sessionID);
       } catch (error) {
-        log("could not release the ultragoal pause", error);
+        log("could not resolve the session lineage for the prompt", error);
       }
+      if (root === sessionID) {
+        try {
+          await goal.releaseHold(sessionID);
+        } catch (error) {
+          log("could not release the goal hold", error);
+        }
+      }
+
+      // R-OD20: notices go only to the primary this plugin drives; the
+      // workflow and state tools refuse every other agent (DR-22), so a
+      // notice would lead it to a refusal. A session without an agent, or a
+      // failed lookup, proceeds (G1).
+      if (typeof agent === "string" && agent !== PRIMARY_AGENT) return;
 
       const skills = event.prompt.skills ?? [];
       const ralplanMention = skills.some((s) => s.id === RALPLAN_SKILL_NAME);
@@ -717,51 +860,32 @@ export function createHooks(
       // quoted example or a pasted skill body is not an invocation.
       const keyword = detectRalplanKeyword(text) !== null;
       const ralplanDetected = ralplanMention || keyword;
-      const ultragoalKeyword =
-        !ultragoalMention && detectUltragoalKeyword(text) !== null;
-      const ultragoalDetected = ultragoalMention || ultragoalKeyword;
-      let ultragoalState = await ultragoal.read(sessionID);
-      const notices: Notice[] = [];
+      const ultragoalDetected =
+        ultragoalMention || detectUltragoalKeyword(text) !== null;
+      const deepInterviewDetected =
+        deepInterviewMention || detectDeepInterviewKeyword(text) !== null;
 
-      // Stale-seed cleanup, the sole replacement for the deleted TTL. A keyword
-      // the model never acted on cannot leave a permanently active-but-silent
-      // state, and such a seed can never raise a restore banner.
-      if (
-        ultragoalState?.active === true &&
-        ultragoalState.awaiting_confirmation === true &&
-        !ultragoalDetected
-      ) {
+      // PQ-5 (1) B: while ultragoal is the visible primary skill, ralplan and
+      // deep-interview requests get the handoff notice instead.
+      let ultragoalPrimary = false;
+      if ((ralplanDetected || deepInterviewDetected) && root !== undefined) {
         try {
-          await ultragoal.clearStaleSeed(sessionID);
+          ultragoalPrimary =
+            (await visiblePrimary(root))?.skill === ULTRAGOAL_SKILL_NAME;
         } catch (error) {
-          log("could not clear stale ultragoal seed", error);
+          log("active rows unreadable; treating ultragoal as not primary", error);
         }
-        ultragoalState = undefined;
       }
-
-      // R-OD20: notices and seeds go only to the primary this plugin drives;
-      // the ralplan, ultragoal and state tools refuse every other agent
-      // (DR-22), so a notice would lead it to a refusal. The stop mark, the
-      // pause and a stale seed are still handled above. A session without an
-      // agent, or a failed lookup, proceeds (G1).
-      if (typeof agent === "string" && agent !== PRIMARY_AGENT) return;
-
-      const restored = await ultragoal.restore(sessionID, ultragoalState);
-      if (restored) notices.push(restored);
-
-      // No ralplan-first gate (decision P-8, as gajae-code): an `ultragoal`
-      // request always starts ultragoal; ultragoal's no_prd phase scopes a
-      // vague one into goals.
-      const ultragoalRunning = isUltragoalRunning(ultragoalState);
+      const notices: Notice[] = [];
+      // C-10: an `@<skill>` mention attaches the skill in this turn.
+      let mentioned: string | undefined;
 
       // Ralplan: a notice only, no state (plan S3, D-F13, R-O6); `ralplan
       // start` is the documented entry. Both carry a notice so the user sees
-      // the insertion (user decision, 2026-09-24). While ultragoal runs (plan
-      // §5.6), `@ralplan` only gets the handoff notice (decision 1b) and the
-      // keyword gets nothing (Q-3).
-      if (ralplanMention && ultragoalRunning) {
+      // the insertion (user decision, 2026-09-24).
+      if (ralplanDetected && ultragoalPrimary) {
         notices.push({
-          text: ralplanMentionNotice(),
+          text: ultragoalHandoffNotice(RALPLAN_SKILL_NAME),
           description: "open-gajae: ultragoal handoff notice added",
         });
       } else if (ralplanMention) {
@@ -769,53 +893,26 @@ export function createHooks(
           text: mentionMessage(),
           description: "open-gajae: ralplan mention notice added",
         });
-      } else if (
-        keyword &&
-        !ultragoalRunning &&
-        !text.includes(KEYWORD_NOTICE_MARKER)
-      ) {
+        mentioned = RALPLAN_SKILL_NAME;
+      } else if (keyword && !text.includes(KEYWORD_NOTICE_MARKER)) {
         notices.push({
           text: keywordMessage(),
           description: "open-gajae: ralplan keyword notice added",
         });
       }
 
-      // Ultragoal seed (R16), unless the same prompt asks for ralplan. The
-      // mention attaches the skill without a `skill` call, so the ralplan
-      // entry gate runs here before its seed (plan C-4, Architect 2nd-round
-      // MINOR-1): refused → the notice only; a finished ralplan is handed off
-      // and its meta rides the seed. The keyword's awaiting seed changes no
-      // ralplan state; the later `skill ultragoal` load passes the gate, and
-      // until then running planning keeps it from starting (Q-1).
+      // Ultragoal (D-HE4): a notice only, unless the same prompt asks for
+      // ralplan; the `skill ultragoal` load seeds its state.
       if (ultragoalDetected && !ralplanDetected) {
-        const gate = ultragoalMention
-          ? await ultragoalEntryGate(store, sessionID, HOOK_OWNER)
-          : undefined;
-        if (
-          gate
-            ? gate.status === "refused"
-            : isRalplanRunning(await readState(sessionID))
-        ) {
+        if (ultragoalMention) {
           notices.push({
-            text: ralplanRunningNotice(),
-            description: "open-gajae: ralplan-running notice added",
-          });
-        } else if (ultragoalMention) {
-          await ultragoal.seed(sessionID, {
-            awaiting: false,
-            task: text,
-            ...(gate?.status === "handoff"
-              ? { handoff_from: gate.handoff_from, handoff_at: gate.handoff_at }
-              : {}),
-          });
-          notices.push({
-            text: ultragoalMentionMessage(),
+            text: ultragoalMentionNotice(),
             description: "open-gajae: ultragoal mention notice added",
           });
+          mentioned ??= ULTRAGOAL_SKILL_NAME;
         } else if (!text.includes(ULTRAGOAL_NOTICE_MARKER)) {
-          await ultragoal.seed(sessionID, { awaiting: true, task: text });
           notices.push({
-            text: ultragoalKeywordMessage(),
+            text: ultragoalKeywordNotice(),
             description: "open-gajae: ultragoal keyword notice added",
           });
         }
@@ -825,19 +922,24 @@ export function createHooks(
       // for this skill (bridge.ts:1449, keyword-detector.mjs:1793), and treats
       // an explicit invocation as the keyword (keyword-detector/index.ts:814-830),
       // so the `@deep-interview` mention gets the same single notice (Q8).
-      if (
-        (deepInterviewMention || detectDeepInterviewKeyword(text) !== null) &&
-        !text.includes(DEEP_INTERVIEW_MAGIC_MARKER)
-      )
+      if (deepInterviewDetected && ultragoalPrimary) {
         notices.push({
-          text: deepInterviewMessage({
-            skillPath: deepInterviewSkillPath,
-            originalPrompt: text,
-          }),
-          description: "open-gajae: deep-interview keyword notice added",
+          text: ultragoalHandoffNotice(DEEP_INTERVIEW_SKILL_NAME),
+          description: "open-gajae: ultragoal handoff notice added",
         });
+      } else if (deepInterviewDetected) {
+        if (deepInterviewMention) mentioned ??= DEEP_INTERVIEW_SKILL_NAME;
+        if (!text.includes(DEEP_INTERVIEW_MAGIC_MARKER))
+          notices.push({
+            text: deepInterviewMessage({
+              skillPath: deepInterviewSkillPath,
+              originalPrompt: text,
+            }),
+            description: "open-gajae: deep-interview keyword notice added",
+          });
+      }
 
-      // State first, then the notices (Q3, OMC/v1 order).
+      if (mentioned !== undefined) markTurn(sessionID, undefined, mentioned);
       await emitNotices(event, notices);
     } catch (error) {
       log("prompt handler failed", error);
@@ -870,7 +972,7 @@ export function createHooks(
         return;
       }
     }
-    // ② The planning guard fails open inside itself (plan DR-10).
+    // ② The planning guard fails open inside itself (plan D-HE5).
     const planning = await guardPlanning(event.tool, event.sessionID, event.input);
     if (planning !== undefined) {
       blocked.set(event.id, planning);
@@ -879,38 +981,42 @@ export function createHooks(
     }
     try {
       if (event.tool === "subagent") {
-        await ultragoal.attachBrief(event);
+        attachRedTeam(event.input);
         return;
       }
       if (event.tool !== "skill" || !isRecord(event.input)) return;
       // v2 `skill` input is `{ id }` (core/src/tool/plugin/skill.ts:12-14).
-      if (event.input.id === ULTRAGOAL_SKILL_NAME) {
+      const skill = event.input.id;
+      if (typeof skill !== "string" || !WORKFLOW_SKILLS.has(skill)) return;
+      if (skill === ULTRAGOAL_SKILL_NAME) {
         if (event.agent !== PRIMARY_AGENT) return;
-        // ③ The ultragoal entry gate (plan C-4) before the skill's confirm: a
-        // refusal invalidates the input like every block here (a throw would
-        // be swallowed and fail open); a finished ralplan is handed off and
-        // ultragoal seeded with its meta (R-O2).
-        const gate = await ultragoalEntryGate(store, event.sessionID, HOOK_OWNER);
-        if (gate.status === "refused") {
-          blocked.set(event.id, gate.message);
+        // ③ The turn gate (D-HE6): a refusal invalidates the input like every
+        // block here (a throw would be swallowed and fail open).
+        const gate = await ultragoalGate(event.sessionID);
+        if (gate !== undefined) {
+          blocked.set(event.id, gate);
           event.input = {};
           return;
         }
-        if (gate.status === "handoff")
-          await ultragoal.seed(event.sessionID, {
-            awaiting: false,
-            handoff_from: gate.handoff_from,
-            handoff_at: gate.handoff_at,
-          });
-        await ultragoal.onSkillLoad(event.sessionID);
+        markTurn(event.sessionID, event.id, skill);
         return;
       }
-      if (event.input.id !== RALPLAN_SKILL_NAME) return;
-      // ④ Chain guard (decision 1a): ralplan only after an explicit handoff.
-      if (isUltragoalRunning(await ultragoal.read(event.sessionID))) {
-        blocked.set(event.id, CHAIN_GUARD_REFUSAL);
-        event.input = {};
+      // ④ Chain guard (D-HE3): leaving ultragoal needs `ultragoal handoff`.
+      let primary: Record<string, unknown> | undefined;
+      try {
+        primary = await visiblePrimary(event.sessionID);
+      } catch (error) {
+        log("active rows unreadable; the chain guard lets the call through", error);
       }
+      if (primary?.skill === ULTRAGOAL_SKILL_NAME) {
+        blocked.set(
+          event.id,
+          ultragoalChainRefusal(String(primary.phase ?? "unknown"), skill),
+        );
+        event.input = {};
+        return;
+      }
+      markTurn(event.sessionID, event.id, skill);
     } catch (error) {
       log("execute.before handler failed", error);
     }
@@ -918,11 +1024,20 @@ export function createHooks(
 
   /**
    * Rewrite a failed call into model-facing guidance when it failed because
-   * of a block recorded by `execute.before`. Since plan S3 no role has a static
+   * of a block recorded by `execute.before`, and put back the turn marker a
+   * failed `skill` call set (C-10). Since plan S3 no role has a static
    * `edit` allow to explain, so a host permission block is left as it is.
    */
   const executeAfter: RalplanHooks["executeAfter"] = async (event) => {
     try {
+      const undo = markerUndo.get(event.id);
+      if (undo !== undefined) {
+        markerUndo.delete(event.id);
+        if (event.status === "error") {
+          if (undo.previous === undefined) turnSkill.delete(undo.sessionID);
+          else turnSkill.set(undo.sessionID, undo.previous);
+        }
+      }
       const recorded = blocked.get(event.id);
       if (recorded !== undefined) blocked.delete(event.id);
       if (event.status !== "error" || recorded === undefined) return;
@@ -937,7 +1052,7 @@ export function createHooks(
    * (`TOOL_OWNERS`). Only the listed tools are touched; a missing `tools` is
    * left alone, and a missing `agent` owns nothing.
    */
-  const context: RalplanHooks["context"] = (event) => {
+  const hideTools: RalplanHooks["hideTools"] = (event) => {
     const tools = event.tools;
     if (!isRecord(tools)) return;
     for (const [tool, owners] of Object.entries(TOOL_OWNERS))
@@ -946,16 +1061,69 @@ export function createHooks(
   };
 
   /**
-   * Plan D-H2/AC19: after ultragoal's context, the active ralplan run's
-   * recovery contract — gjc's projection of the newest final (else
-   * planner/revision) stage file, verified against its ledger sha256, and
-   * render (`./ralplan-runtime/recovery.ts`). Nothing is added for a missing,
-   * unreadable, inactive or unknown-phase state (DR-21) or a failed
+   * Plan C-9 (D-TL4, E-3): on a root `open-gajae` request while the goal is
+   * active, the goal context is added unless the request already carries it
+   * as a single-part user text, compared exactly as the host's Plan reminder
+   * does (`core/src/plugin/plan.ts:55-75,115-121`): once per goal, and again
+   * after a compaction drops it. It goes before the user's prompt and is kept
+   * as a `synthetic({ resume: false })` message (R12: the default `steer`
+   * delivery may run one more model step).
+   */
+  const context: RalplanHooks["context"] = async (event) => {
+    hideTools(event);
+    try {
+      const sessionID = event.sessionID;
+      const messages = event.messages;
+      if (event.agent !== PRIMARY_AGENT) return;
+      if (typeof sessionID !== "string" || !Array.isArray(messages)) return;
+      if ((await rootSession(sessionID)) !== sessionID) return;
+      const text = await goal.contextText(sessionID);
+      if (text === undefined) return;
+      const present = messages.some((message) => {
+        const part =
+          message.role === "user" && message.content.length === 1
+            ? message.content[0]
+            : undefined;
+        return part?.type === "text" && part.text === text;
+      });
+      if (present) return;
+      const at =
+        messages.at(-1)?.role === "user" ? messages.length - 1 : messages.length;
+      messages.splice(at, 0, { role: "user", content: [{ type: "text", text }] });
+      try {
+        await session.synthetic({
+          sessionID,
+          text,
+          description: GOAL_CONTEXT_DESCRIPTION,
+          resume: false,
+        });
+      } catch (error) {
+        log("goal context synthetic failed", error);
+      }
+    } catch (error) {
+      log("goal context injection failed", error);
+    }
+  };
+
+  /**
+   * DR-17: the root's ultragoal recovery context (`src/goal/hooks.ts`), then
+   * (D-H2/AC19) the active ralplan run's recovery contract — gjc's
+   * projection of the newest final (else planner/revision) stage file,
+   * verified against its ledger sha256, and render
+   * (`./ralplan-runtime/recovery.ts`). Nothing is added for a missing,
+   * unreadable, inactive or unknown-phase ralplan state (DR-21) or a failed
    * projection. Stage files are read through the transaction, confined to
    * the run folder.
    */
   const compaction: RalplanHooks["compaction"] = async (event) => {
-    await ultragoal.compaction(event);
+    try {
+      if ((await rootSession(event.sessionID)) === event.sessionID) {
+        const text = await goal.ultragoalCompaction(event.sessionID);
+        if (text !== undefined) event.system.push({ type: "text", text });
+      }
+    } catch (error) {
+      log("ultragoal compaction context failed", error);
+    }
     try {
       const text = await store.ralplanTransaction(event.sessionID, async (tx) => {
         const state = await tx.readState().catch(() => undefined);
@@ -1007,6 +1175,9 @@ export function createHooks(
       }
       if (typeof type !== "string" || !type.startsWith("session.execution."))
         return;
+      // PQ-21 A: every execution end clears the turn marker before anything
+      // decides on it; the next execution is a new turn.
+      if (EXECUTION_ENDS.has(type)) turnSkill.delete(sessionID);
       const info = await sessionOf(sessionID);
       if (!info.own) return;
       if (type === "session.execution.started") toolCalls.set(sessionID, 0);
@@ -1026,8 +1197,8 @@ export function createHooks(
         }
         return;
       }
-      // `failed` does not continue.
-      if (type === "session.execution.succeeded")
+      // `failed` does not continue; only a lineage root continues (C-2, E-4).
+      if (type === "session.execution.succeeded" && info.parentID === undefined)
         await continueSession(sessionID);
       // The next `started` counts afresh; a finished session keeps no entry.
       if (type !== "session.execution.started") toolCalls.delete(sessionID);
@@ -1041,6 +1212,7 @@ export function createHooks(
     rootSession,
     prompt,
     context,
+    hideTools,
     compaction,
     executeBefore,
     executeAfter,

@@ -23,7 +23,16 @@
 //   `<goal-context>` and `<goal-continuation>` (visible synthetic messages).
 // - 31: step 1 of the continuation audit no longer names `todo_write` (the
 //   host has no todo tool).
+// - Host substitution (plan D-DT1; recorded as a deviation in a later step):
+//   the continuation prompt drops gjc's first line, the HTML comment
+//   `<!-- Hidden continuation steer. role=user, suppressed from visible
+//   transcript. -->`, because here the continuation is a visible synthetic
+//   message.
 // - 32: the pause refusal has no terminal-critic ceiling or plan-generation text.
+// - 9, 18 (D-TL5, D-VF9): the hold notices of the continuation hook are
+//   open-gajae text inside `<goal-notice>` (gjc path A never holds); each
+//   names its cause and says to send a message to continue (maintainer
+//   decision C, 2026-09-30).
 // - 41: gjc command names become op calls (`ultragoal next`,
 //   `ultragoal checkpoint(…)`, `ultragoal add`, `ultragoal record_review_blockers`,
 //   `ultragoal classify_blocker(…)`, `ultragoal record_critic_verdict(…)`); a
@@ -94,14 +103,16 @@ export function goalToolNotAvailable(agent: string): string {
   return `the goal tool is not available to ${agent}`;
 }
 
-/** A goal-state file that fails the schema (fail closed). */
-export function goalStateInvalid(error: string): string {
-  return `goal state is invalid; it was preserved: ${error}`;
-}
-
 // ---------------------------------------------------------------------------
 // `goal complete` guard (DR-10)
 // ---------------------------------------------------------------------------
+
+/**
+ * gjc `isUltragoalAskBlocked`: the ultragoal directory exists without
+ * `goals.json`, an inconsistent durable state the pause guard fails closed on
+ * (`.gjc/ultragoal` → `ultragoal`).
+ */
+export const ULTRAGOAL_PLAN_MISSING = "Durable ultragoal state exists but goals.json is missing or empty.";
 
 /** gjc `verifyUltragoalDurableCompletionState` unreadable diagnostic. */
 export function ultragoalStateUnreadable(error: string): string {
@@ -189,8 +200,6 @@ export function goalContextText(objective: string): string {
 /** gjc `renderGoalPrompt("continuation", goal)` (deviation 31). */
 function continuationPrompt(objective: string): string {
   return [
-    "<!-- Hidden continuation steer. role=user, suppressed from visible transcript. -->",
-    "",
     "Continue work on the active goal.",
     "",
     "<objective>",
@@ -230,3 +239,37 @@ export function goalContinuationText(objective: string): string {
 
 /** The TUI description of the continuation message (C-9). */
 export const GOAL_CONTINUATION_DESCRIPTION = "open-gajae: goal continuation";
+
+/** The TUI description of the goal context message (C-9). */
+export const GOAL_CONTEXT_DESCRIPTION = "open-gajae: goal context added";
+
+/** D-TL5: three tool-less turns in a row hold the continuation. */
+export const GOAL_TOOL_LESS_HOLD = 3;
+
+/**
+ * The notice of a continuation hold (D-TL5, D-VF9): its cause, and the
+ * release: the goal stays active and the next real user prompt releases the
+ * hold, which for a critic hold also resets the critic count (PQ-3 A).
+ */
+export function goalHoldNotice(reason: "no_tool_progress" | "critic_streak", criticStreakHold: number): string {
+  const [body, cause, release] =
+    reason === "no_tool_progress"
+      ? [
+          `[GOAL CONTINUATION HELD - NO TOOL PROGRESS] The last ${GOAL_TOOL_LESS_HOLD} assistant turns produced no tool calls, so goal continuation is held to avoid an infinite loop.`,
+          `no tool calls in the last ${GOAL_TOOL_LESS_HOLD} continuation turns`,
+          "any user message releases the hold",
+        ]
+      : [
+          `[GOAL CONTINUATION HELD - CRITIC STREAK] The terminal critic returned ${criticStreakHold} non-OKAY verdicts in a row, so goal continuation is held. Report it to the user as a potential fundamental problem.`,
+          `${criticStreakHold} consecutive non-OKAY critic verdicts`,
+          "any user message releases the hold and resets the critic count",
+        ];
+  return wrapInjected(
+    "<goal-notice>",
+    `${body}\nCause: ${cause}.\nSend a message to continue: ${release}. The goal stays active; to end it, run goal drop.`,
+  );
+}
+
+export function goalHoldDescription(reason: "no_tool_progress" | "critic_streak"): string {
+  return `open-gajae: goal continuation held (${reason})`;
+}

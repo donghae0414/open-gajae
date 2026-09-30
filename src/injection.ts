@@ -8,15 +8,15 @@
 // site structurally cannot omit one. The skill modules build their messages
 // with it; hooks only pass the built text on.
 //
-// Source: oh-my-claudecode v5.4.0 (MIT). `<ralplan-continuation>` and
-// `<session-restore>` are OMC's own wrappers; the other markers are host
-// additions, noted per entry. Moved from `src/ralplan.ts:22-50`; the goal
-// markers were added afterwards (ultragoal revision plan S2).
+// Source: oh-my-claudecode v5.4.0 (MIT). `<ralplan-continuation>` is OMC's
+// own wrapper; the other markers are host additions, noted per entry. Moved
+// from `src/ralplan.ts:22-50`; the goal markers were added afterwards and the
+// OMC-ralph ultragoal markers (`<ultragoal-continuation>`,
+// `<ultragoal-verification-brief>`, `<session-restore>`) removed (ultragoal
+// revision plan C-12, E-13).
 
 export const INJECTION_MARKERS = [
   "<ralplan-continuation>", // OMC src/hooks/persistent-mode/index.ts:2147
-  // OMC src/hooks/bridge.ts:2074; now only the ultragoal restore notice uses it.
-  "<session-restore>",
   "<ralplan-notice>", // host addition: wraps the keyword and breaker notices
   // Host addition (plan D-H2/AC19): the ralplan compaction recovery context,
   // rendered by `./ralplan-runtime/recovery.ts`.
@@ -24,15 +24,12 @@ export const INJECTION_MARKERS = [
   // Host addition: wraps OMC's `[MAGIC KEYWORD: DEEP-INTERVIEW]` guide, which
   // OMC emitted bare as `additionalContext` (scripts/keyword-detector.mjs:1544).
   "<deep-interview-notice>",
-  // Host additions for ultragoal (plan §5.3): the loop message OMC's
-  // `<ralph-continuation>` carried, the plugin notices, the reviewer brief the
-  // plugin appends to a `subagent` prompt, and the compaction system part.
-  "<ultragoal-continuation>",
+  // Host additions for ultragoal: the plugin notices and the compaction
+  // system part.
   "<ultragoal-notice>",
-  "<ultragoal-verification-brief>",
   "<ultragoal-compaction-context>",
   // Host additions for the goal loop (ultragoal revision plan C-9, C-12): the
-  // continuation, the goal context and the goal notices.
+  // continuation, the goal context and the continuation hold notices.
   "<goal-continuation>",
   "<goal-context>",
   "<goal-notice>",
@@ -40,20 +37,15 @@ export const INJECTION_MARKERS = [
 
 export type InjectionMarker = (typeof INJECTION_MARKERS)[number];
 
-/** The markers `src/ultragoal.ts` may wrap its messages in. */
-export type UltragoalMarker =
-  | "<ultragoal-continuation>"
-  | "<ultragoal-notice>"
-  | "<ultragoal-verification-brief>"
-  | "<ultragoal-compaction-context>"
-  | "<session-restore>";
+/** The markers the ultragoal messages may wrap their text in. */
+export type UltragoalMarker = "<ultragoal-notice>" | "<ultragoal-compaction-context>";
 
 export function wrapInjected(tag: InjectionMarker, body: string): string {
   const name = tag.slice(1, -1);
   return `<${name}>\n\n${body}\n\n</${name}>\n\n---\n\n`;
 }
 
-/** The one wrapper `src/ultragoal.ts` builds its messages with. */
+/** The one wrapper `src/ultragoal-runtime/messages.ts` builds its messages with. */
 export function wrapUltragoalInjected(tag: UltragoalMarker, body: string) {
   return wrapInjected(tag, body);
 }

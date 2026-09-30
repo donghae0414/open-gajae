@@ -5,15 +5,14 @@
 //
 // Source: oh-my-claudecode v5.4.0 (MIT) — `src/hooks/ralph/progress.ts` (log
 // format, `appendProgress`, `addPattern`, `parseProgress`,
-// `getProgressContext`). Moved from `src/ultragoal.ts:310-509`, which
-// re-exports it until plan S3, unchanged except the `PLAN` note label and
-// the two helpers at the end; this file is the only OMC-derived part of the
-// ultragoal runtime (plan §2 option (2)A).
+// `getProgressContext`). Moved from the OMC-ralph `src/ultragoal.ts:310-509`
+// (removed in plan S3), unchanged except the `PLAN` and `HANDOFF` note labels
+// and the two helpers at the end; this file is the only OMC-derived part of
+// the ultragoal runtime (plan §2 option (2)A).
 // gjc deviation 1 (plan §7.1): gjc keeps no progress log (`brief.md` instead);
 // open-gajae keeps this one, and `create` appends to it instead of replacing
 // it (PQ-15 A): the header only when the file is missing, then a `PLAN` note.
-// `handoff` adds a `HANDOFF` note (plan C-5). The START, RESUME and CANCEL
-// labels serve the old `src/ultragoal-tool.ts` until plan S3.
+// `handoff` adds a `HANDOFF` note (plan C-5).
 
 export const PATTERNS_HEADER = "## Codebase Patterns";
 export const ENTRY_SEPARATOR = "---";
@@ -74,7 +73,7 @@ export function appendProgressEntry(
  */
 export function appendProgressNote(
   progress: string,
-  label: "PLAN" | "START" | "HANDOFF" | "RESUME" | "CANCEL",
+  label: "PLAN" | "HANDOFF",
   reason: string,
   now: string,
 ): string {

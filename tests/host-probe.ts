@@ -1,9 +1,9 @@
 // v2 host probe (plan Step 8): the repository loads as a directory plugin on
 // the installed 2.0.15 host, registers eight agents, three skills and
-// thirteen tools, the read-only roles do not see
-// `opencode_session_move`/`_rename`, only the primary and the two
-// ultragoal reviewers see the `ultragoal` tool, and the host's `build` and
-// `general` agents see neither `ultragoal` nor `ralplan` (plan C-11).
+// fourteen tools, the read-only roles do not see
+// `opencode_session_move`/`_rename`, only the primary sees the `ultragoal`
+// and `goal` tools, and the host's `build` and `general` agents see none of
+// `ultragoal`, `goal` and `ralplan` (plan C-11).
 // Run: `bun run test:host` (or `bun ./tests/host-probe.ts`).
 import { join } from "node:path";
 import {
@@ -46,7 +46,7 @@ await runProbe("open-gajae-host-probe", async (report, scratch) => {
 
     const load = host.provider.thread("load")[0];
     const primaryTools = OUR_TOOLS.filter((t) => load?.tools.includes(t));
-    report.check("thirteen plugin tools offered to the primary as direct tools", primaryTools.length === 13, primaryTools);
+    report.check("fourteen plugin tools offered to the primary as direct tools", primaryTools.length === 14, primaryTools);
     const primaryCatalog = opencodeCatalog(load);
     report.check(
       "primary keeps opencode.session_move/session_rename",
@@ -76,15 +76,16 @@ await runProbe("open-gajae-host-probe", async (report, scratch) => {
         !!request && !request.tools.includes("write") && !request.tools.includes("edit"),
         request?.tools,
       );
-      const reviewer = agent === "open-gajae-architect" || agent === "open-gajae-critic";
+      // Plan C-11: `ultragoal` and `goal` are the primary's alone.
       report.check(
-        `${agent}: ultragoal ${reviewer ? "offered (status, record_verdict)" : "hidden"}`,
-        !!request && request.tools.includes("ultragoal") === reviewer,
+        `${agent}: ultragoal and goal hidden`,
+        !!request && !request.tools.includes("ultragoal") && !request.tools.includes("goal"),
         request?.tools,
       );
       // Plan S2: ralplan is visible to the primary, the planner and the two
-      // ultragoal reviewers; hidden for explore, document-specialist, cleaner
+      // consensus reviewers; hidden for explore, document-specialist, cleaner
       // and executor.
+      const reviewer = agent === "open-gajae-architect" || agent === "open-gajae-critic";
       const ralplanVisible = reviewer || agent === "open-gajae-planner";
       report.check(
         `${agent}: ralplan ${ralplanVisible ? "offered" : "hidden"}`,
@@ -95,21 +96,22 @@ await runProbe("open-gajae-host-probe", async (report, scratch) => {
         report.check("open-gajae-cleaner: shell offered for read-only inspection", !!request?.tools.includes("shell"), request?.tools);
     }
 
-    // Plan C-11 (PQ-24 B): the `context` hook removes both workflow tools from
-    // the host's own agents; `general` is a subagent-mode agent opened directly.
+    // Plan C-11 (PQ-24 B): the `context` hook removes the three workflow tools
+    // from the host's own agents; `general` is a subagent-mode agent opened
+    // directly.
     for (const agent of ["build", "general"]) {
       const session = await host.createSession({ agent });
       const tag = `host-${agent}`;
       await host.turn(session, directive({ tag, steps: [] }));
       const request = host.provider.thread(tag)[0];
       report.check(
-        `${agent}: ralplan and ultragoal hidden`,
-        !!request && !request.tools.includes("ralplan") && !request.tools.includes("ultragoal"),
+        `${agent}: ralplan, ultragoal and goal hidden`,
+        !!request && !["ralplan", "ultragoal", "goal"].some((t) => request.tools.includes(t)),
         request?.tools,
       );
     }
 
-    // The executor writes code and delegates, but never asks or drives ultragoal.
+    // The executor writes code and delegates, but never asks or drives ultragoal or the goal.
     const executor = await host.createSession({ agent: "open-gajae-executor" });
     await host.turn(executor, directive({ tag: "role-executor", steps: [] }));
     const exec = host.provider.thread("role-executor")[0];
@@ -119,9 +121,9 @@ await runProbe("open-gajae-host-probe", async (report, scratch) => {
       exec?.tools,
     );
     report.check(
-      "open-gajae-executor: ultragoal, ralplan, question, state_write and state_clear hidden",
+      "open-gajae-executor: ultragoal, goal, ralplan, question, state_write and state_clear hidden",
       !!exec &&
-        !["ultragoal", "ralplan", "question", "state_write", "state_clear"].some((t) =>
+        !["ultragoal", "goal", "ralplan", "question", "state_write", "state_clear"].some((t) =>
           exec.tools.includes(t),
         ),
       exec?.tools,

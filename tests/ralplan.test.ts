@@ -11,7 +11,6 @@ import {
   detectDeepInterviewKeyword,
   detectRalplanKeyword,
   detectUltragoalKeyword,
-  INJECTION_MARKERS,
   keywordMessage,
   mentionMessage,
   RALPLAN_KEYWORD,
@@ -21,6 +20,7 @@ import {
   sanitizeForKeywordDetection,
   shouldContinue,
 } from "../src/ralplan";
+import { INJECTION_MARKERS } from "../src/injection";
 
 const NOW = Date.parse("2026-09-18T12:00:00.000Z");
 const iso = (offsetMs: number) => new Date(NOW + offsetMs).toISOString();

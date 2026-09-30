@@ -3,7 +3,7 @@
 // it; every op works on the calling session's lineage root (D-SF6) and runs in
 // one `workflowTransaction` (C-1) over `./store.ts`. Results are the gjc
 // human-readable text (C-14); a refusal is `Error: <message>`. Registered in
-// `createTools` by plan S3; until then the old `src/ultragoal-tool.ts` serves.
+// `createTools` (plan S3).
 //
 // Source: gajae-code 5c5231418930673e42cc5d08ebe4376e03187533 (MIT),
 // `packages/coding-agent/src/gjc-runtime/ultragoal-runtime.ts:5368-5647`

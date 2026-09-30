@@ -6,9 +6,8 @@ import {
   type ExplicitStatePatch,
   StateStore,
 } from "./state.js";
-import { ultragoalTool, type UltragoalToolDeps } from "./ultragoal-tool.js";
-import { seedUltragoal } from "./ultragoal-hooks.js";
-import { startRun, ultragoalEntryGate } from "./ralplan-runtime/store.js";
+import { goalTool } from "./goal/tool.js";
+import { ultragoalTool } from "./ultragoal-runtime/tool.js";
 import {
   DEFAULT_RALPLAN_SETTINGS,
   ralplanTool,
@@ -87,23 +86,18 @@ async function pathResult(store: StateStore, sessionID: string, mode: ToolMode) 
 }
 
 /**
- * Host lookups and setup-time settings only; the store-bound ralplan entry
- * points the `ultragoal` tool uses are bound here (plan S2/S3). `rootSession`
- * and `ralplanSettings` are optional so harnesses that pass only
- * `parentSession` still build: a missing `rootSession` fails closed and only
- * the `ralplan` tool refuses.
+ * Host lookups and setup-time settings only. Both are optional so harnesses
+ * build without a host: a missing `rootSession` fails closed, and the
+ * `ralplan`, `ultragoal` and `goal` tools refuse (their owner is the lineage
+ * root, D-SF6).
  */
-export type ToolDeps = Pick<UltragoalToolDeps, "parentSession"> &
-  Partial<Pick<RalplanToolDeps, "rootSession">> & {
-    ralplanSettings?: RalplanToolDeps["settings"];
-  };
+export type ToolDeps = Partial<Pick<RalplanToolDeps, "rootSession">> & {
+  ralplanSettings?: RalplanToolDeps["settings"];
+};
 
 async function noHostLookup(): Promise<never> {
   throw new Error("no host session lookup is available");
 }
-
-/** Without a host, no reviewer's parent can be resolved: fail closed. */
-const noHost: ToolDeps = { parentSession: noHostLookup };
 
 /**
  * Every tool this plugin adds, in v2 shape, for one `ctx.tool.transform`. State
@@ -112,22 +106,17 @@ const noHost: ToolDeps = { parentSession: noHostLookup };
 export function createTools(
   store: StateStore,
   paths: CodeToolPaths,
-  deps: ToolDeps = noHost,
+  deps: ToolDeps = {},
 ) {
+  const rootSession = deps.rootSession ?? noHostLookup;
   return [
     astGrepSearchTool(paths),
     ...lspTools(paths),
-    // C-4 before any ultragoal transaction and R-O1's `startRun` (plan C-1.3,
-    // C-1.4), bound to this store.
-    ultragoalTool(store, {
-      parentSession: deps.parentSession,
-      entryGate: (sessionID) => ultragoalEntryGate(store, sessionID),
-      startRalplan: (sessionID, input) =>
-        startRun(store, sessionID, input, { projectDir: paths.projectDir }),
-      seedUltragoal: (sessionID, input) => seedUltragoal(store, sessionID, input),
-    }),
+    // Ultragoal revision plan S3: the gjc-based `ultragoal` and `goal` tools.
+    ultragoalTool(store, { rootSession }),
+    goalTool(store, { rootSession }),
     ralplanTool(store, {
-      rootSession: deps.rootSession ?? noHostLookup,
+      rootSession,
       settings: deps.ralplanSettings ?? DEFAULT_RALPLAN_SETTINGS,
       projectDir: paths.projectDir,
     }),

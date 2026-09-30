@@ -87,4 +87,4 @@ Source: Gajae Code `packages/coding-agent/src/prompts/agents/critic.md` with `pr
 | "If `repository_binding.worktreeRoot` is missing, do not persist" | Removed | Deviation 12 |
 | `yield.result.data` | The final response body | Deviation 33 |
 
-This prompt replaces the OMC-derived critic prompt (OMC v5.4.0 `agents/critic.md`); none of its text is retained. The ultragoal verification brief (`src/ultragoal.ts`) still reuses this role unchanged; its known conflicts with this prompt are recorded in README.md. See THIRD-PARTY-NOTICES.md and licenses/.
+This prompt replaces the OMC-derived critic prompt (OMC v5.4.0 `agents/critic.md`); none of its text is retained. Ultragoal reuses this role with this prompt unchanged (no brief is appended) as its terminal critic: its leader delegates the completion and pause termini here and records the verdict in the final quality gate's `criticReview` or with `ultragoal record_critic_verdict` (`skills/ultragoal/SKILL.md`). See THIRD-PARTY-NOTICES.md and licenses/.

@@ -15,6 +15,7 @@ import {
   type ProviderEntry,
   type Report,
 } from "./host-harness";
+import { ULTRAGOAL_RED_TEAM_FRAGMENT } from "../src/ultragoal-runtime/messages";
 
 const RALPLAN_NOTICE = "[MODE: RALPLAN]";
 const MAGIC_NOTICE = "[MAGIC KEYWORD: DEEP-INTERVIEW]";
@@ -298,133 +299,222 @@ async function backgroundChildPending(report: Report, host: Host) {
 }
 
 // ---------------------------------------------------------------- ultragoal
-// Plan Step 6 probes ①–⑦. Prompts carry a file path so the execution gate
-// (decision 3) lets `@ultragoal` through.
+// Ultragoal revision plan S3 3e probes ①–⑦ and P-6/P-8: the gjc ops, their
+// text results and the goal loop. Every run loads `skill ultragoal` first, as
+// the skill's entry (D-HE4).
 
-const UG_GOAL = { title: "flag", description: "parse the flag", priority: 1, acceptanceCriteria: ["flag parsed"] };
+const UG_GOAL = { title: "flag", description: "parse the flag", acceptanceCriteria: ["flag parsed"] };
 const ug = (args: Record<string, unknown>) => ({ tool: "ultragoal", args });
+const goalOp = (op: string) => ({ tool: "goal", args: { op } });
+const loadUltragoal = { tool: "skill", args: { id: "ultragoal" } };
+const ULTRAGOAL_NOTICE = "[MODE: ULTRAGOAL]";
+/** The goal's fixed objective (PQ-12 A) over the session folder's real paths. */
+const FIXED_OBJECTIVE =
+  /Complete the durable ultragoal plan in \.open-gajae\/_session-[^/\s]+\/ultragoal\/goals\.json, including later accepted\/appended goals, under the original description constraints; use \.open-gajae\/_session-[^/\s]+\/ultragoal\/ledger\.jsonl as the audit trail\./;
+const EVIDENCE = "probe evidence: the flag parser accepts the fixture";
+/** A clean final gate for the one-goal plan (plan C-8). */
+const FINAL_GATE = {
+  targetedVerification: { status: "passed", commands: ["bun test probe"], evidence: EVIDENCE },
+  architectReview: {
+    architectureStatus: "CLEAR",
+    productStatus: "CLEAR",
+    codeStatus: "CLEAR",
+    recommendation: "APPROVE",
+    evidence: EVIDENCE,
+    blockers: [],
+  },
+  criteriaCoverage: [{ criterionId: "G001.AC1", status: "verified", evidence: EVIDENCE }],
+  reviewCohort: {
+    reviewGeneration: 1,
+    joined: true,
+    lanes: {
+      cleaner: { status: "PASS", evidence: EVIDENCE, blockers: [] },
+      architect: { status: "CLEAR", evidence: EVIDENCE, blockers: [] },
+      qa: {
+        status: "passed",
+        commands: ["bun test probe"],
+        adversarialCases: ["the flag given twice -> refused"],
+        evidence: EVIDENCE,
+        blockers: [],
+      },
+    },
+  },
+  criticReview: { verdict: "OKAY", evidence: EVIDENCE, blockers: [] },
+};
 const lastUserText = (entry: ProviderEntry | undefined) =>
   [...(entry?.messages ?? [])].reverse().find((m) => m.role === "user")?.text ?? "";
 const resultOf = (host: Host, tag: string, step: number) =>
   host.provider.thread(tag).find((e) => e.kind === "directive" && e.step === step)?.toolResults.at(-1) ?? "";
+/** The request's user messages that start with a plugin marker. */
+const marked = (entry: ProviderEntry | undefined, marker: string) =>
+  (entry?.messages ?? []).filter((m) => m.role === "user" && m.text.startsWith(marker));
 
-async function ultragoalNoPrd(report: Report, host: Host) {
-  // ② `@ultragoal` seeds confirmed; the first continuation asks for `create`.
+async function ultragoalEntry(report: Report, host: Host) {
+  // ② `@ultragoal` is a notice only; `skill ultragoal` seeds the goal-planning
+  // row; `create` prints its text lines and arms the goal, whose first
+  // continuation carries the fixed objective.
   const s = await host.createSession({ agent: "open-gajae" });
-  await host.prompt(s, `@ultragoal add a --dry-run flag to scripts/x.ts\n${directive({ tag: "ug-noprd", steps: [] })}`, mention("ultragoal"));
-  await waitFor("ug-noprd continuation", () => continuations(host, "ug-noprd").some((e) => e.step >= 1), 60_000);
+  await host.turn(s, `@ultragoal add a --dry-run flag to scripts/x.ts\n${directive({ tag: "ug-entry", steps: [] })}`, mention("ultragoal"));
   await host.settle(s);
-  const text = lastUserText(continuations(host, "ug-noprd")[0]);
+  const first = host.provider.thread("ug-entry")[0];
   report.check(
-    "② @ultragoal: no_prd continuation (ITERATION 2/100) asks for create",
-    text.includes("[ULTRAGOAL - ITERATION 2/100]") && text.includes("op `create`"),
-    text.slice(0, 600),
+    "② @ultragoal: one mention notice and no ultragoal state or row",
+    occurrences(first, ULTRAGOAL_NOTICE) === 1 &&
+      host.ultragoalState(s) === undefined &&
+      host.sessionFile(s, "state/active/ultragoal.json") === undefined,
+    { notices: occurrences(first, ULTRAGOAL_NOTICE), state: host.ultragoalState(s) },
   );
-  report.check("② @ultragoal: cancel removed the state", host.ultragoalState(s) === undefined, host.ultragoalState(s));
-}
 
-async function ultragoalVerification(report: Report, host: Host) {
-  // ③ create → complete → a new architect child: its first message carries the
-  // plugin brief; the child cannot record (status only) and returns its
-  // verdict; the leader records it with record_verdict (decision P-5).
-  const s = await host.createSession({ agent: "open-gajae" });
-  const verdict = {
-    op: "record_verdict",
-    request_id: "{{request_id}}",
-    goal_id: "G001",
-    verdict: "approve",
-    evidence: "checked the parser against flag parsed",
-    issues: [],
-  };
+  await host.turn(s, `load the skill\n${directive({ tag: "ug-entry-load", steps: [loadUltragoal] })}`);
+  await host.settle(s);
+  const row = parse(host.sessionFile(s, "state/active/ultragoal.json"));
+  const seeded = host.ultragoalState(s);
+  report.check(
+    "② skill ultragoal: an active goal-planning row and state",
+    row?.active === true &&
+      row?.phase === "goal-planning" &&
+      seeded?.active === true &&
+      seeded?.current_phase === "goal-planning",
+    { row, state: seeded },
+  );
+
   await host.prompt(
     s,
-    `@ultragoal add a flag to scripts/x.ts\n${directive({
-      tag: "ug-verify",
+    `record the goals\n${directive({ tag: "ug-entry-create", steps: [ug({ op: "create", description: "probe task", goals: [UG_GOAL] })] })}`,
+  );
+  await waitFor("ug-entry-create goal dropped", () => continuations(host, "ug-entry-create").some((e) => e.step >= 2), 60_000);
+  await host.settle(s);
+  const created = resultOf(host, "ug-entry-create", 1);
+  report.check(
+    "② create: `Created ultragoal plan with 1 goal at …goals.json.` and the goal armed with the fixed objective",
+    /^Created ultragoal plan with 1 goal at \S+\/ultragoal\/goals\.json\.\nGoal armed: /.test(created) && FIXED_OBJECTIVE.test(created),
+    created,
+  );
+  const continuation = marked(continuations(host, "ug-entry-create")[0], "<goal-continuation>")[0]?.text ?? "";
+  report.check(
+    "② the first <goal-continuation> carries the fixed objective",
+    continuation.includes("Continue work on the active goal.") && FIXED_OBJECTIVE.test(continuation),
+    continuation.slice(0, 800),
+  );
+  const ultragoal = host.ultragoalState(s);
+  report.check(
+    "② ultragoal clear and goal drop end the loop",
+    ultragoal?.active === false &&
+      ultragoal?.current_phase === "complete" &&
+      host.goalState(s)?.status === "dropped" &&
+      continuations(host, "ug-entry-create").every((e) => e.count === 1),
+    { ultragoal, goal: host.goalState(s), counts: continuations(host, "ug-entry-create").map((e) => e.count) },
+  );
+}
+
+async function ultragoalFinalGate(report: Report, host: Host) {
+  // ③ the `[ultragoal-red-team]` executor child gets the fragment;
+  // `validate_gate` lists every defect; the final checkpoint and
+  // `goal complete` close the run, and no continuation follows.
+  const s = await host.createSession({ agent: "open-gajae" });
+  await host.prompt(
+    s,
+    `ultragoal add a flag to scripts/x.ts\n${directive({
+      tag: "ug-final",
       steps: [
+        loadUltragoal,
         ug({ op: "create", description: "probe task", goals: [UG_GOAL] }),
-        ug({ op: "complete", goal_id: "G001", implementation: ["parsed it"], files_changed: ["sample.ts"], learnings: ["none"] }),
+        ug({ op: "next" }),
         {
           tool: "subagent",
           args: {
-            agent: "open-gajae-architect",
-            description: "verify G001",
-            prompt: `Verify G001.\n${directive({
-              tag: "ug-arch",
-              steps: [ug(verdict), { text: "VERDICT: approve\nEVIDENCE: checked the parser\nISSUES: none" }],
-            })}`,
+            agent: "open-gajae-executor",
+            description: "red-team G001",
+            prompt: `[ultragoal-red-team] Try to break the flag parser.\n${directive({ tag: "ug-qa", steps: [{ text: "status: passed" }] })}`,
           },
         },
-        ug(verdict),
+        ug({ op: "validate_gate", goal_id: "G001", gate: { targetedVerification: { status: "passed" } } }),
+        ug({
+          op: "checkpoint",
+          goal_id: "G001",
+          status: "complete",
+          evidence: EVIDENCE,
+          gate: FINAL_GATE,
+          implementation: ["parsed the flag"],
+          files_changed: ["sample.ts"],
+          learnings: ["the probe fixture is enough"],
+        }),
+        goalOp("complete"),
       ],
     })}`,
-    mention("ultragoal"),
   );
-  await waitFor("ug-verify continuation", () => continuations(host, "ug-verify").some((e) => e.step >= 1), 90_000);
+  await waitFor("ug-final done", () => host.provider.thread("ug-final").some((e) => e.kind === "directive" && e.step >= 7), 90_000);
   await host.settle(s);
-  const child = host.provider.thread("ug-arch").find((e) => e.step === 0);
-  const brief = lastUserText(child);
+  const child = lastUserText(host.provider.thread("ug-qa").find((e) => e.step === 0));
   report.check(
-    "③ brief: the architect child's first message carries <ultragoal-verification-brief>, the request_id and the VERDICT format",
-    brief.includes("Verify G001.") &&
-      brief.includes("<ultragoal-verification-brief>") &&
-      /request_id "[0-9a-f-]{36}"/.test(brief) &&
-      brief.includes("VERDICT: approve | reject"),
-    brief.slice(0, 400),
+    "③ the [ultragoal-red-team] executor child's first message carries the red-team fragment",
+    child.includes("[ultragoal-red-team] Try to break the flag parser.") && child.includes(ULTRAGOAL_RED_TEAM_FRAGMENT),
+    child.slice(-800),
   );
-  const refused = host.provider.thread("ug-arch").find((e) => e.step === 1)?.toolResults.at(-1) ?? "";
-  report.check("③ the architect child cannot record a verdict (status only)", refused.includes("may only use status"), refused);
+  const diagnostics = resultOf(host, "ug-final", 5);
   report.check(
-    "③ the leader's record_verdict approves G001",
-    resultOf(host, "ug-verify", 4).includes("Verdict recorded: approve for G001"),
-    resultOf(host, "ug-verify", 4),
+    "③ validate_gate prints the quality-gate defect list",
+    /^\d+ quality-gate error\(s\):$/m.test(diagnostics) && /^ {2}\S+ \[\w+\]: /m.test(diagnostics),
+    diagnostics.slice(0, 600),
   );
-  const goals = parse(host.sessionFile(s, "ultragoal/goals.json"));
-  report.check("③ goals.json: G001 verified", goals?.goals?.[0]?.verified === true, goals?.goals?.[0]);
-  const next = lastUserText(continuations(host, "ug-verify")[0]);
-  report.check("③ the next continuation moves to the cleaner pass", next.includes("open-gajae-cleaner"), next.slice(0, 600));
+  const checkpoint = resultOf(host, "ug-final", 6);
+  report.check(
+    "③ the final checkpoint completes G001 and the run",
+    checkpoint.startsWith("Checkpointed G001 as complete.\nAll ultragoal goals are complete.") && !checkpoint.includes("Run not complete"),
+    checkpoint,
+  );
+  const completed = resultOf(host, "ug-final", 7);
+  report.check(
+    "③ goal complete closes the goal",
+    completed.endsWith("Status: complete") && host.goalState(s)?.status === "complete",
+    { completed, goal: host.goalState(s) },
+  );
+  report.check("③ no goal continuation after goal complete", continuations(host, "ug-final").length === 0, continuations(host, "ug-final").length);
 }
 
-async function ultragoalStartWithoutGate(report: Report, host: Host) {
-  // P-6/P-8: a vague ultragoal request starts ultragoal (no gate), and start
-  // brings a handed-off run back up once ralplan is stopped (Stop here).
+async function ultragoalVagueRequest(report: Report, host: Host) {
+  // P-6/P-8: a vague ultragoal request gets the ultragoal notice only (no
+  // state, no row, no loop) and no ralplan gate notice.
   const s = await host.createSession({ agent: "open-gajae" });
-  await host.prompt(
-    s,
-    `ultragoal로 계획대로 진행\n${directive({
-      tag: "ug-start",
-      steps: [
-        { tool: "skill", args: { id: "ultragoal" } },
-        ug({ op: "handoff", to: "ralplan", reason: "probe" }),
-        { tool: "ralplan", args: { op: "state", patch: { active: false } } },
-        ug({ op: "start", reason: "probe restart" }),
-      ],
-    })}`,
-  );
-  await waitFor("ug-start continuation", () => continuations(host, "ug-start").some((e) => e.step >= 1), 90_000);
+  await host.turn(s, `ultragoal로 계획대로 진행\n${directive({ tag: "ug-vague", steps: [] })}`);
   await host.settle(s);
-  const first = host.provider.thread("ug-start").find((e) => e.kind === "directive" && e.step === 0);
+  const first = host.provider.thread("ug-vague").find((e) => e.kind === "directive" && e.step === 0);
   report.check(
     "P-8: a vague ultragoal prompt gets the ultragoal notice and no ralplan gate",
-    occurrences(first, "[MODE: ULTRAGOAL]") === 1 && occurrences(first, "[RALPLAN GATE]") === 0,
-    { ultragoal: occurrences(first, "[MODE: ULTRAGOAL]"), gate: occurrences(first, "[RALPLAN GATE]") },
+    occurrences(first, ULTRAGOAL_NOTICE) === 1 && occurrences(first, "[RALPLAN GATE]") === 0,
+    { ultragoal: occurrences(first, ULTRAGOAL_NOTICE), gate: occurrences(first, "[RALPLAN GATE]") },
   );
-  report.check("P-6: start brings a handed-off run back up", resultOf(host, "ug-start", 4).includes("Ultragoal started"), resultOf(host, "ug-start", 4));
+  report.check(
+    "P-6: the notice seeds no ultragoal state, row or goal",
+    host.ultragoalState(s) === undefined &&
+      host.sessionFile(s, "state/active/ultragoal.json") === undefined &&
+      host.goalState(s) === undefined &&
+      continuations(host, "ug-vague").length === 0,
+    { state: host.ultragoalState(s), goal: host.goalState(s) },
+  );
 }
 
 async function ultragoalIdleAndCompaction(report: Report, host: Host) {
-  // ① tool.called reaches subscribers; ④ three tool-less turns pause the loop
-  // (only if the plugin receives tool.called); ⑤ compaction carries context.
+  // ① tool.called reaches subscribers; ④ three tool-less turns hold the goal
+  // continuation (only if the plugin receives tool.called); ⑤ compaction
+  // carries the ultragoal context, and the first request after it gets the
+  // goal context again: the hook enqueues it once more (plan E-3). That
+  // request is the host's own step for the pending hold notice, or the next
+  // prompt.
   const s = await host.createSession({ agent: "open-gajae" });
   await host.prompt(
     s,
-    `@ultragoal add a flag to scripts/x.ts\n${directive({ tag: "ug-idle", clearAfter: 10, steps: [ug({ op: "status" })] })}`,
-    mention("ultragoal"),
+    `ultragoal add a flag to scripts/x.ts\n${directive({
+      tag: "ug-idle",
+      clearAfter: 10,
+      steps: [loadUltragoal, ug({ op: "create", description: "probe task", goals: [UG_GOAL] })],
+    })}`,
   );
-  const paused = await waitFor(
-    "ug-idle paused or cancelled",
+  const held = await waitFor(
+    "ug-idle held or cleared",
     () => {
-      const state = host.ultragoalState(s);
-      return state?.paused_reason ?? (continuations(host, "ug-idle").some((e) => (e.count ?? 0) >= 10) ? "none" : undefined);
+      const record = parse(host.sessionFile(s, "state/goal-continuation.json"));
+      return record?.held?.reason ?? (continuations(host, "ug-idle").some((e) => (e.count ?? 0) >= 10) ? "none" : undefined);
     },
     120_000,
   ).catch(() => undefined);
@@ -434,10 +524,20 @@ async function ultragoalIdleAndCompaction(report: Report, host: Host) {
     host.sessionEvents(s).some((e) => e.type === "session.tool.called"),
     [...new Set(host.sessionEvents(s).map((e) => e.type))],
   );
-  const iterations = continuations(host, "ug-idle").map((e) => e.count);
-  report.check("④ three tool-less turns pause the loop (no_tool_progress)", paused === "no_tool_progress", { paused, iterations });
-  if (paused === "no_tool_progress") {
-    const since = Date.now();
+  const counts = continuations(host, "ug-idle").map((e) => e.count ?? 0);
+  report.check(
+    "④ three tool-less turns hold the goal continuation (no_tool_progress) after three continuations",
+    held === "no_tool_progress" && Math.max(0, ...counts) === 3,
+    { held, counts },
+  );
+  const contextAdded = (since: number) =>
+    host
+      .sessionEvents(s, since)
+      .filter((e) => e.type === "session.inbox.enqueued" && JSON.stringify(e.data ?? {}).includes("open-gajae: goal context added")).length;
+  const injectedBefore = contextAdded(0);
+  const compactedAt = Date.now();
+  if (held === "no_tool_progress") {
+    const since = compactedAt;
     const response = await host.api("POST", `/api/session/${s}/compact`, {});
     const compaction = await waitFor(
       "compaction request",
@@ -445,98 +545,155 @@ async function ultragoalIdleAndCompaction(report: Report, host: Host) {
         host.provider
           .entries()
           .filter((e) => e.t >= since)
-          .find((e) => JSON.stringify(e.body?.messages ?? []).includes("ultragoal-compaction-context")),
+          .find((e) => JSON.stringify(e.body?.messages ?? []).includes("<ultragoal-compaction-context>")),
       60_000,
     ).catch(() => undefined);
     report.check("⑤ the compaction request carries <ultragoal-compaction-context>", !!compaction, { status: response.status });
     await host.settle(s);
   }
-  await host.turn(s, `stop\n${directive({ tag: "ug-idle-stop", steps: [ug({ op: "cancel", reason: "probe done" })] })}`);
+  await host.prompt(s, `stop\n${directive({ tag: "ug-idle-stop", steps: [ug({ op: "clear" }), goalOp("drop")] })}`);
+  await waitFor("ug-idle-stop done", () => host.provider.thread("ug-idle-stop").some((e) => e.step >= 2), 60_000).catch(() => undefined);
   await host.settle(s);
+  const next = host.provider.thread("ug-idle-stop").find((e) => e.kind === "directive" && e.step === 0);
+  const compacted = !(next?.messages ?? []).some((m) => m.role === "assistant" && m.text.startsWith("continuing "));
+  const holdNotices = marked(next, "<goal-notice>").map((m) => m.text);
+  report.check(
+    "④ the hold posts one <goal-notice> with its cause and \"Send a message to continue\"",
+    holdNotices.length === 1 &&
+      holdNotices[0]!.includes("Cause: no tool calls in the last 3 continuation turns.") &&
+      holdNotices[0]!.includes("Send a message to continue"),
+    holdNotices,
+  );
+  const reinjected = contextAdded(compactedAt);
+  report.check(
+    "⑤ the goal context is added once, and once again on the first request after the compaction",
+    injectedBefore === 1 && compacted && reinjected === 1 && marked(next, "<goal-context>").length === 1,
+    { injectedBefore, compacted, reinjected, goalContexts: marked(next, "<goal-context>").length },
+  );
 }
 
 async function ultragoalHandoff(report: Report, host: Host) {
-  // ⑥ chain guard → handoff (starts ralplan) → ralplan → final (the approval
-  // point) → skill ultragoal hands off through the entry gate (C-4) → resume.
+  // ⑥ chain guard → ultragoal handoff(ralplan) → ralplan write on the
+  // handed-over run without `start`, ending in final → `skill ultragoal` in
+  // the same execution hands ralplan back (PQ-21 A) → create overwrites.
   const s = await host.createSession({ agent: "open-gajae" });
+  const replanned = { title: "flag and alias", description: "parse the flag and its alias", acceptanceCriteria: ["flag and alias parsed"] };
   await host.prompt(
     s,
-    `@ultragoal add a flag to scripts/x.ts\n${directive({
+    `ultragoal add a flag to scripts/x.ts\n${directive({
       tag: "ug-handoff",
       steps: [
+        loadUltragoal,
         ug({ op: "create", description: "probe task", goals: [UG_GOAL] }),
         { tool: "skill", args: { id: "ralplan" } },
         ug({ op: "handoff", to: "ralplan", reason: "user asked to replan" }),
         { tool: "skill", args: { id: "ralplan" } },
-        { tool: "ralplan", args: { op: "write", stage: "final", stage_n: 1, content: "# Final plan\n\nParse the flag.\n" } },
-        { tool: "skill", args: { id: "ultragoal" } },
-        ug({ op: "resume", reason: "plan approved" }),
-        ug({ op: "status" }),
+        { tool: "ralplan", args: { op: "write", stage: "final", stage_n: 1, content: "# Final plan\n\nParse the flag and its alias.\n" } },
+        loadUltragoal,
+        ug({ op: "create", description: "replanned task", goals: [replanned] }),
       ],
     })}`,
-    mention("ultragoal"),
   );
-  await waitFor("ug-handoff continuation", () => continuations(host, "ug-handoff").some((e) => e.step >= 1), 90_000);
+  await waitFor("ug-handoff continuation", () => continuations(host, "ug-handoff").some((e) => e.step >= 2), 90_000);
   await host.settle(s);
+  const refusal = resultOf(host, "ug-handoff", 3);
   report.check(
-    "⑥ skill ralplan is refused while ultragoal runs, naming handoff",
+    "⑥ skill ralplan is refused while ultragoal is the primary skill, naming ultragoal handoff",
     // The refusal arrives JSON-encoded inside the tool result.
-    resultOf(host, "ug-handoff", 2).includes("ultragoal is running in this session; call ultragoal handoff(") &&
-      resultOf(host, "ug-handoff", 2).includes("before loading ralplan"),
-    resultOf(host, "ug-handoff", 2).slice(0, 300),
+    refusal.includes("refusing to chain from") && refusal.includes("Run ultragoal handoff(to:"),
+    refusal.slice(0, 300),
   );
-  report.check("⑥ handoff starts ralplan", resultOf(host, "ug-handoff", 3).includes("ralplan started"), resultOf(host, "ug-handoff", 3));
+  const receipt = parse(resultOf(host, "ug-handoff", 4));
+  report.check(
+    "⑥ ultragoal handoff hands over to ralplan in planner",
+    receipt?.ok === true && receipt?.from === "ultragoal" && receipt?.to === "ralplan" && receipt?.phases?.to === "planner",
+    resultOf(host, "ug-handoff", 4),
+  );
   report.check(
     "⑥ skill ralplan loads after the handoff",
-    !/"error"|Invalid arguments/.test(resultOf(host, "ug-handoff", 4)) && resultOf(host, "ug-handoff", 4).includes('<skill_content name="ralplan">'),
-    resultOf(host, "ug-handoff", 4).slice(0, 300),
+    !/"error"|Invalid arguments/.test(resultOf(host, "ug-handoff", 5)) && resultOf(host, "ug-handoff", 5).includes('<skill_content name="ralplan">'),
+    resultOf(host, "ug-handoff", 5).slice(0, 300),
+  );
+  const written = resultOf(host, "ug-handoff", 6);
+  report.check(
+    "⑥ ralplan write final on the handed-over run (no start) records the plan for approval",
+    written.includes("pending-approval.md") && !written.includes('"error"'),
+    written.slice(0, 600),
   );
   report.check(
-    "⑥ ralplan write final records the plan for approval",
-    resultOf(host, "ug-handoff", 5).includes("pending-approval.md") && !resultOf(host, "ug-handoff", 5).includes('"error"'),
-    resultOf(host, "ug-handoff", 5).slice(0, 600),
+    "⑥ skill ultragoal loads in the same execution",
+    !/"error"|Invalid arguments/.test(resultOf(host, "ug-handoff", 7)) && resultOf(host, "ug-handoff", 7).includes('<skill_content name="ultragoal">'),
+    resultOf(host, "ug-handoff", 7).slice(0, 300),
   );
-  report.check(
-    "⑥ skill ultragoal loads through the entry gate",
-    !/"error"|Invalid arguments/.test(resultOf(host, "ug-handoff", 6)) && resultOf(host, "ug-handoff", 6).includes('<skill_content name="ultragoal">'),
-    resultOf(host, "ug-handoff", 6).slice(0, 300),
-  );
-  report.check("⑥ resume keeps G001", resultOf(host, "ug-handoff", 7).includes("Resumed") && resultOf(host, "ug-handoff", 7).includes("G001"), resultOf(host, "ug-handoff", 7));
+  // PQ-6 A: the hook hands off through the shared journaled handoff; the
+  // ralplan row it leaves inactive is removed once `create` activates the
+  // ultragoal row (AC3), so the audit shows the handoff.
   const ralplan = host.ralplanState(s);
+  const handoff = (host.sessionFile(s, "state/audit.jsonl") ?? "")
+    .split("\n")
+    .map(parse)
+    .find(
+      (row) =>
+        row?.skill === "ralplan" &&
+        row?.verb === "handoff" &&
+        row?.owner === "open-gajae-hook" &&
+        row?.from_phase === "final" &&
+        row?.to_phase === "handoff",
+    );
   report.check(
-    "⑥ the gate handed ralplan off to ultragoal (inactive, phase handoff)",
-    ralplan?.active === false && ralplan?.current_phase === "handoff" && ralplan?.handoff_to === "ultragoal",
-    ralplan,
+    "⑥ the same-execution load handed ralplan off through the shared handoff (inactive, phase handoff)",
+    ralplan?.active === false && ralplan?.current_phase === "handoff" && ralplan?.handoff_to === "ultragoal" && !!handoff,
+    { ralplan, handoff },
+  );
+  const created = resultOf(host, "ug-handoff", 8);
+  const goals = parse(host.sessionFile(s, "ultragoal/goals.json"));
+  const plans = (host.sessionFile(s, "ultragoal/ledger.jsonl") ?? "")
+    .split("\n")
+    .filter((line) => parse(line)?.event === "plan_created").length;
+  report.check(
+    "⑥ create overwrites goals.json and keeps the open goal",
+    created.startsWith("Created ultragoal plan with 1 goal at ") &&
+      created.includes("Goal armed: the open ultragoal goal") &&
+      goals?.description === "replanned task" &&
+      goals?.goals?.length === 1 &&
+      goals?.goals?.[0]?.title === "flag and alias" &&
+      plans === 2,
+    { created, goals, plans },
   );
   const progress = host.sessionFile(s, "ultragoal/progress.txt") ?? "";
-  report.check("⑥ progress records HANDOFF and RESUME with reasons", ["- HANDOFF", "user asked to replan", "- RESUME", "plan approved"].every((p) => progress.includes(p)), progress.slice(-600));
+  report.check("⑥ progress records the HANDOFF with its reason", progress.includes("HANDOFF") && progress.includes("to ralplan: user asked to replan"), progress.slice(-600));
 }
 
 async function ultragoalBackgroundShell(report: Report, host: Host) {
-  // ⑦ observation: a background shell's completion notice and the loop.
+  // ⑦ observation: a background shell's completion notice and the loop, which
+  // the auto-responder ends with ultragoal clear and goal drop.
   const s = await host.createSession({ agent: "open-gajae" });
   const since = Date.now();
   await host.prompt(
     s,
-    `@ultragoal add a flag to scripts/x.ts\n${directive({
+    `ultragoal add a flag to scripts/x.ts\n${directive({
       tag: "ug-bg",
       clearAfter: 3,
       steps: [
+        loadUltragoal,
         ug({ op: "create", description: "probe task", goals: [UG_GOAL] }),
         { tool: "shell", args: { command: "sleep 4; echo bg-done", background: true, description: "background probe" } },
       ],
     })}`,
-    mention("ultragoal"),
   );
-  await waitFor("ug-bg cancelled", () => host.ultragoalState(s) === undefined && continuations(host, "ug-bg").length > 0, 90_000).catch(() => undefined);
+  await waitFor("ug-bg goal dropped", () => host.goalState(s)?.status === "dropped", 90_000).catch(() => undefined);
   await host.settle(s, 6_000);
   const iterations = continuations(host, "ug-bg").filter((e) => e.step === 0).map((e) => e.count);
   const notified = host.provider.thread("ug-bg").some((e) => e.messages.some((m) => m.text.includes("bg-done")));
   const starts = host.sessionEvents(s, since).filter((e) => e.type === "session.execution.started").length;
+  const ultragoal = host.ultragoalState(s);
   report.check(
-    "⑦ background shell: no duplicate continuation iteration and the loop ended",
-    new Set(iterations).size === iterations.length && host.ultragoalState(s) === undefined,
-    { iterations, notified, starts },
+    "⑦ background shell: no duplicate continuation, and ultragoal clear and goal drop ended the loop",
+    new Set(iterations).size === iterations.length &&
+      ultragoal?.active === false &&
+      ultragoal?.current_phase === "complete" &&
+      host.goalState(s)?.status === "dropped",
+    { iterations, notified, starts, ultragoal, goal: host.goalState(s) },
   );
   console.log(`     ⑦ observation: iterations=${JSON.stringify(iterations)} completion-notice-seen=${notified} executions=${starts}`);
 }
@@ -553,9 +710,9 @@ await runProbe("open-gajae-host-session-probe", async (report, scratch) => {
       bridge,
       interruptDuringBackground,
       backgroundChildPending,
-      ultragoalNoPrd,
-      ultragoalVerification,
-      ultragoalStartWithoutGate,
+      ultragoalEntry,
+      ultragoalFinalGate,
+      ultragoalVagueRequest,
       ultragoalIdleAndCompaction,
       ultragoalHandoff,
       ultragoalBackgroundShell,
