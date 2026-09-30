@@ -1,7 +1,8 @@
 // Goal state (`state/goal-state.json`) and the hook-only continuation record
 // (`state/goal-continuation.json`) of plan C-9 (PQ-2 B): the schema, the
-// reader, the gjc op transitions and the continuation record's reset rule. Pure except the two `WorkflowTx` helpers, which the `goal` tool
-// and `ultragoal create` (goal arming) share.
+// reader, the gjc op transitions and the continuation record's reset rule.
+// Pure except the two `WorkflowTx` helpers, which the `goal` tool and
+// `ultragoal create` (goal arming) share.
 //
 // Source: gajae-code 5c5231418930673e42cc5d08ebe4376e03187533 (MIT),
 // `packages/coding-agent/src/`:

@@ -27,7 +27,7 @@
 //   STALLED line (`../ultragoal-runtime/recovery.ts`).
 
 import path from "node:path";
-import { readRawJsonTx, rowPhase } from "../skill-state/doctor.js";
+import { activeFlag, readRawJsonTx, rowPhase } from "../skill-state/doctor.js";
 import type { StateStore, WorkflowTx } from "../state.js";
 import {
   CRITIC_STREAK_HOLD,
@@ -77,10 +77,6 @@ export type GoalContinuationDecision =
   | { kind: "inactive" }
   | { kind: "held" }
   | { kind: "message"; message: GoalMessage };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /** The ledger rows, or none when the ledger is missing or unreadable. */
 async function ledgerRowsTx(tx: WorkflowTx): Promise<LedgerRow[]> {
@@ -195,7 +191,7 @@ export function createGoalHooks(store: StateStore) {
       const goal = visibleGoal(await readGoalStateTx(tx));
       if (
         !ultragoalRecoveryApplies({
-          rowActive: isRecord(row) && row.active !== false,
+          rowActive: activeFlag(row),
           phase: rowPhase(row),
           goalStatus: goal?.status,
         })
@@ -223,5 +219,3 @@ export function createGoalHooks(store: StateStore) {
 
   return { decideContinuation, releaseHold, contextText, ultragoalCompaction };
 }
-
-export type GoalHooks = ReturnType<typeof createGoalHooks>;

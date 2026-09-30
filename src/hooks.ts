@@ -201,8 +201,6 @@ export type ExecuteAfterEvent = {
 };
 
 export type RalplanHooks = {
-  /** Fail-closed parent lookup, used by `rootSession`. */
-  parentSession(sessionID: string): Promise<string | undefined>;
   /** Fail-closed lineage root, shared with the workflow tools (plan DR-1, D-SF6). */
   rootSession(sessionID: string): Promise<string>;
   prompt(event: PromptEvent): Promise<void>;
@@ -1208,7 +1206,6 @@ export function createHooks(
   };
 
   return {
-    parentSession,
     rootSession,
     prompt,
     context,

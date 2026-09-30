@@ -35,6 +35,7 @@ import {
 } from "../ralplan-runtime/manifest.js";
 import type { InterviewState, StateWriter, WorkflowTx } from "../state.js";
 import { buildUltragoalHudFromState } from "../ultragoal-runtime/hud.js";
+import { ULTRAGOAL_INITIAL_STATE } from "../ultragoal-runtime/manifest.js";
 import { type AuditOwner, appendAudit, HOOK_OWNER, RUNTIME_OWNER } from "./audit.js";
 import type { WorkflowHudSummary } from "./hud.js";
 import {
@@ -76,7 +77,7 @@ const HANDOFF_SKILLS: Record<HandoffCallee, HandoffSkill> = {
     hud: buildRalplanHudFromState,
     row: true,
   },
-  ultragoal: { initialPhase: "goal-planning", hud: buildUltragoalHudFromState, row: true },
+  ultragoal: { initialPhase: ULTRAGOAL_INITIAL_STATE, hud: buildUltragoalHudFromState, row: true },
   "deep-interview": { initialPhase: "deep-interview", row: false },
 };
 

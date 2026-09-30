@@ -41,9 +41,15 @@
 // `LIMITS` and `isSubstantive` moved here from `src/ultragoal.ts:28-38,99-106`,
 // which plan S3 removed.
 
-import { checkReceipt, completionVerificationError, isValidCompletion, type ReceiptCheck, type ReceiptKind } from "./receipt.js";
-import type { CompletionVerification } from "./receipt.js";
 import type { LedgerRow } from "./ledger.js";
+import {
+  checkReceipt,
+  type CompletionVerification,
+  completionVerificationError,
+  isValidCompletion,
+  type ReceiptCheck,
+  type ReceiptKind,
+} from "./receipt.js";
 
 // ---------------------------------------------------------------------------
 // Limits and the substantive rule

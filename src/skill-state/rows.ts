@@ -31,6 +31,7 @@ import path from "node:path";
 import { RALPLAN_PHASE_LOCK } from "../ralplan-runtime/manifest.js";
 import type { WorkflowTx } from "../state.js";
 import { type AuditOwner, appendAudit } from "./audit.js";
+import { modeStatePhase, readRawJsonTx } from "./doctor.js";
 import { normalizeWorkflowHudSummary, type WorkflowHudSummary } from "./hud.js";
 
 type Json = Record<string, unknown>;
@@ -233,16 +234,6 @@ export async function rebuildSnapshotTx(tx: WorkflowTx, owner: AuditOwner): Prom
   });
 }
 
-/** gjc `readModeStatePhase`: an inactive state's phase counts only when locked. */
-function lockedPhase(state: unknown): string | undefined {
-  if (!isRecord(state)) return undefined;
-  const phase = trimmed(state.current_phase);
-  if (!phase) return undefined;
-  if (state.active === false && !(RALPLAN_PHASE_LOCK as readonly string[]).includes(phase))
-    return undefined;
-  return phase;
-}
-
 /**
  * gjc `readVisibleSkillActiveState`'s primary (C-3 "the visible primary
  * skill"): the snapshot's entries under the row files (which win), the
@@ -254,19 +245,14 @@ function lockedPhase(state: unknown): string | undefined {
  */
 export async function readVisiblePrimaryTx(tx: WorkflowTx): Promise<Json | undefined> {
   const merged = new Map<string, Json>();
-  let snapshot: unknown;
-  try {
-    const text = await tx.readText(tx.paths.snapshotPath);
-    snapshot = text === undefined ? undefined : JSON.parse(text);
-  } catch {
-    snapshot = undefined;
-  }
+  const { value: snapshot } = await readRawJsonTx(tx, tx.paths.snapshotPath);
   if (isRecord(snapshot) && Array.isArray(snapshot.active_skills))
     for (const entry of snapshot.active_skills as unknown[])
       if (isRecord(entry) && trimmed(entry.skill)) merged.set(String(entry.skill).trim(), entry);
   for (const entry of await readRowsTx(tx)) merged.set(String(entry.skill).trim(), entry);
 
-  const ralplanPhase = lockedPhase(await tx.readModeState("ralplan").catch(() => undefined));
+  // gjc `readModeStatePhase`: an inactive state's phase counts only when locked.
+  const ralplanPhase = modeStatePhase(await tx.readModeState("ralplan").catch(() => undefined));
   const visible = [...merged.values()]
     .filter((entry) => entry.active !== false)
     .map((entry) => {

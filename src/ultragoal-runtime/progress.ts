@@ -1,14 +1,16 @@
 // Ultragoal progress log (`ultragoal/progress.txt`): the OMC ralph format —
 // Codebase Patterns, per-checkpoint entries (implementation, files changed,
-// learnings) and PLAN/HANDOFF notes — plus the context the compaction
-// recovery reads. Pure: callers read and write the file and pass text in.
+// learnings) and PLAN/HANDOFF notes — plus the parser the compaction
+// recovery reads it with. Pure: callers read and write the file and pass text
+// in.
 //
 // Source: oh-my-claudecode v5.4.0 (MIT) — `src/hooks/ralph/progress.ts` (log
-// format, `appendProgress`, `addPattern`, `parseProgress`,
-// `getProgressContext`). Moved from the OMC-ralph `src/ultragoal.ts:310-509`
-// (removed in plan S3), unchanged except the `PLAN` and `HANDOFF` note labels
-// and the two helpers at the end; this file is the only OMC-derived part of
-// the ultragoal runtime (plan §2 option (2)A).
+// format, `appendProgress`, `addPattern`, `parseProgress`). Moved from the
+// OMC-ralph `src/ultragoal.ts:310-509` (removed in plan S3), unchanged except
+// the `PLAN` and `HANDOFF` note labels and the two helpers at the end; OMC
+// `getProgressContext` is not kept (the recovery picks its own lines in
+// `./recovery.ts`). This file is the only OMC-derived part of the ultragoal
+// runtime (plan §2 option (2)A).
 // gjc deviation 1 (plan §7.1): gjc keeps no progress log (`brief.md` instead);
 // open-gajae keeps this one, and `create` appends to it instead of replacing
 // it (PQ-15 A): the header only when the file is missing, then a `PLAN` note.
@@ -157,64 +159,6 @@ export function parseProgress(content: string): {
   }
   if (current) entries.push(current);
   return { patterns, entries };
-}
-
-/**
- * OMC `getProgressContext` (progress.ts:409-511): every pattern, the
- * deduplicated learnings of the last 10 entries and the last 2 entries. No
- * truncation (decision 18).
- */
-export function progressContext(content: string | undefined): string {
-  if (!content) return "";
-  const { patterns, entries } = parseProgress(content);
-  const blocks: string[] = [];
-  if (patterns.length > 0)
-    blocks.push(
-      [
-        "<codebase-patterns>",
-        "",
-        "## Known Patterns from Previous Iterations",
-        "",
-        ...patterns.map((pattern) => `- ${pattern}`),
-        "",
-        "</codebase-patterns>",
-        "",
-      ].join("\n"),
-    );
-  const learnings = [
-    ...new Set(entries.slice(-10).flatMap((entry) => entry.learnings)),
-  ];
-  if (learnings.length > 0)
-    blocks.push(
-      [
-        "<learnings>",
-        "",
-        "## Learnings from Previous Iterations",
-        "",
-        ...learnings.map((learning) => `- ${learning}`),
-        "",
-        "</learnings>",
-        "",
-      ].join("\n"),
-    );
-  if (entries.length > 0) {
-    const lines = ["<recent-progress>", "", "## Recent Progress", ""];
-    for (const entry of entries.slice(-2)) {
-      lines.push(`### ${entry.goalId} (${entry.timestamp})`);
-      lines.push(...entry.implementation.map((item) => `- ${item}`), "");
-    }
-    lines.push("</recent-progress>", "");
-    blocks.push(lines.join("\n"));
-  }
-  return blocks.join("\n");
-}
-
-/** The last progress entry for a goal: the brief's completion claim. */
-export function lastEntryFor(content: string | undefined, goalId: string) {
-  if (!content) return undefined;
-  return parseProgress(content)
-    .entries.filter((entry) => entry.goalId === goalId)
-    .at(-1);
 }
 
 /** PQ-15 A: `create` keeps the log; the header only when the file is missing. */

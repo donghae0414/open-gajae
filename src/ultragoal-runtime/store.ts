@@ -100,7 +100,6 @@ import {
   type CriticVerdict,
   criticNonOkayStreak,
   type HandoffTarget,
-  type LatestLedgerEvent,
   latestLedgerEvent,
   type LedgerEventFields,
   type LedgerRow,
@@ -381,9 +380,7 @@ export async function reconcileUltragoalTx(
   owner: AuditOwner = RUNTIME_OWNER,
 ): Promise<void> {
   try {
-    const read = parseGoals(await tx.readText(tx.paths.ultragoal.goals));
-    if (read.kind === "invalid") throw new Error(`goals.json is invalid: ${read.error}`);
-    const file = read.kind === "valid" ? read.file : undefined;
+    const file = await readPlanTx(tx);
     const status: UltragoalPhase = file ? deriveRunStatus(file) : "missing";
     const active = file !== undefined && status !== "complete";
     const latest = latestLedgerEvent(await tx.readText(tx.paths.ultragoal.ledger));
@@ -404,7 +401,7 @@ export async function reconcileUltragoalTx(
     try {
       existing = payloadOf(await tx.readModeState(SKILL));
     } catch {
-      existing = {};
+      // A corrupt state is replaced, as gjc's reconcile does.
     }
     const at = now();
     const merged = mergeWithNullDelete(existing, payload);
@@ -1151,7 +1148,7 @@ export async function patchStateTx(tx: WorkflowTx, sessionId: string, args: Ultr
   if (preError) throw new Error(preError);
   merged.skill = SKILL;
   const fromPhase = trimmed(existing.current_phase);
-  const toPhase = incomingPhase ?? trimmed(merged.current_phase) ?? fromPhase ?? "goal-planning";
+  const toPhase = incomingPhase ?? trimmed(merged.current_phase) ?? fromPhase ?? ULTRAGOAL_INITIAL_STATE;
   merged.current_phase = toPhase;
   merged.version = WORKFLOW_STATE_VERSION;
   if (typeof merged.active !== "boolean") merged.active = true;

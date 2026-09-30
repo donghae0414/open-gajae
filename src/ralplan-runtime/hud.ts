@@ -39,7 +39,6 @@ import {
 export {
   normalizeWorkflowHudSummary,
   type WorkflowHudChip,
-  type WorkflowHudSeverity,
   type WorkflowHudSummary,
 } from "../skill-state/hud.js";
 

@@ -83,18 +83,6 @@ export type LedgerEventFields =
     }
   | { event: "workflow_handoff"; to: HandoffTarget; reason: string };
 
-export type LedgerEventName = LedgerEventFields["event"];
-export const LEDGER_EVENTS: readonly LedgerEventName[] = [
-  "plan_created",
-  "goal_started",
-  "goal_checkpointed",
-  "steering_accepted",
-  "review_blockers_recorded",
-  "blocker_classified",
-  "critic_verdict",
-  "workflow_handoff",
-];
-
 type Envelope = { eventId: string; timestamp: string };
 export type LedgerEvent = LedgerEventFields & Envelope;
 /** gjc reconcile-failure audit row (DR-20): keyed by `type`, not `event`. */
