@@ -8,9 +8,9 @@ Retain this notice, applicable source notices, and the license texts in [license
 
 | Source | Referenced or adapted material in open-gajae | Original terms |
 |---|---|---|
-| [oh-my-claudecode (OMC)](https://github.com/Yeachan-Heo/oh-my-claudecode) | OMC-derived roles and retained workflow guidance in `prompts/`, `skills/`; state and keyword/continuation logic; `ultragoal` goal tracking and reviews; AST/LSP tools and JSONC utilities in `src/`. | [MIT](licenses/OMC-MIT.txt), Copyright (c) 2025 Yeachan Heo |
-| [oh-my-openagent (OMO)](https://github.com/code-yeongyu/oh-my-openagent) | Agent/model/permission integration in `src/config.ts`; continuation, in-flight and session-lineage patterns in `src/hooks.ts`; reviewer integration in `src/ultragoal-hooks.ts` and related portions of `src/ultragoal.ts` and `skills/ultragoal/SKILL.md`. | [Sustainable Use License](licenses/OMO-SUL.txt); incorporated third-party portions retain their original terms. |
-| [gajae-code (GJC)](https://github.com/Yeachan-Heo/gajae-code) | Main-agent prompt in `prompts/open-gajae.md`; the ralplan skill in `skills/ralplan/SKILL.md`, the consensus role prompts in `prompts/open-gajae-planner.md`, `prompts/open-gajae-architect.md` and `prompts/open-gajae-critic.md`, the ralplan runtime in `src/ralplan-runtime/*`, and the shape fixtures in `tests/fixtures/gjc-ralplan/*`; the ralplan planning guard, always-blocked paths, continuation stop set, compaction recovery and ultragoal entry gate in related portions of `src/hooks.ts`, `src/artifact-guard.ts`, `src/ralplan.ts`, `src/ultragoal.ts`, `src/ultragoal-hooks.ts` and `src/ultragoal-tool.ts`; session-directory and ambiguous-match patterns in `src/state.ts`; handoff/resume, leader-recorded verdicts and evidence thresholds in `src/ultragoal.ts` and `src/ultragoal-tool.ts`. | [MIT](licenses/GJC-MIT.txt), Copyright (c) 2025-2026 Yeachan-Heo and Gajae Code Contributors |
+| [oh-my-claudecode (OMC)](https://github.com/Yeachan-Heo/oh-my-claudecode) | OMC-derived roles and retained workflow guidance in `prompts/`, `skills/`; state and keyword/continuation logic; the `ultragoal` progress log format (`src/ultragoal-runtime/progress.ts`); AST/LSP tools and JSONC utilities in `src/`. | [MIT](licenses/OMC-MIT.txt), Copyright (c) 2025 Yeachan Heo |
+| [oh-my-openagent (OMO)](https://github.com/code-yeongyu/oh-my-openagent) | Agent/model/permission integration in `src/config.ts`; continuation, in-flight, session-lineage and injection patterns in `src/hooks.ts`. | [Sustainable Use License](licenses/OMO-SUL.txt); incorporated third-party portions retain their original terms. |
+| [gajae-code (GJC)](https://github.com/Yeachan-Heo/gajae-code) | Main-agent prompt in `prompts/open-gajae.md`; the ralplan skill in `skills/ralplan/SKILL.md`, the consensus role prompts in `prompts/open-gajae-planner.md`, `prompts/open-gajae-architect.md` and `prompts/open-gajae-critic.md`, the ralplan runtime in `src/ralplan-runtime/*`, and the shape fixtures in `tests/fixtures/gjc-ralplan/*`; the ultragoal skill in `skills/ultragoal/SKILL.md`, the cleaner prompt in `prompts/open-gajae-cleaner.md`, the ultragoal runtime in `src/ultragoal-runtime/*` (except the OMC progress log format in `progress.ts`), the goal tool, state and loop in `src/goal/*`, and the shared active-row, snapshot, audit, journal, handoff, HUD and doctor modules in `src/skill-state/*`; the planning and goal-planning guards, always-blocked paths, continuation stop set, `skill` turn gate and chain guard, and compaction recovery in related portions of `src/hooks.ts`, `src/artifact-guard.ts` and `src/ralplan.ts`; session-directory and ambiguous-match patterns in `src/state.ts`. The ultragoal and goal adaptation draws on these GJC files under `packages/coding-agent/src/`: `gjc-runtime/{ultragoal-runtime,ultragoal-guard,ultragoal-receipt-freshness,workflow-recovery-projection,state-runtime,state-writer,state-renderer,state-validation,workflow-manifest,goal-mode-request,cli-write-receipt,session-layout}.ts`; `goals/{runtime,state}.ts`, `goals/tools/goal-tool.ts`, `prompts/goals/{goal-mode-active,goal-continuation}.md`, `prompts/tools/goal.md`; `session/agent-session.ts` (the path-A continuation wrapper and the recovery rendering and rules); `hooks/skill-state.ts` (the skill-load seed); `skill-state/{active-state,workflow-hud,workflow-mutation-guard,initial-phase}.ts`, `tools/skill.ts`; `defaults/gjc/skills/ultragoal/{SKILL.md,ai-slop-cleaner.md}`; and `prompts/agents/executor.md` (the red-team fragment). | [MIT](licenses/GJC-MIT.txt), Copyright (c) 2025-2026 Yeachan-Heo and Gajae Code Contributors |
 | [OpenCode](https://github.com/anomalyco/opencode) | Desktop icon used as a visual reference for `assets/branding/open-gajae-banner.png`; [banner provenance](assets/branding/open-gajae-banner.md). Also the host/API reference; no copied host implementation. | [MIT](licenses/OpenCode-MIT.txt), Copyright (c) 2025 opencode |
 
 Revisions checked against local references:
@@ -24,7 +24,7 @@ These pins identify the sources checked for this notice; they do not reconstruct
 
 ## Modifications and scope
 
-**Third-party material has been modified for open-gajae.** Skills, roles, state and lifecycle handling are adapted to OpenCode v2; OMC's ralph becomes `ultragoal`. OMO integration patterns are adapted to this plugin's roles and review flow, with reviewer briefs assembled by a local adapter. File-level source notes describe other adaptations.
+**Third-party material has been modified for open-gajae.** Skills, roles, state and lifecycle handling are adapted to OpenCode v2. `ultragoal` and `goal` are rebuilt on GJC's ultragoal runtime and goal mode; of the earlier port of OMC's ralph only the progress log format remains. OMO integration patterns are adapted to this plugin's roles and hooks. The `execute.before` append of the `[ultragoal-red-team]` fragment to an executor assignment is a local adapter carrying GJC text, as the removed reviewer-brief append was. File-level source notes describe other adaptations.
 
 The main-agent prompt alone derives from GJC's
 `packages/coding-agent/src/prompts/system/system-prompt.md` and the three
@@ -49,10 +49,19 @@ header. Host substitutions and deviations are listed in each file's source notes
 and in the README's "Deviations from GJC (ralplan)". The fixtures in
 `tests/fixtures/gjc-ralplan/` hold ledger rows, file names, receipts and one
 disposition document from GJC ralplan runs and tests, with absolute paths
-replaced and no stage bodies. The deep-interview and ultragoal
-skills, the other role prompts, and ultragoal's reviewer brief and approval
-boundaries remain on their own OMC-derived contracts; this is not a full GJC
-port.
+replaced and no stage bodies. The ultragoal skill, the cleaner prompt,
+`src/ultragoal-runtime/` (except `progress.ts`), `src/goal/` and
+`src/skill-state/` derive from GJC's
+`packages/coding-agent/src/defaults/gjc/skills/ultragoal/SKILL.md` and
+`ai-slop-cleaner.md`, the ultragoal, goal and state runtime modules, the goal
+prompts and tool, and the executor red-team fragment listed in the GJC row
+above, at the same pin; their host substitutions and deviations are listed in
+each file's source notes and in the README's "Deviations from GJC (ultragoal)".
+The ultragoal skill keeps two sentences of the earlier OMC-derived skill, and
+the cleaner prompt keeps its read-only sentences from the earlier OMC-based
+cleaner prompt. The deep-interview skill and the explore, document-specialist
+and executor role prompts remain on their own OMC-derived contracts; this is
+not a full GJC port.
 
 The OMO entry applies to the referenced/adapted portions of mixed-source files, not all content in those files. Its Sustainable Use License limits use and modification to internal business, non-commercial or personal purposes, and distribution to free-of-charge, non-commercial purposes. Preserve its terms and modification notices; no commercial-distribution exception is claimed.
 
