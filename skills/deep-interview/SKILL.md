@@ -95,7 +95,8 @@ Complete this phase before Phase 1, before brownfield exploration, before state 
 
 1. **Prefer an active interview's state**:
    - First inspect the deep-interview state with `deep-interview status`.
-   - If the state is **active** (`active: true`, including one handed over to you with `handoff_from`) and contains a finite numeric `threshold` and a non-empty `threshold_source` (at the top level or in `state`), use those values, set `<resolvedThreshold>`, `<resolvedThresholdPercent>`, and `<resolvedThresholdSource>`, and continue that interview. Never `start` over an active state: an active interview, including a handed-over one, is continued with `deep-interview write`, and only a new, unrelated request goes through the Phase 0.5 choice (deviation 13: only `start` seeds, and it replaces the state). An inactive state's values are not used (deviation 20).
+   - If the state is **active** (`active: true`, including one handed over to you with `handoff_from`) and contains a finite numeric `threshold` and a non-empty `threshold_source` (at the top level or in `state`), use those values, set `<resolvedThreshold>`, `<resolvedThresholdPercent>`, and `<resolvedThresholdSource>`, and continue that interview. Never `start` over an active state: an active interview, including a handed-over one, is continued with `deep-interview write`, and only a new, unrelated request goes through the Phase 0.5 choice (deviation 13: only `start` seeds, and it replaces the state).
+   - If the state is **inactive on `interviewing`**, it is an interview the user cancelled. Before the threshold line, ask once with `question` whether to resume it, start a new interview, or clear it. To resume, call `deep-interview state(patch={"active": true})` and continue it as the active state above (deviation 30). A new interview continues with steps 2–3 and `deep-interview start`; clearing is `deep-interview clear`. Any other inactive state (a finished or handed-off interview) cannot be resumed, and its values are not used (deviation 20).
 2. **Otherwise, a threshold the user stated explicitly** for this interview wins: use it with the source `start(threshold)`, and pass it as `deep-interview start(idea, threshold)` in Phase 1.
 3. **Otherwise, use the resolved setting**: the `<open-gajae-runtime-settings>` block in your system prompt carries `deepInterview.ambiguityThreshold` and its `source` — `./.open-gajae/open-gajae.jsonc` (the project file, which beats the user file), `~/.open-gajae/open-gajae.jsonc` (the user file), or `default` (`0.05`). Do not read the settings files yourself (deviation 20).
    - Set these run variables exactly: `<resolvedThreshold>`, `<resolvedThresholdPercent>`, and `<resolvedThresholdSource>`.
@@ -546,7 +547,7 @@ Legitimate terminal conditions — the ONLY places the interview may stop or ask
 
 1. **Threshold + closure gates**: ambiguity ≤ the resolved threshold AND the Phase 4 closure audit and one-sentence Restate gate have passed. Then crystallize the spec and present the Phase 5 execution options.
 2. **Explicit user exit**: preserve the two exit-intent classes in any session language:
-   - **Hard cancellation**: "stop", "cancel", "abort", or equivalent stops immediately at any round and saves state for resume. Never turn a hard cancellation into a clarifying question.
+   - **Hard cancellation**: "stop", "cancel", "abort", or equivalent stops immediately at any round: call `deep-interview state(patch={"active": false})`, which keeps the rounds for a later resume and stops the plugin's continuation (deviation 30). Never turn a hard cancellation into a clarifying question.
    - **Early proceed**: "enough", "let's go", "build it", or equivalent stops with the early-exit warning from round 3+ when ambiguity > threshold. Before round 3, ask one targeted clarifying question about what the user wants changed instead; do not treat that early-proceed intent as a hard cancellation.
 3. **Invocation/resume suitability ambiguity only**: the Phase 0.5 continue/cancel/clear choice exists solely at the invocation boundary when existing state already contains rounds, topology, spec, or handoff metadata. It is never re-asked inside an active interview.
 4. **Bounded continuation safety recovery**: the 100-round hard cap ("Maximum interview rounds reached. Proceeding with current clarity level ({score}%).") or the plugin's continuation budget being exhausted (it resumes a stopped interview at most twice per user prompt, deviation 16). These are safety stops, not consent prompts.
@@ -887,9 +888,9 @@ Why bad: 45% ambiguity means nearly half the requirements are unclear. The mathe
 - **Hard cap at 100 rounds**: Proceed with whatever clarity exists, noting the risk
 - **Continuation contract**: ordinary answered rounds auto-continue to the next weakest-dimension question with no generic continue/cancel/clear question; stopping is reserved for threshold + closure gates, explicit user exit, invocation/resume suitability, or bounded safety recovery
 - **Early exit (round 3+)**: Allow with warning if ambiguity > threshold
-- **User says "stop", "cancel", "abort"**: Stop immediately, save state for resume
+- **User says "stop", "cancel", "abort"**: Stop immediately with `deep-interview state(patch={"active": false})`; the rounds stay for a resume (deviation 30)
 - **Ambiguity stalls** (same score +-0.05 for 3 rounds): Activate Ontologist mode to reframe
-- **All dimensions at 0.9+**: Skip to spec generation even if not at round minimum
+- **Ambiguity at or below the resolved threshold**: Go to the Phase 4 closure and restate gates even if not at round minimum (deviation 39)
 - **Codebase exploration fails**: Proceed as greenfield, note the limitation
 </Escalation_And_Stop_Conditions>
 
@@ -925,7 +926,7 @@ The value must be in (0, 1]; the default is `0.05`.
 
 ## Resume
 
-If interrupted, load `skill` `deep-interview` again. The skill resumes an active interview from its state via `deep-interview status` (Phase 0); do not read or edit `.open-gajae/_session-<created>-<id>/state` files directly.
+If interrupted, load `skill` `deep-interview` again. The skill resumes an active interview from its state via `deep-interview status` (Phase 0), and offers to resume a cancelled one with `deep-interview state(patch={"active": true})` (deviation 30); do not read or edit `.open-gajae/_session-<created>-<id>/state` files directly.
 
 ## Approval-Gated Pipeline: deep-interview → ralplan → pending approval
 
@@ -943,8 +944,7 @@ Vague prompt → ralplan gate → deep-interview (if extremely vague) → ralpla
 
 | Score Range | Meaning | Action |
 |-------------|---------|--------|
-| 0.0 - 0.1 | Crystal clear | Proceed immediately |
-| At or below the resolved threshold | Clear enough | Proceed |
+| At or below the resolved threshold | Clear enough | Proceed to the Phase 4 closure and restate gates (deviation 39) |
 | Above the resolved threshold with minor gaps | Some gaps | Continue interviewing |
 | Moderate ambiguity | Significant gaps | Focus on weakest dimensions |
 | High ambiguity | Very unclear | May need reframing (panel ontology escalation) |
@@ -986,6 +986,8 @@ Source: Gajae Code `packages/coding-agent/src/defaults/gjc/skills/deep-interview
 | "Replacing an already-scored answer for the same round … automatically marks that round's established facts as disputed" (the recorder's `disputeFactsFromRetractedRound`) | The model marks the contradicted facts disputed in the same `write`; the runtime floor then counts them | Deviation 3 |
 | Plain-text question detection (hook) | None; the plain-question rule stays in the text | Deviation 22 |
 | The runtime's continuation budget | Two continuations per user prompt by the plugin | Deviation 16 |
+| "stops immediately at any round and saves state for resume"; a later `write` reactivates the state | Cancel with `deep-interview state(patch={"active": false})`; resume an interview cancelled on `interviewing` with `deep-interview state(patch={"active": true})` after asking the user (Phase 0); writes stay refused while inactive | Deviation 30 |
+| "All dimensions at 0.9+: Skip to spec generation"; the "0.0 - 0.1 Crystal clear, Proceed immediately" row | Ambiguity at or below the resolved threshold leads to the Phase 4 closure and restate gates; the fixed 0.9/10% exits are removed | Deviation 39 |
 | Top-level transcript fields hoisted into `state` | Refused | Deviation 25 |
 | Phase 5 autoresearch option | Removed; "Finish here" (`deep-interview clear`) added | Deviation 10 |
 | `opus` model and temperature directives | Removed: models are host and user settings | Host contract |

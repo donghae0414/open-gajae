@@ -410,6 +410,11 @@ test("the deep-interview skill follows the gjc skill with its deviations marked"
     "then call `question` again with the exact original question and options",
     // Phase 0 (A-10).
     "Never `start` over an active state",
+    // Deviation 30 (review of 2026-10-03): cancel and resume.
+    'call `deep-interview state(patch={"active": false})`, which keeps the rounds for a later resume',
+    'To resume, call `deep-interview state(patch={"active": true})`',
+    // Deviation 39: the threshold and the gates are the only exit.
+    "**Ambiguity at or below the resolved threshold**: Go to the Phase 4 closure and restate gates",
   ])
     expect(`${required}: ${body.includes(required)}`).toBe(`${required}: true`);
   // PQ-22 D (C4-16): the Required line is the runtime's list.
@@ -433,6 +438,11 @@ test("the deep-interview skill follows the gjc skill with its deviations marked"
     "Refine Free-Text",
     "2b″",
     "Native Plugin Invocation Guard",
+    // Deviation 39: the fixed 0.9/10% exits conflicted with the threshold.
+    "All dimensions at 0.9+",
+    "| 0.0 - 0.1 |",
+    // Deviation 30: resume is an explicit call, not a side effect.
+    "saves state for resume",
   ])
     expect(`${forbidden}: ${body.includes(forbidden)}`).toBe(`${forbidden}: false`);
   expect(source).toContain("5c5231418930673e42cc5d08ebe4376e03187533");

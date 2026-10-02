@@ -161,14 +161,14 @@ deep-interview가 goal보다 먼저입니다. "활성 goal은 goal 경로만 탄
 
 ### 주입 문구
 
-`continuationMessage(count)`(`messages.ts:63-73`). gjc 알림을 `<deep-interview-continuation>`으로 감싸고 `ask` → `question`, 기록 명령 → `deep-interview write`로 바꿨습니다.
+`continuationMessage(count)`(`messages.ts:78-88`). gjc 알림을 `<deep-interview-continuation>`으로 감싸고 `ask` → `question`, 기록 명령 → `deep-interview write`로 바꿨으며, 마지막 줄에 취소 호출을 적었습니다(deep-interview 편차 16·30).
 
 ```
 <deep-interview-continuation>
 
 You stopped while the deep-interview workflow is still active (phase interviewing).
 Continue the active round immediately: score and persist the answered round with `deep-interview write`, report progress, then use the `question` tool for the next question.
-Only stop after crystallizing the spec, recording a handoff, or explicitly cancelling the workflow.
+Only stop after crystallizing the spec, recording a handoff, or explicitly cancelling the workflow (`deep-interview state(patch={"active": false})` when the user stops the interview).
 (Continuation 1/2 for this prompt)
 
 </deep-interview-continuation>
@@ -176,7 +176,7 @@ Only stop after crystallizing the spec, recording a handoff, or explicitly cance
 ---
 ```
 
-`session.synthetic({resume: true})`로 넣고(`inject`, `src/hooks.ts:430-442`), TUI 설명은 `open-gajae: deep-interview continuation 1/2`입니다(`continuationDescription`, `messages.ts:76-78`). `synthetic`이 실패하면 로그만 남깁니다.
+`session.synthetic({resume: true})`로 넣고(`inject`, `src/hooks.ts:430-442`), TUI 설명은 `open-gajae: deep-interview continuation 1/2`입니다(`continuationDescription`, `messages.ts:91-93`). `synthetic`이 실패하면 로그만 남깁니다.
 
 ### 결과 정리
 
@@ -195,6 +195,7 @@ Only stop after crystallizing the spec, recording a handoff, or explicitly cance
 
 - **agent를 보지 않습니다.** 세션의 agent를 다른 것으로 바꿔도 `interviewing`이면 continuation이 들어갑니다(goal continuation과 같음). 그 agent에게는 `deep-interview` 도구가 숨겨져 있어 `write`할 수 없습니다.
 - **패널을 background로 돌리지 말 것**: 자식 execution이 도는 동안은 continuation이 없으므로, SKILL Phase 3은 패널을 background로 돌리지 말라고 합니다([panel.md](panel.md)).
+- **사용자가 멈추면 취소합니다** (deep-interview 편차 30). "그만" 같은 hard cancel은 진짜 사용자 프롬프트라 횟수를 0으로 돌립니다. 모델이 상태를 활성으로 둔 채 턴을 끝내면 continuation이 두 번 다시 재촉합니다. SKILL은 이때 `deep-interview state(patch={"active": false})`를 부르라고 하고, 그러면 상태가 비활성이 되어 판단이 `none`이 됩니다. 재개(`{"active": true}`) 뒤에는 다시 들어갑니다(테스트 T11).
 - **`handoff`에서는 continuation이 없습니다** (K2). Phase 5에서 사용자 선택을 기다리는 동안 다시 밀지 않기 위함이고, "더 다듬기" 동안에도 마찬가지입니다.
 - **goal 문맥 주입은 계속됩니다** (K5). `context` 훅의 goal 문맥(`src/hooks.ts:1146-1180`)은 deep-interview를 보지 않습니다. hold가 멈추는 것은 goal **continuation**뿐입니다.
 
@@ -213,7 +214,7 @@ Only stop after crystallizing the spec, recording a handoff, or explicitly cance
 ### 조건과 내용 (`compactionText`, `src/deep-interview-runtime/hooks.ts:172-188`)
 
 - 조건은 continuation과 같은 `guardedPhaseTx`입니다: deep-interview가 보이는 주 skill이고, 활성이며, phase가 `interviewing`·`handoff`.
-- 내용은 `compactionMessage`(`messages.ts:95-108`)가 만듭니다. 값은 HUD와 같은 `deepInterviewHudFacts`에서 옵니다([state-and-files.md](state-and-files.md)).
+- 내용은 `compactionMessage`(`messages.ts:110-123`)가 만듭니다. 값은 HUD와 같은 `deepInterviewHudFacts`에서 옵니다([state-and-files.md](state-and-files.md)).
 
 ```
 <deep-interview-compaction-context>

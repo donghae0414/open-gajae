@@ -38,7 +38,16 @@ export function chainRefusal(phase: string, skill: string): string {
 
 /** Spec D-HL2 (deviation 12): `start` while ralplan or ultragoal is the visible primary. */
 export function startRefusal(skill: string, phase: string | undefined): string {
-  return `deep-interview start is refused while ${skill} is the active workflow${phase ? ` (phase ${phase})` : ""}. To interview from here: while ultragoal runs, call \`ultragoal handoff(to: "deep-interview", reason)\`; once ralplan has finished (final), call \`ralplan handoff(to: "deep-interview")\`; or stop ralplan first with \`ralplan state {"active": false}\` or \`ralplan clear\`, then start.`;
+  return otherWorkflowRefusal("deep-interview start is refused", skill, phase, "start");
+}
+
+/** Deviation 30: resuming a cancelled interview follows `start`'s rule (deviation 12). */
+export function resumeRefusal(skill: string, phase: string | undefined): string {
+  return otherWorkflowRefusal("deep-interview state: resuming the interview is refused", skill, phase, "resume");
+}
+
+function otherWorkflowRefusal(refused: string, skill: string, phase: string | undefined, then: string): string {
+  return `${refused} while ${skill} is the active workflow${phase ? ` (phase ${phase})` : ""}. To interview from here: while ultragoal runs, call \`ultragoal handoff(to: "deep-interview", reason)\`; once ralplan has finished (final), call \`ralplan handoff(to: "deep-interview")\`; or stop ralplan first with \`ralplan state {"active": false}\` or \`ralplan clear\`, then ${then}.`;
 }
 
 /** C-3: the ops that need an interview when there is none. */
@@ -51,8 +60,14 @@ export function corruptStateRefusal(op: string, error: string): string {
   return `deep-interview ${op}: the deep-interview state is corrupt or tampered (${error}); reset it with \`deep-interview clear\` and force: true.`;
 }
 
-/** C-3 (PQ-12 B′, deviation 30): `write`, `spec`, `handoff` and `state` need an active state. */
+/**
+ * C-3 (PQ-12 B′, deviation 30): `write`, `spec`, `handoff` and `state` need an
+ * active state. An inactive `interviewing` is a cancelled interview, which
+ * `state(patch={"active": true})` resumes.
+ */
 export function inactiveStateRefusal(op: string, phase: string | undefined): string {
+  if (phase === "interviewing")
+    return `deep-interview ${op}: the interview was cancelled (inactive, phase interviewing). Resume it with \`deep-interview state(patch={"active": true})\`, or start a new interview with \`deep-interview start\`.`;
   return `deep-interview ${op}: the interview is not active (phase ${phase ?? "(none)"}). Start a new interview with \`deep-interview start\`, or reopen it from a finished ralplan with \`ralplan handoff(to: "deep-interview")\`.`;
 }
 
@@ -66,7 +81,7 @@ export function continuationMessage(count: number): string {
     [
       "You stopped while the deep-interview workflow is still active (phase interviewing).",
       "Continue the active round immediately: score and persist the answered round with `deep-interview write`, report progress, then use the `question` tool for the next question.",
-      "Only stop after crystallizing the spec, recording a handoff, or explicitly cancelling the workflow.",
+      'Only stop after crystallizing the spec, recording a handoff, or explicitly cancelling the workflow (`deep-interview state(patch={"active": false})` when the user stops the interview).',
       `(Continuation ${count}/2 for this prompt)`,
     ].join("\n"),
   );

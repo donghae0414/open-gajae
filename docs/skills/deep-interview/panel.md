@@ -8,7 +8,7 @@
 |---|---|
 | 패널 역할 `open-gajae-lateral-reviewer`의 등록, 프롬프트, 권한, 도구 숨김, 모델 설정 | 코드 (`src/config.ts`, `src/hooks.ts`, `src/tools/permissions.ts`, `prompts/open-gajae-lateral-reviewer.md`) |
 | 패널 조각의 내용(persona 렌즈, 응답 JSON 꼴) | 조각 파일 `skills/deep-interview/lateral-review-panel.md` |
-| 언제 여는지(밴드 전이), 누구를 부르는지(persona), 결과를 어떻게 합치는지, 무엇을 기록하는지 | SKILL Phase 3(`skills/deep-interview/SKILL.md:556-593`)와 Internal_Panel_Fragment(`:75-82`) |
+| 언제 여는지(밴드 전이), 누구를 부르는지(persona), 결과를 어떻게 합치는지, 무엇을 기록하는지 | SKILL Phase 3(`skills/deep-interview/SKILL.md:557-594`)와 Internal_Panel_Fragment(`:75-82`) |
 
 ## 패널 역할 `open-gajae-lateral-reviewer`
 
@@ -95,7 +95,7 @@ SKILL Internal_Panel_Fragment(`SKILL.md:75-82`, deep-interview 편차 27):
 
 ## 언제 여나: 밴드 전이
 
-SKILL Phase 3(`SKILL.md:556-567`). 고정 라운드 번호가 아니라 모호도 밴드가 바뀔 때 엽니다.
+SKILL Phase 3(`SKILL.md:557-568`). 고정 라운드 번호가 아니라 모호도 밴드가 바뀔 때 엽니다.
 
 | 밴드 | 모호도 |
 |---|---|
@@ -110,7 +110,7 @@ SKILL Phase 3(`SKILL.md:556-567`). 고정 라운드 번호가 아니라 모호�
 
 ## persona
 
-SKILL Phase 3(`SKILL.md:569-579`).
+SKILL Phase 3(`SKILL.md:570-580`).
 
 | persona | 렌즈 | 언제 |
 |---|---|---|
@@ -125,7 +125,7 @@ SKILL Phase 3(`SKILL.md:569-579`).
 
 ## 결과 합치기
 
-SKILL Phase 3 "Folding findings"(`SKILL.md:571`)와 Internal_Panel_Fragment(`:79`):
+SKILL Phase 3 "Folding findings"(`SKILL.md:572`)와 Internal_Panel_Fragment(`:79`):
 
 - 응답마다 검증합니다: 필수 필드가 있는지, 요청한 꼴인지, `rationale`이 주어진 문맥을 인용하는지, `confidence`가 명시됐는지, 문맥 부족 fallback을 지켰는지.
 - 구체적이고 사용자에게 안전한 지적만 다음 **질문 하나**에 접어 넣습니다. 순위를 매긴 답 선택지 2~3개나 추천 초안 하나로 넣습니다.
@@ -135,17 +135,17 @@ SKILL Phase 3 "Folding findings"(`SKILL.md:571`)와 Internal_Panel_Fragment(`:79
 
 ## 기록
 
-SKILL Phase 3 "Bookkeeping"(`SKILL.md:581`), Step 2e(`:474`), Phase 1 초기화(`:181-182`):
+SKILL Phase 3 "Bookkeeping"(`SKILL.md:582`), Step 2e(`:475`), Phase 1 초기화(`:182-183`):
 
 - 연 패널마다 `state.lateral_reviews`에 라운드, 밴드 전이, 부른 persona, 접어 넣은 지적을 남깁니다.
 - 패널 실행, 조각 읽기, 응답 검증이 실패하면 조용히 평소 질문으로 돌아가고 `state.lateral_panel_failures`를 1 올립니다. 질문이 달라지지 않는 한 도구 잡음을 사용자에게 보이지 않습니다.
-- 스펙 메타데이터에 두 값(`Lateral Reviews`, `Lateral Panel Failures`)을 적습니다(SKILL Phase 4, `:631-632`).
+- 스펙 메타데이터에 두 값(`Lateral Reviews`, `Lateral Panel Failures`)을 적습니다(SKILL Phase 4, `:632-633`).
 
-두 필드는 런타임에게 자유 필드입니다. `write`가 `state` 안에서 얕게 병합하므로, `lateral_reviews` 배열을 보내면 **배열 전체가 바뀝니다**. 키로 병합하는 컬렉션은 `rounds`와 `established_facts`뿐입니다(SKILL `:537`). 그래서 새 항목을 더할 때는 기존 항목을 포함한 전체 배열을 보내야 합니다. 코드는 값의 모양이나 증가 여부를 보지 않습니다.
+두 필드는 런타임에게 자유 필드입니다. `write`가 `state` 안에서 얕게 병합하므로, `lateral_reviews` 배열을 보내면 **배열 전체가 바뀝니다**. 키로 병합하는 컬렉션은 `rounds`와 `established_facts`뿐입니다(SKILL `:538`). 그래서 새 항목을 더할 때는 기존 항목을 포함한 전체 배열을 보내야 합니다. 코드는 값의 모양이나 증가 여부를 보지 않습니다.
 
 ## advisory lane
 
-SKILL Phase 3 "Per-question advisory fanout lanes"(`SKILL.md:583-593`). 밴드 전이 패널과 별개로, 질문 하나를 만들 때 쓰는 가벼운 보조입니다. ouroboros의 `ooo interview`에서 가져왔습니다.
+SKILL Phase 3 "Per-question advisory fanout lanes"(`SKILL.md:584-594`). 밴드 전이 패널과 별개로, 질문 하나를 만들 때 쓰는 가벼운 보조입니다. ouroboros의 `ooo interview`에서 가져왔습니다.
 
 | lane | 하는 일 |
 |---|---|
@@ -157,7 +157,7 @@ SKILL Phase 3 "Per-question advisory fanout lanes"(`SKILL.md:583-593`). 밴드 �
 
 - **역할을 정하지 않습니다** (PQ-4 A, PQ-30 A; spec Errata E11). gjc처럼 SKILL이 lane의 역할을 적지 않고, 리더가 고릅니다. 읽기 전용 역할(`open-gajae-explore`, `open-gajae-document-specialist`, 패널 역할 등)을 쓸 수 있습니다.
 - **문맥은 프롬프트로**: OpenCode `subagent`는 부모 문맥을 물려받지 않으므로, 리더가 lane마다 필요한 문맥을 프롬프트에 넣습니다(deep-interview 편차 18).
-- 한 메시지의 병렬 `subagent` 호출로 돌리고, 패널처럼 background로 돌리지 않습니다(SKILL `:593`, 계획 DR-30). 자식 execution이 도는 동안에는 continuation이 멈추기 때문입니다.
+- 한 메시지의 병렬 `subagent` 호출로 돌리고, 패널처럼 background로 돌리지 않습니다(SKILL `:594`, 계획 DR-30). 자식 execution이 도는 동안에는 continuation이 멈추기 때문입니다.
 - 보조일 뿐입니다. 사용자에게 가는 질문 하나를 대신하거나 늦추지 않고, 두 번째 질문을 더하지 않으며, 사용자의 승인이나 수정 없이 만든 답을 넘기지 않습니다.
 - 같은 라운드에 패널과 lane이 모두 해당하면 패널을 열고, lane 결과도 같은 질문 하나에 접어 넣습니다.
 - lane이 실패하면 조용히 평소 질문으로 돌아갑니다. 기록 필드는 없습니다.

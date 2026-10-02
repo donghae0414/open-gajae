@@ -9,11 +9,13 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { createDeepInterviewHooks } from "../src/deep-interview-runtime/hooks";
 import {
   inactiveStateRefusal,
   noStateRefusal,
   handedOffToRalplan,
   handedOffToUltragoal,
+  resumeRefusal,
 } from "../src/deep-interview-runtime/messages";
 import type { DeepInterviewSettings, SeedRalplanTx } from "../src/deep-interview-runtime/store";
 import { DEEP_INTERVIEW_OPS, deepInterviewTool } from "../src/deep-interview-runtime/tool";
@@ -625,4 +627,46 @@ test("T10: ralplan final → ralplan handoff(to: deep-interview) reopens the int
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("T11: state {active:false} cancels and keeps the rounds; state {active:true} resumes only a cancelled interviewing (deviation 30)", async () => {
+  await fixture(async ({ store, call, run, json, exists, audit }) => {
+    const hooks = createDeepInterviewHooks(store);
+    await call({ op: "start", idea: "i" });
+    await writeRounds(call, scored(1), scored(2));
+    // Cancel: the rounds stay, the row goes, and the continuation stops.
+    expect(ok(await call({ op: "state", patch: { active: false } }))).toMatchObject({ active: false, current_phase: "interviewing" });
+    expect(await json("state", DI)).toMatchObject({ active: false, current_phase: "interviewing", state: { rounds: [scored(1), scored(2)] } });
+    expect(await exists("state", "active", "deep-interview.json")).toBe(false);
+    hooks.resetContinuation(ROOT);
+    expect((await hooks.decideContinuation(ROOT)).kind).toBe("none");
+    // While cancelled, write and any other patch are refused with the resume hint.
+    const hint = inactiveStateRefusal("write", "interviewing");
+    expect(hint).toContain('Resume it with `deep-interview state(patch={"active": true})`');
+    expect(await writeRounds(call, scored(3))).toBe(`Error: ${hint}`);
+    expect(await call({ op: "state", patch: { note: 1 } })).toBe(`Error: ${inactiveStateRefusal("state", "interviewing")}`);
+    // Resume is refused like start while ralplan is the visible primary (deviation 12).
+    await run((tx) => row(tx, { skill: "ralplan", active: true, phase: "planner" }));
+    expect(await call({ op: "state", patch: { active: true } })).toBe(`Error: ${resumeRefusal("ralplan", "planner")}`);
+    await run((tx) => tx.remove(tx.paths.activeRow("ralplan")));
+    // Resume: active again with its rounds, the row back, one audit row, and writes continue.
+    const before = (await audit()).length;
+    expect(ok(await call({ op: "state", patch: { active: true } }))).toMatchObject({ active: true, current_phase: "interviewing" });
+    expect(await json("state", "active", "deep-interview.json")).toMatchObject({ active: true, phase: "interviewing" });
+    expect((await audit()).slice(before).filter((a) => a.skill === "deep-interview" && a.category === "state" && a.verb === "write")).toHaveLength(1);
+    expect(ok(await writeRounds(call, scored(3)))).toMatchObject({ ok: true });
+    expect((await json("state", DI)).state.rounds.map((r: { round_key: string }) => r.round_key)).toEqual(["round-1", "round-2", "round-3"]);
+    expect((await hooks.decideContinuation(ROOT)).kind).toBe("continue");
+    // A finished interview is not resumed (E7).
+    await call({ op: "clear" });
+    expect(await call({ op: "state", patch: { active: true } })).toBe(`Error: ${inactiveStateRefusal("state", "complete")}`);
+  });
+  // A handed-off interview (inactive handoff) is not resumed either.
+  await fixture(async ({ call }) => {
+    await call({ op: "start", idea: "i" });
+    await writeRounds(call, scored(1));
+    await call({ op: "spec", content: "# s", slug: "t11" });
+    expect(await call({ op: "handoff", to: "ultragoal" })).toStartWith("Handed off to ultragoal");
+    expect(await call({ op: "state", patch: { active: true } })).toBe(`Error: ${inactiveStateRefusal("state", "handoff")}`);
+  });
 });

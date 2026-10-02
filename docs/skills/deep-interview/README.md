@@ -74,6 +74,12 @@ deep-interview는 모호한 요청을 한 번에 질문 하나씩 묻고, 답마
 [되돌아오기]
   ralplan handoff(to:"deep-interview") · ultragoal handoff(to:"deep-interview")
   → interviewing, 기존 필드 유지, 활성 행
+
+[취소와 재개]
+  사용자가 멈춤 → deep-interview state(patch={"active": false})
+                 비활성 interviewing, 라운드 유지, 행 삭제, 가드·continuation 멈춤
+  skill 다시 로드 → Phase 0이 재개·새로·지우기를 물음
+                 재개 → deep-interview state(patch={"active": true}) → write로 이어 감
 ```
 
 ## 문서 목록

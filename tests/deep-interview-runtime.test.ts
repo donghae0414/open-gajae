@@ -40,6 +40,7 @@ import {
   continuationDescription,
   continuationMessage,
   DEEP_INTERVIEW_MUTATION_BLOCK_MESSAGE,
+  resumeRefusal,
   startRefusal,
 } from "../src/deep-interview-runtime/messages";
 import { INJECTION_MARKERS } from "../src/injection";
@@ -333,12 +334,17 @@ test("RT11 messages: guard, chain refusal, start refusal's three ways, continuat
   expect(refusal).toContain("ralplan is the active workflow (phase architect)");
   for (const way of ['ultragoal handoff(to: "deep-interview", reason)', 'ralplan handoff(to: "deep-interview")', "ralplan clear"])
     expect(refusal).toContain(way);
+  // Deviation 30: resuming follows start's rule with the same three ways.
+  const resume = resumeRefusal("ultragoal", "active");
+  expect(resume).toStartWith("deep-interview state: resuming the interview is refused while ultragoal is the active workflow (phase active).");
+  expect(resume).toEndWith("then resume.");
   for (const count of [1, 2]) {
     const text = continuationMessage(count);
     expect(text).toStartWith("<deep-interview-continuation>");
     expect(text).toContain(`(Continuation ${count}/2 for this prompt)`);
     expect(text).toContain("`question`");
     expect(text).toContain("`deep-interview write`");
+    expect(text).toContain('`deep-interview state(patch={"active": false})` when the user stops the interview');
     expect(continuationDescription(count)).toBe(`open-gajae: deep-interview continuation ${count}/2`);
   }
   const compaction = compactionMessage({ phase: "interviewing", rounds: 3, ambiguity: 0.31, threshold: 0.05, target: "api", weakest: "criteria", specPath: "/s.md" });

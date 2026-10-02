@@ -34,7 +34,8 @@
 // is refused while ralplan or ultragoal is the visible primary), 19 (the
 // `state` op refuses runtime-owned fields), 20 (threshold source strings), 25
 // (no hoisting; top-level transcript fields refused), 30 (`write`, `spec`,
-// `handoff` and `state` need an active state), 34 (StateStore limits), 36
+// `handoff` and `state` need an active state; `state(patch={"active": true})`
+// resumes a cancelled interview), 34 (StateStore limits), 36
 // (the round-record check), 38 (`spec(…, handoff: "ralplan")` stands for
 // `--deliberate`; no `--force`).
 
@@ -89,6 +90,7 @@ import {
   handedOffToUltragoal,
   inactiveStateRefusal,
   noStateRefusal,
+  resumeRefusal,
   startRefusal,
 } from "./messages.js";
 
@@ -194,13 +196,27 @@ export async function readDeepInterviewStateTx(tx: WorkflowTx): Promise<StateRea
   }
 }
 
-/** C-3 (PQ-12 B′): the state of an op that needs an active interview. */
-async function activeStateTx(tx: WorkflowTx, op: string): Promise<Json> {
+/**
+ * C-3 (PQ-12 B′): the state of an op that needs an active interview. With
+ * `resume`, an interview cancelled on `interviewing` is taken too (deviation
+ * 30); a finished or handed-off one is not.
+ */
+async function activeStateTx(tx: WorkflowTx, op: string, resume = false): Promise<Json> {
   const read = await readDeepInterviewStateTx(tx);
   if (read.kind === "absent") throw new Error(noStateRefusal(op));
   if (read.kind === "corrupt") throw new Error(corruptStateRefusal(op, read.error));
-  if (read.value.active !== true) throw new Error(inactiveStateRefusal(op, trimmed(read.value.current_phase)));
+  const phase = trimmed(read.value.current_phase);
+  if (read.value.active !== true && !(resume && phase === DEEP_INTERVIEW_INITIAL_STATE))
+    throw new Error(inactiveStateRefusal(op, phase));
   return read.value;
+}
+
+/** D-HL2: the other workflow that is the visible primary; an unreadable row file does not count. */
+async function otherPrimaryTx(tx: WorkflowTx): Promise<{ skill: string; phase?: string } | undefined> {
+  const primary = await readVisiblePrimaryTx(tx).catch(() => undefined);
+  return primary?.skill === "ralplan" || primary?.skill === "ultragoal"
+    ? { skill: String(primary.skill), phase: trimmed(primary.phase) }
+    : undefined;
 }
 
 /**
@@ -291,9 +307,8 @@ export async function startTx(
     thresholdSource = START_THRESHOLD_SOURCE;
   }
   // D-HL2: only the rows decide; an unreadable row file does not refuse.
-  const primary = await readVisiblePrimaryTx(tx).catch(() => undefined);
-  if (primary?.skill === "ralplan" || primary?.skill === "ultragoal")
-    throw new Error(startRefusal(String(primary.skill), trimmed(primary.phase)));
+  const other = await otherPrimaryTx(tx);
+  if (other) throw new Error(startRefusal(other.skill, other.phase));
 
   const previous = await readDeepInterviewStateTx(tx);
   const at = now();
@@ -686,7 +701,12 @@ export async function patchStateTx(tx: WorkflowTx, root: string, patch: Json): P
     topLevelTranscriptError("state", payload, OWNED_FIELDS),
   ].filter((text): text is string => text !== undefined);
   if (refusals.length > 0) throw new Error(refusals.join("\n"));
-  const existing = await activeStateTx(tx, "state");
+  const existing = await activeStateTx(tx, "state", payload.active === true);
+  if (existing.active !== true) {
+    // Resuming a cancelled interview follows `start`'s D-HL2 rule (deviations 12, 30).
+    const other = await otherPrimaryTx(tx);
+    if (other) throw new Error(resumeRefusal(other.skill, other.phase));
+  }
   assertStructuredResponseWithinLimit(payload, "deep-interview state patch");
   const at = now();
   const mutationId = `${SKILL}:${at}`;

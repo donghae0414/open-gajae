@@ -19,15 +19,15 @@
 | K6 | 1 MiB / 깊이 10 / 최상위 키 100 한도. 아주 긴 인터뷰의 `write`가 실패하고 파일은 그대로 남는다 | `assertStatePayload`(`src/state.ts:163-166`)를 쓰기 전에 부름(계획 DR-31), deep-interview 편차 34 | 요약해서 줄이거나(DIPP-7) 스펙으로 넘어감 |
 | K7 | 결합 호출, `handoff(to:"ralplan")`, ralplan ↔ deep-interview 왕복은 기존 ralplan `run_id`를 다시 쓴다(옛 run 폴더, 반복 예산, `stage_n`이 이어짐). `handoff(to:"ralplan")`으로 넘겨받은 run은 옛 `task`를 지킨다 | `startRunTx`의 `run_id`(`src/ralplan-runtime/store.ts:925`), 인계의 필드 유지 병합(`src/skill-state/handoff.ts:230-240`); PQ-23 A, PQ-2 A; T5 | 새 run 폴더가 필요하면 첫 `ralplan write`에 새 `run_id` |
 | K8 | 라운드 필드는 모델이 쓴다. 모양은 검사하지만 내용은 검사하지 않는다 | `roundRecordErrors`(`manifest.ts:266-288`), deep-interview 편차 36; RT13 | 기록만 |
-| K9 | doctor의 낡은 행 안내는 `deep-interview clear`인데, 상태가 이미 `complete`인 낡은 행은 `clear(force: true)`가 필요하다 | doctor 안내(`src/skill-state/doctor.ts:166-167`), 낡음 판정(`store.ts:734-754`); spec E3 | `clear(force: true)` |
-| K10 | `spec(path)`: 경로 오타는 스펙 본문으로 저장된다. 디렉터리 경로도 그렇다. 프로젝트 밖 파일도 호스트 권한 확인 없이 읽는다 (gjc와 같음) | `resolveSpecContent`(`store.ts:421-432`); PQ-6 A; T4 | 되도록 `content`로 넘기고, `path`를 쓰면 결과 파일을 확인 |
-| K11 | 결합 호출의 뒤 단계가 실패하면 앞 단계의 결과가 남는다 | `specHandoffTx`(`store.ts:530-543`); PQ-18 A, DR-29; T5 | `status`로 확인하고 `deep-interview handoff(to:"ralplan")` |
+| K9 | doctor의 낡은 행 안내는 `deep-interview clear`인데, 상태가 이미 `complete`인 낡은 행은 `clear(force: true)`가 필요하다 | doctor 안내(`src/skill-state/doctor.ts:166-167`), 낡음 판정(`store.ts:754-774`); spec E3 | `clear(force: true)` |
+| K10 | `spec(path)`: 경로 오타는 스펙 본문으로 저장된다. 디렉터리 경로도 그렇다. 프로젝트 밖 파일도 호스트 권한 확인 없이 읽는다 (gjc와 같음) | `resolveSpecContent`(`store.ts:436-447`); PQ-6 A; T4 | 되도록 `content`로 넘기고, `path`를 쓰면 결과 파일을 확인 |
+| K11 | 결합 호출의 뒤 단계가 실패하면 앞 단계의 결과가 남는다 | `specHandoffTx`(`store.ts:545-558`); PQ-18 A, DR-29; T5 | `status`로 확인하고 `deep-interview handoff(to:"ralplan")` |
 | K12 | 결합 호출은 `ralplan start`의 ultragoal 거부를 거치지 않는다. ultragoal이 활성이면 ultragoal이 계속 보이는 주 skill이라 `skill ralplan`이 체인 가드에 막히고, `ultragoal handoff(to:"ralplan")`가 `handoff_from`을 바꾼다 | 시드가 `startRunTx`를 직접 부름(`src/tools.ts:61-62`), 순위(`rows.ts:51-55`); PQ-18 A | 기록만 (gjc와 같음) |
-| K13 | `write`는 `spec_*`를 바꿀 수 있고 `state`는 거부한다. 값이 실제 스펙과 어긋나면 넘기기가 거부된다 | 정리기가 `spec_*`를 지우지 않음(`envelope.ts:222-236`), `statePatchFieldError`(`manifest.ts:164-178`), `verifySpecTx`(`store.ts:554-574`); PQ-14 A; T6 | 다시 `spec` |
+| K13 | `write`는 `spec_*`를 바꿀 수 있고 `state`는 거부한다. 값이 실제 스펙과 어긋나면 넘기기가 거부된다 | 정리기가 `spec_*`를 지우지 않음(`envelope.ts:222-236`), `statePatchFieldError`(`manifest.ts:164-178`), `verifySpecTx`(`store.ts:569-589`); PQ-14 A; T6 | 다시 `spec` |
 | K14 | (해결) `ralplan start`가 활성 run을 거부하므로 게이트 넘기기 뒤 다시 시드되지 않는다. 옛 `task`는 남는다(K7) | `ralplanRunActiveRefusal`(`src/ralplan-runtime/tool.ts:73-78,197-198`); 관리자 답 K14 C, DR-39; RP3, RP4 | 없음 |
 | K15 | 같은 execution에서 로드한, 유효한 스펙을 가진 끝난 인터뷰는 이미 활성인 ralplan·ultragoal에도 연결되어 그것을 시작 phase(`planner`/`goal-planning`)로 되돌린다. ultragoal은 `create`까지 제품 편집을 거부하고, `create`는 `goals.json`을 덮어쓰며, 열린 goal은 계속 재촉한다 | `gateTx` release 분기(`src/deep-interview-runtime/hooks.ts:147-162`), 인계의 시작 phase(`handoff.ts:230-239`); PQ-36 C; H3 | 받아들인 결과(PQ-36 C). 피하려면 다음 skill을 새 execution에서 로드 |
 | K16 | 설정 최상위 key 검사에는 자동 테스트가 없다 | `src/config.ts:86`; PQ-39 A | 기록만 |
-| K17 | `write(reset)`은 빈 기준에서 다시 만들어 기준치·`spec_*`·`handoff_*`를 지운다. reset 입력에 `threshold`·`threshold_source`가 없으면 HUD와 압축 문맥에서 기준치가 사라진다 | `writeTx`의 `reset`(`store.ts:362`); PQ-13 A; T3 | reset 입력의 `state`에 기준치 두 필드를 넣음 |
+| K17 | `write(reset)`은 빈 기준에서 다시 만들어 기준치·`spec_*`·`handoff_*`를 지운다. reset 입력에 `threshold`·`threshold_source`가 없으면 HUD와 압축 문맥에서 기준치가 사라진다 | `writeTx`의 `reset`(`store.ts:377`); PQ-13 A; T3 | reset 입력의 `state`에 기준치 두 필드를 넣음 |
 
 ## 항목별 설명
 
@@ -130,4 +130,5 @@
 ### 기준치 gate는 SKILL의 판단
 
 - SKILL은 모호도가 기준치 이하이고 closure·restate gate를 지난 뒤에만 스펙을 쓰라고 합니다(DIPP-9, Phase 4). 조기 종료(3라운드부터 경고와 함께)와 100라운드 상한도 SKILL의 규칙입니다.
-- `spec`(`store.ts:453-516`)은 활성 상태만 요구하고 `current_ambiguity`와 `threshold`를 비교하지 않습니다. 넘기기도 phase와 스펙 sha256만 봅니다. gjc에도 코드 gate가 없습니다.
+- gjc에서 물려받은 고정 종료 문장 둘("All dimensions at 0.9+: Skip to spec generation", 해석 표의 "0.0 - 0.1 … Proceed immediately")은 이 규칙과 충돌해 지웠습니다(deep-interview 편차 39). 두 공식의 가중치 합이 1.0이라 모든 점수가 0.9면 모호도가 10%로, 기본 기준치 5%보다 큽니다.
+- `spec`(`store.ts:468-531`)은 활성 상태만 요구하고 `current_ambiguity`와 `threshold`를 비교하지 않습니다. 넘기기도 phase와 스펙 sha256만 봅니다. gjc에도 코드 gate가 없습니다.

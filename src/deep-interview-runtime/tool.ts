@@ -115,7 +115,7 @@ export function deepInterviewTool(store: StateStore, deps: DeepInterviewToolDeps
     name: "deep-interview",
     permission: "deep-interview",
     description:
-      "This is the deep-interview state tool, not the skill: load the `deep-interview` skill to run an interview. Ops: start (seed this session's interview), write (merge rounds, facts and context; ambiguity is derived), spec (persist the final spec; handoff: ralplan also seeds ralplan and hands off), handoff (to ralplan or ultragoal after the spec), status, doctor, state (merge patch; phases follow the table), clear. The only way to change deep-interview state and specs.",
+      "This is the deep-interview state tool, not the skill: load the `deep-interview` skill to run an interview. Ops: start (seed this session's interview), write (merge rounds, facts and context; ambiguity is derived), spec (persist the final spec; handoff: ralplan also seeds ralplan and hands off), handoff (to ralplan or ultragoal after the spec), status, doctor, state (merge patch; phases follow the table; {\"active\": false} cancels the interview and {\"active\": true} resumes a cancelled one), clear. The only way to change deep-interview state and specs.",
     input,
     async execute(args: Args, context) {
       const owner = await ownerSession(context);
