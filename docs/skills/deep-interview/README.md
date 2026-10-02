@@ -8,7 +8,7 @@
 다른 문서와는 이렇게 나뉩니다.
 
 - **정책**: `AGENTS.md`와 루트 `README.md`가 정합니다. GJC와 다른 점은 루트 README의 "Deviations from GJC (deep-interview)" 표에 있습니다. 이 폴더에서 "deep-interview 편차 N"은 그 표의 번호입니다.
-- **결정 기록**: spec `.omc/specs/deep-interview-deep-interview-gjc-revision.md`(Errata E1–E16이 본문보다 우선), 계획 `.omc/plans/ralplan-deep-interview-gjc-revision.md`, 결정 모음 `.omc/plans/deep-interview-gjc-pq-decisions.md`.
+- **결정 기록**: spec `.omc/specs/deep-interview-deep-interview-gjc-revision.md`(Errata E1–E19이 본문보다 우선), 계획 `.omc/plans/ralplan-deep-interview-gjc-revision.md`, 결정 모음 `.omc/plans/deep-interview-gjc-pq-decisions.md`.
 - **이 폴더**: 현재 구현만 적습니다. 결정 ID(`DR-…`, `C-…`, `PQ-…`, `K…`)는 근거를 찾아갈 수 있게 달아 둡니다. 결정 기록과 코드가 다르면 코드가 기준입니다.
 
 ## deep-interview가 하는 일

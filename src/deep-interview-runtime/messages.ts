@@ -37,7 +37,7 @@ export function specGuardRefusal(shown: string): string {
  */
 export function chainRefusal(phase: string, skill: string, cancelled = false): string {
   if (cancelled)
-    return `open-gajae: refusing to chain from "deep-interview" (phase=${phase}, cancelled) into "${skill}". The interview was cancelled: clear it with deep-interview clear first, or resume it with deep-interview state(patch={"active": true}).`;
+    return `open-gajae: refusing to chain from "deep-interview" (phase=${phase}, cancelled) into "${skill}". The interview was cancelled: clear it with deep-interview clear first, or resume the interview instead with deep-interview state(patch={"active": true}).`;
   return `open-gajae: refusing to chain from "deep-interview" (phase=${phase}) into "${skill}". Persist the spec with deep-interview spec, then call deep-interview handoff(to: "${skill}"), or clear the interview first.`;
 }
 

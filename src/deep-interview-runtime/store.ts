@@ -85,11 +85,11 @@ import {
   statePatchFieldError,
 } from "./manifest.js";
 import {
+  alreadyCancelledRefusal,
   corruptStateRefusal,
   handedOffToRalplan,
   handedOffToUltragoal,
   inactiveStateRefusal,
-  alreadyCancelledRefusal,
   noStateRefusal,
   resumeRefusal,
   startRefusal,

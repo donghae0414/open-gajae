@@ -91,7 +91,7 @@ When deep-interview detects its own current-session state is corrupt, tampered, 
 
 ## Phase 0: Resolve Ambiguity Threshold (blocking prerequisite)
 
-Complete this phase before Phase 1, before brownfield exploration, before state persistence (the resume call in step 1 is the one exception), before Round 0, and before any ambiguity scoring. Do not continue if the resolved threshold and source are unknown.
+Complete this phase before Phase 1, before brownfield exploration, before state persistence (the step-1 resume or clear call is the exception), before Round 0, and before any ambiguity scoring. Do not continue if the resolved threshold and source are unknown.
 
 1. **Prefer an active interview's state**:
    - First inspect the deep-interview state with `deep-interview status`.
@@ -549,7 +549,7 @@ Legitimate terminal conditions — the ONLY places the interview may stop or ask
 2. **Explicit user exit**: preserve the two exit-intent classes in any session language:
    - **Hard cancellation**: "stop", "cancel", "abort", or equivalent stops immediately at any round. On `interviewing`, call `deep-interview state(patch={"active": false})`, which keeps the rounds for a later resume and stops the plugin's continuation; after the spec (phase `handoff`), call `deep-interview clear`, as Finish here does: the spec files stay and the interview is not resumable; before `deep-interview start` there is nothing to cancel (deviation 30). Never turn a hard cancellation into a clarifying question.
    - **Early proceed**: "enough", "let's go", "build it", or equivalent stops with the early-exit warning from round 3+ when ambiguity > threshold. Before round 3, ask one targeted clarifying question about what the user wants changed instead; do not treat that early-proceed intent as a hard cancellation.
-3. **Invocation/resume suitability ambiguity only**: the Phase 0 resume/new/clear choice for a cancelled interview and the Phase 0.5 continue/cancel/clear choice exist solely at the invocation boundary when existing state already contains rounds, topology, spec, or handoff metadata. It is never re-asked inside an active interview.
+3. **Invocation/resume suitability ambiguity only**: the Phase 0 resume/new/clear choice for a cancelled interview and the Phase 0.5 continue/cancel/clear choice (when existing state already contains rounds, topology, spec, or handoff metadata) exist solely at the invocation boundary. Neither is re-asked inside an active interview.
 4. **Bounded continuation safety recovery**: the 100-round hard cap ("Maximum interview rounds reached. Proceeding with current clarity level ({score}%).") or the plugin's continuation budget being exhausted (it resumes a stopped interview at most twice per user prompt, deviation 16). These are safety stops, not consent prompts.
 
 The user always keeps passive exit control: any answer, option, or free-text reply can carry an exit intent. Hard cancellations are honored immediately; early-proceed intents follow their round-3 safety rule above. Depth control comes from answering the questions themselves or exiting explicitly — not from per-round continue? interruptions.

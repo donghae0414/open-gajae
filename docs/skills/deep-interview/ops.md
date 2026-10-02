@@ -38,7 +38,7 @@
 **모델이 보는 설명** (`tool.ts:117-118`):
 
 ```
-This is the deep-interview state tool, not the skill: load the `deep-interview` skill to run an interview. Ops: start (seed this session's interview), write (merge rounds, facts and context; ambiguity is derived), spec (persist the final spec; handoff: ralplan also seeds ralplan and hands off), handoff (to ralplan or ultragoal after the spec), status, doctor, state (merge patch; phases follow the table; {"active": false} cancels the interview and {"active": true} resumes a cancelled one), clear. The only way to change deep-interview state and specs.
+This is the deep-interview state tool, not the skill: load the `deep-interview` skill to run an interview. Ops: start (seed this session's interview), write (merge rounds, facts and context; ambiguity is derived), spec (persist the final spec; handoff: ralplan also seeds ralplan and hands off), handoff (to ralplan or ultragoal after the spec), status, doctor, state (merge patch; phases follow the table; {"active": false} cancels an interview on interviewing (after the spec use clear) and {"active": true} resumes a cancelled one), clear. The only way to change deep-interview state and specs.
 ```
 
 **op 목록**: `DEEP_INTERVIEW_OPS`(`tool.ts:44`)가 spec 순서대로 8개를 정합니다. 스키마를 거치지 않고 들어온 다른 이름은 `switch` 끝에서 `unknown op <op>`로 거부됩니다(`tool.ts:162`).
