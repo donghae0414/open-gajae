@@ -531,6 +531,10 @@ test("ralplan skill keeps the consensus contract and offers ultragoal as its onl
     "its active row stays as an inactive `handoff_to` row",
     // PQ-21 A: the turn gate hands off only within the same execution.
     "performs this handoff itself",
+    // Deep-interview revision plan DR-39 (ralplan deviation 39).
+    "When no ralplan run is active, `run_id` defaults to the existing state's `run_id`",
+    "A ralplan run that is already active (including one handed over to you) refuses `start`: continue it with `ralplan write`, or stop it first",
+    "39 (the active-run refusal)",
     // Deep-interview revision plan D-SH5 and PQ-35 A.
     'ralplan handoff(to="deep-interview")',
     "If the ralplan state shows `handoff_from: \"deep-interview\"` and you did not see the handoff's result line, read the spec at `deep-interview status`'s `spec_path`",

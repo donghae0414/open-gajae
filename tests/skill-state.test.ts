@@ -194,7 +194,7 @@ test("handoff ultragoal → deep-interview: phase interviewing, fields kept, an 
   await fixture(async ({ run, json, audit }) => {
     await run(async (tx) => {
       await tx.writeModeState("ultragoal", { skill: "ultragoal", active: true, current_phase: "active" }, "ultragoal_tool");
-      await tx.writeModeState("deep-interview", { active: false, current_phase: "complete", state: { rounds: [{ round_key: "round-1" }] } }, "state_write_tool");
+      await tx.writeModeState("deep-interview", { active: false, current_phase: "complete", state: { rounds: [{ round_key: "round-1" }] } }, "deep_interview_tool");
     });
     await run((tx) => handoffWorkflowTx(tx, { caller: "ultragoal", callee: "deep-interview", sessionId: S, owner: RUNTIME_OWNER, reason: "clarify" }));
     expect(await json("state", "deep-interview-state.json")).toMatchObject({

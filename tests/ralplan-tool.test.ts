@@ -7,7 +7,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Settings } from "../src/config";
-import { RALPLAN_ACTIVATION_REFUSAL } from "../src/ralplan-runtime/tool";
+import { RALPLAN_ACTIVATION_REFUSAL, ralplanRunActiveRefusal } from "../src/ralplan-runtime/tool";
 import { StateStore } from "../src/state";
 import { createTools } from "../src/tools";
 
@@ -412,7 +412,7 @@ test("handoff needs a finished phase, then the journaled handoff: an inactive ha
 });
 
 test("handoff refuses an inactive ralplan after Stop here, clear or a handoff; an unfinished one still needs final (R-OD18)", async () => {
-  await fixture(async ({ call, write, json, store }) => {
+  await fixture(async ({ call, write, json, file }) => {
     await call({ op: "start", task: "t" });
     await call({ op: "state", patch: { active: false } });
     expect(await call({ op: "handoff", to: "ultragoal" })).toContain("Record the final plan first");
@@ -422,7 +422,7 @@ test("handoff refuses an inactive ralplan after Stop here, clear or a handoff; a
     expect(stopped).toContain("ralplan is not active (phase final)");
     expect(stopped).toContain("load the `ultragoal` skill, then call `ultragoal create` with the plan's goals (the approved plan: ");
     expect(await json("state", "ralplan-state.json")).toMatchObject({ active: false, current_phase: "final" });
-    expect(await store.read(ROOT, "ultragoal")).toBeUndefined();
+    expect(await Bun.file(file("state", "ultragoal-state.json")).exists()).toBe(false);
     await call({ op: "state", patch: { active: true } });
     expect(await call({ op: "handoff", to: "ultragoal" })).toContain("Handed off to ultragoal");
     expect(await call({ op: "handoff", to: "ultragoal" })).toContain("already handed off");
@@ -521,5 +521,57 @@ test("RP5: a corrupt ralplan state refuses start with the corrupt-state message 
     expect(result).toStartWith("Error: existing ralplan state is corrupt or tampered (");
     expect(result).toContain("Reset it with `ralplan clear` and force: true.");
     expect(await readFile(file("state", "ralplan-state.json"), "utf8")).toBe("{ corrupt");
+  });
+});
+
+// Deep-interview revision plan DR-39 (K14 C, U4-1 A; ralplan deviation 39):
+// `ralplan start` refuses over an active run and changes nothing.
+test("RP3: start over an active run is refused by its state file, row or not, and leaves every file as it was", async () => {
+  await fixture(async ({ call, write, file, store }) => {
+    await call({ op: "start", task: "t" });
+    await write("planner", 1, "# p\n");
+    await call({ op: "state", patch: { current_phase: "architect" } });
+    const files = async () => {
+      const out: Record<string, string> = {};
+      for (const name of ["ralplan-state.json", "audit.jsonl", "skill-active-state.json"])
+        out[name] = await readFile(file("state", name), "utf8");
+      out.row = await readFile(file("state", "active", "ralplan.json"), "utf8").catch(() => "");
+      return out;
+    };
+    const before = await files();
+    const expected = `Error: ${ralplanRunActiveRefusal({ run_id: ROOT, current_phase: "architect" })}`;
+    expect(expected).toBe(
+      `Error: ralplan run ${ROOT} is already active (phase architect); continue it with ralplan write. To plan anew, stop it first with ralplan state {"active": false} or ralplan clear.`,
+    );
+    expect(await call({ op: "start", task: "again" })).toBe(expected);
+    expect(await call({ op: "start", task: "again", run_id: "fresh" })).toBe(expected);
+    expect(await files()).toEqual(before);
+    // U4-1 A: the state file decides; a missing row does not let start through.
+    await store.workflowTransaction(ROOT, (tx) => tx.remove(tx.paths.activeRow("ralplan")));
+    expect(await call({ op: "start", task: "again" })).toBe(expected);
+    // Stopping the run lets a new plan start.
+    await call({ op: "state", patch: { active: false } });
+    expect(JSON.parse(await call({ op: "start", task: "again", run_id: "fresh" }))).toMatchObject({ ok: true, run_id: "fresh" });
+  });
+});
+
+test("RP4: a run handed over to ralplan refuses start and keeps its lineage; a running ultragoal is refused first", async () => {
+  await fixture(async ({ call, json, store }) => {
+    await store.workflowTransaction(ROOT, (tx) =>
+      tx.writeModeState("ultragoal", { skill: "ultragoal", active: true, current_phase: "active", version: 2 }, "ultragoal_tool"),
+    );
+    // With both active, the ultragoal refusal comes first (E-15).
+    await store.workflowTransaction(ROOT, (tx) =>
+      tx.writeState({ skill: "ralplan", active: true, current_phase: "planner", run_id: "r1", handoff_from: "ultragoal", version: 2 }, "ralplan_tool"),
+    );
+    expect(await call({ op: "start", task: "t" })).toBe(`Error: ${RALPLAN_ACTIVATION_REFUSAL}`);
+    // Without the ultragoal, the handed-over run refuses with its lineage.
+    await store.workflowTransaction(ROOT, (tx) =>
+      tx.writeModeState("ultragoal", { skill: "ultragoal", active: false, current_phase: "handoff", version: 2 }, "ultragoal_tool"),
+    );
+    expect(await call({ op: "start", task: "t" })).toBe(
+      'Error: ralplan run r1 is already active (phase planner, handed over from ultragoal); continue it with ralplan write. To plan anew, stop it first with ralplan state {"active": false} or ralplan clear.',
+    );
+    expect(await json("state", "ralplan-state.json")).toMatchObject({ active: true, run_id: "r1", handoff_from: "ultragoal" });
   });
 });

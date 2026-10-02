@@ -17,7 +17,6 @@ import {
   DEEP_INTERVIEW_MODE,
   RALPLAN_MODE,
   StateStore,
-  type ExplicitStatePatch,
   type StateMode,
 } from "../src/state";
 
@@ -167,11 +166,8 @@ const nextCall = () => `call-${(callCounter += 1)}`;
 const skillCall = (hooks: RalplanHooks, sessionID: string, input: unknown) =>
   hooks.executeBefore({ tool: "skill", sessionID, id: nextCall(), input });
 
-const seed = (store: StateStore, sessionID: string, patch: ExplicitStatePatch) =>
-  store.patch(sessionID, patch, RALPLAN_MODE);
-
 const raw = async (store: StateStore, sessionID: string) =>
-  readFile(await store.statePath(sessionID, RALPLAN_MODE), "utf8");
+  readFile(join(await store.resolveSessionDir(sessionID), "state", "ralplan-state.json"), "utf8");
 
 async function missing(
   store: StateStore,
@@ -179,10 +175,16 @@ async function missing(
   mode: StateMode = RALPLAN_MODE,
 ) {
   return fs
-    .lstat(await store.statePath(sessionID, mode))
+    .lstat(join(await store.resolveSessionDir(sessionID), "state", `${mode}-state.json`))
     .then(() => false)
     .catch(() => true);
 }
+
+/** A mode-state file read straight from disk, or `undefined`. */
+const stateOf = async (store: StateStore, sessionID: string, mode: StateMode) =>
+  readFile(join(await store.resolveSessionDir(sessionID), "state", `${mode}-state.json`), "utf8")
+    .then((text) => JSON.parse(text))
+    .catch(() => undefined);
 
 /** Neither mode left a state file behind. */
 async function noState(store: StateStore, sessionID: string) {
@@ -254,7 +256,7 @@ test("a corrupt state file stays byte-identical; the prompt and skill hooks reso
   await fixture(async (context) => {
     const { store, hooks } = context;
     const id = nextSession("corrupt");
-    const file = await store.statePath(id, RALPLAN_MODE);
+    const file = join(await store.resolveSessionDir(id), "state", "ralplan-state.json");
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, "{", "utf8");
 
@@ -392,9 +394,8 @@ test("a store error inside the prompt hook or the skill call resolves", async ()
     const failing = async () => {
       throw new Error("disk full");
     };
-    store.read = failing as StateStore["read"];
-    store.patch = failing as StateStore["patch"];
-    store.clear = failing as StateStore["clear"];
+    store.workflowTransaction = failing as StateStore["workflowTransaction"];
+    store.ralplanTransaction = failing as StateStore["ralplanTransaction"];
     await expect(
       hooks.prompt({ sessionID: id, prompt: { text: "랄플랜 정리해줘" } }),
     ).resolves.toBeUndefined();
@@ -531,7 +532,7 @@ test("a succeeded execution writes one resumed continuation and counts it in the
     const file = await counter(store, id);
     expect(Object.keys(file).sort()).toEqual(["breaker_count", "breaker_updated_at", "run_id"]);
     expect(file).toMatchObject({ run_id: "run-1", breaker_count: 1 });
-    const state = await store.read(id, RALPLAN_MODE);
+    const state = await stateOf(store, id, RALPLAN_MODE);
     expect(state?.active).toBe(true);
     for (const key of ["breaker_count", "breaker_updated_at", "started_at", "restored_at"])
       expect(state).not.toHaveProperty(key);
@@ -578,7 +579,7 @@ test("the thirty-first succeeded trips the circuit breaker: active false through
     expect(texts[30]).toContain("[RALPLAN CIRCUIT BREAKER]");
     expect(texts[30]).not.toContain("REINFORCEMENT");
 
-    const state = await store.read(id, RALPLAN_MODE);
+    const state = await stateOf(store, id, RALPLAN_MODE);
     expect(state).toMatchObject({ active: false, current_phase: "planner" });
     for (const key of ["deactivated_reason", "completed_at", "breaker_count"])
       expect(state).not.toHaveProperty(key);
@@ -590,7 +591,7 @@ test("the thirty-first succeeded trips the circuit breaker: active false through
       .map((line) => JSON.parse(line))
       .filter((row) => String(row.mutation_id).includes("breaker-exhausted"));
     expect(audit).toHaveLength(1);
-    expect(audit[0]).toMatchObject({ owner: "open-gajae-hook", paths: [await store.statePath(id, RALPLAN_MODE)] });
+    expect(audit[0]).toMatchObject({ owner: "open-gajae-hook", paths: [join(await store.resolveSessionDir(id), "state", "ralplan-state.json")] });
 
     // A deactivated state is inert on the next succeeded.
     await succeeded(hooks, id);
@@ -657,7 +658,7 @@ test("a user or shutdown interrupt stops continuation until a real prompt (Q9)",
       await succeeded(hooks, id);
       expect(continuations(context)).toHaveLength(0);
       expect(await counter(store, id)).toBeUndefined();
-      expect((await store.read(id, RALPLAN_MODE))?.active).toBe(true);
+      expect((await stateOf(store, id, RALPLAN_MODE))?.active).toBe(true);
 
       // A marker-only prompt (the Q3 fallback shape) does not lift the mark.
       await notices(context, id, `x\n\n${continuationMessage(1)}`);
@@ -808,7 +809,7 @@ test("a corrupt state file does not continue and stays byte-identical", async ()
   await fixture(async (context) => {
     const { store, hooks } = context;
     const id = nextSession("corrupt-event");
-    const file = await store.statePath(id, RALPLAN_MODE);
+    const file = join(await store.resolveSessionDir(id), "state", "ralplan-state.json");
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, "{", "utf8");
     await succeeded(hooks, id);
@@ -1090,7 +1091,7 @@ import {
 import { buildCompletionVerification } from "../src/ultragoal-runtime/receipt";
 
 const UG = "ultragoal" as const;
-const ugState = (store: StateStore, id: string) => store.read(id, UG);
+const ugState = (store: StateStore, id: string) => stateOf(store, id, UG);
 
 /** The `ralplan`, `ultragoal`, `goal` and `deep-interview` tools as the primary, over the fixture's hook lineage. */
 function tools(context: Fixture) {
@@ -1176,7 +1177,7 @@ test("(c) clear, then a write on the same run, leaves it finished: edits pass, n
     expect((await toolCall(hooks, id, "edit", { path: join(root, "src/x.ts") })).input).toEqual({});
     await ralplan(id, { op: "clear" });
     expect(await ralplan(id, { op: "write", stage: "planner", stage_n: 1, content: "# p\n" })).not.toStartWith("Error:");
-    const state = await store.read(id, RALPLAN_MODE);
+    const state = await stateOf(store, id, RALPLAN_MODE);
     expect(state).toMatchObject({ active: false, current_phase: "complete" });
     expect((await toolCall(hooks, id, "edit", { path: join(root, "src/x.ts") })).input).not.toEqual({});
     await succeeded(hooks, id);
@@ -1206,7 +1207,9 @@ test("(e) a legacy ralplan state is unreadable: no guard, no continuation, `skil
   await fixture(async (context) => {
     const { root, store, hooks } = context;
     const id = nextSession("e");
-    await seed(store, id, { active: true, current_phase: "ralplan" });
+    await store.workflowTransaction(id, (tx) =>
+      tx.writeModeState("ralplan", { active: true, current_phase: "ralplan" }, "ralplan_hook"),
+    );
     const before = await raw(store, id);
     expect((await toolCall(hooks, id, "edit", { path: join(root, "src/x.ts") })).input).not.toEqual({});
     await succeeded(hooks, id);
@@ -1479,7 +1482,7 @@ test("(F) while ultragoal is the visible primary, `skill ralplan` and `skill dee
     expect(((await failed(hooks, refused)).error as ToolError).message).toBe(ultragoalChainRefusal("pending", "ralplan"));
     await ultragoal(id, { op: "handoff", to: "ralplan", reason: "the plan needs a new design" });
     expect((await load(hooks, id, "ralplan")).input).toEqual({ id: "ralplan" });
-    expect(await store.read(id, RALPLAN_MODE)).toMatchObject({ active: true, current_phase: "planner", handoff_from: "ultragoal" });
+    expect(await stateOf(store, id, RALPLAN_MODE)).toMatchObject({ active: true, current_phase: "planner", handoff_from: "ultragoal" });
   });
 });
 
@@ -1504,7 +1507,7 @@ test("(G) goal-planning refuses product edits outside a temp path; the ralplan g
       }
       await ultragoal(id, { op: "create", description: "ship", goals: GOALS });
       // Ralplan is still active on planner, but not the primary: no guard.
-      expect(await store.read(id, RALPLAN_MODE)).toMatchObject({ active: true, current_phase: "planner" });
+      expect(await stateOf(store, id, RALPLAN_MODE)).toMatchObject({ active: true, current_phase: "planner" });
       for (const session of [id, child])
         expect((await writeCall(hooks, session, join(root, "src/x.ts"))).input).not.toEqual({});
     },
@@ -1535,7 +1538,7 @@ test("(H) the keyword and mention only notify; `skill ultragoal` seeds goal-plan
     expect(await activeRow(store, id, UG)).toMatchObject({ active: true, phase: "goal-planning", hud: { version: 1 } });
     expect(await activeRow(store, id, "ralplan")).toBeUndefined();
     expect(await activeRow(store, id, "deep-interview")).toBeUndefined();
-    expect(await store.read(id, RALPLAN_MODE)).toMatchObject({ active: true, current_phase: "planner" });
+    expect(await stateOf(store, id, RALPLAN_MODE)).toMatchObject({ active: true, current_phase: "planner" });
     const snapshot = JSON.parse(await readFile(join(await store.resolveSessionDir(id), "state", "skill-active-state.json"), "utf8"));
     expect(snapshot).toMatchObject({ skill: "ultragoal", phase: "goal-planning" });
 
@@ -1570,7 +1573,7 @@ test("(I) the turn gate hands off only within the execution that loaded ralplan 
     await finished(same);
     expect((await load(hooks, same, "ralplan")).input).toEqual({ id: "ralplan" });
     expect((await load(hooks, same)).input).toEqual({ id: "ultragoal" });
-    expect(await store.read(same, RALPLAN_MODE)).toMatchObject({ active: false, current_phase: "handoff", handoff_to: "ultragoal" });
+    expect(await stateOf(store, same, RALPLAN_MODE)).toMatchObject({ active: false, current_phase: "handoff", handoff_to: "ultragoal" });
     expect(await activeRow(store, same, "ralplan")).toMatchObject({ active: false, handoff_to: "ultragoal" });
     expect(await ugState(store, same)).toMatchObject({ active: true, current_phase: "goal-planning", handoff_from: "ralplan" });
 
@@ -1579,7 +1582,7 @@ test("(I) the turn gate hands off only within the execution that loaded ralplan 
     await finished(mentioned);
     await notices(context, mentioned, "run it", { skills: ["ralplan"] });
     await load(hooks, mentioned);
-    expect(await store.read(mentioned, RALPLAN_MODE)).toMatchObject({ active: false, current_phase: "handoff" });
+    expect(await stateOf(store, mentioned, RALPLAN_MODE)).toMatchObject({ active: false, current_phase: "handoff" });
 
     // Any execution end clears the marker first: the next load enters directly.
     for (const [type, data] of [
@@ -1592,7 +1595,7 @@ test("(I) the turn gate hands off only within the execution that loaded ralplan 
       await load(hooks, id, "ralplan");
       await emit(hooks, type, id, data);
       await load(hooks, id);
-      expect(await store.read(id, RALPLAN_MODE)).toMatchObject({ active: true, current_phase: "final" });
+      expect(await stateOf(store, id, RALPLAN_MODE)).toMatchObject({ active: true, current_phase: "final" });
       expect(await activeRow(store, id, "ralplan")).toBeUndefined();
       const state = await ugState(store, id);
       expect(state).toMatchObject({ active: true, current_phase: "goal-planning" });
@@ -1610,14 +1613,14 @@ test("(I) the turn gate hands off only within the execution that loaded ralplan 
     expect(await missing(store, planning, UG)).toBe(true);
     await ralplan(planning, { op: "write", stage: "final", stage_n: 1, content: "# f\n" });
     await load(hooks, planning);
-    expect(await store.read(planning, RALPLAN_MODE)).toMatchObject({ active: false, current_phase: "handoff" });
+    expect(await stateOf(store, planning, RALPLAN_MODE)).toMatchObject({ active: false, current_phase: "handoff" });
 
     // A failed `skill ralplan` call reverts the marker.
     const reverted = nextSession("I-revert");
     await finished(reverted);
     await failed(hooks, await load(hooks, reverted, "ralplan"));
     await load(hooks, reverted);
-    expect(await store.read(reverted, RALPLAN_MODE)).toMatchObject({ active: true, current_phase: "final" });
+    expect(await stateOf(store, reverted, RALPLAN_MODE)).toMatchObject({ active: true, current_phase: "final" });
 
     // An inactive `handoff` ralplan is not handed off again: the load enters (I-15).
     const inactive = nextSession("I-inactive");
@@ -1626,7 +1629,7 @@ test("(I) the turn gate hands off only within the execution that loaded ralplan 
     await ultragoal(inactive, { op: "clear" });
     expect((await load(hooks, inactive, "ralplan")).input).toEqual({ id: "ralplan" });
     expect((await load(hooks, inactive)).input).toEqual({ id: "ultragoal" });
-    expect(await store.read(inactive, RALPLAN_MODE)).toMatchObject({ active: false, current_phase: "handoff" });
+    expect(await stateOf(store, inactive, RALPLAN_MODE)).toMatchObject({ active: false, current_phase: "handoff" });
     expect(await ugState(store, inactive)).toMatchObject({ active: true, current_phase: "goal-planning" });
   });
 });
@@ -1640,7 +1643,7 @@ test("(I2) ralplan continues only while it is the visible primary skill (PQ-7 B)
     expect(continuations(context)).toHaveLength(1);
     // An ultragoal load in a later execution removes the ralplan row; ralplan stays active.
     await load(hooks, id);
-    expect(await store.read(id, RALPLAN_MODE)).toMatchObject({ active: true, current_phase: "planner" });
+    expect(await stateOf(store, id, RALPLAN_MODE)).toMatchObject({ active: true, current_phase: "planner" });
     await succeeded(hooks, id);
     await succeeded(hooks, id);
     expect(continuations(context)).toHaveLength(1);
@@ -1762,7 +1765,7 @@ test("(M, H8) handoff, create, goal, deep-interview ops, the turn gates, a conti
         hooks.prompt({ sessionID: id, prompt: { text: "keep going" } }),
         hooks.context({ sessionID: id, agent: "open-gajae", tools: {}, messages: [user("hi")] }),
         hooks.compaction({ sessionID: id, system: [] }),
-        store.write(id, { note: "n" }),
+        store.workflowTransaction(id, (tx) => tx.writeModeState("deep-interview", { note: "n" }, "deep_interview_tool")),
         deepInterview(id, { op: "status" }),
         deepInterview(id, { op: "doctor" }),
         load(hooks, id, "deep-interview"),
@@ -1775,7 +1778,7 @@ test("(M, H8) handoff, create, goal, deep-interview ops, the turn gates, a conti
     clearTimeout(timer);
     expect(settled).not.toBe("timeout");
     expect((settled as PromiseSettledResult<unknown>[]).every((result) => result.status === "fulfilled")).toBe(true);
-    expect(await store.read(id, RALPLAN_MODE)).toMatchObject({ active: false, current_phase: "handoff" });
+    expect(await stateOf(store, id, RALPLAN_MODE)).toMatchObject({ active: false, current_phase: "handoff" });
     expect(await ugState(store, id)).toMatchObject({ active: true });
   });
 });
@@ -1788,12 +1791,6 @@ test("(M, H8) handoff, create, goal, deep-interview ops, the turn gates, a conti
 
 import { chainRefusal, DEEP_INTERVIEW_MUTATION_BLOCK_MESSAGE, specGuardRefusal } from "../src/deep-interview-runtime/messages";
 import { rebuildSnapshotTx } from "../src/skill-state/rows";
-
-/** A mode-state file read straight from disk, or `undefined`. */
-const stateOf = async (store: StateStore, sessionID: string, mode: StateMode | "ultragoal") =>
-  readFile(join(await store.resolveSessionDir(sessionID), "state", `${mode}-state.json`), "utf8")
-    .then((text) => JSON.parse(text))
-    .catch(() => undefined);
 
 const diRound = (round: number) => ({
   round,

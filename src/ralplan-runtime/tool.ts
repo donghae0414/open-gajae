@@ -20,8 +20,9 @@
 // recorded from `context.sessionID`; one `resumable` input), 30 (a primary
 // `path` must be a neutral temp file, DR-11), 31 (`start{run_id}`, DR-19), 32
 // (the owner session is the lineage root, not an argument, DR-1), 34 (the
-// handoff needs a phase in T, DR-7). DR-22: agents the plugin does not own
-// can see the tool and are refused at run time.
+// handoff needs a phase in T, DR-7), 39 (`start` refuses while a ralplan
+// run is active, deep-interview revision plan DR-39). DR-22: agents the
+// plugin does not own can see the tool and are refused at run time.
 
 import { z } from "zod";
 import { type StateStore, ULTRAGOAL_MODE } from "../state.js";
@@ -43,8 +44,9 @@ import {
   ralplanHandoff,
   type RalplanSettings,
   readStatusTx,
+  RUNTIME_OWNER,
   STATE_FIELD_ALLOWLIST,
-  startRun,
+  startRunTx,
   writeStageTx,
 } from "./store.js";
 import { readTempArtifact } from "./temp-paths.js";
@@ -59,11 +61,21 @@ const ROLES: Record<string, PersistedRole> = {
 const ROLE_OPS = new Set(["write", "status", "state"]);
 
 /**
- * `ralplan start` while ultragoal is active (ultragoal revision plan C-3: its
- * state is readable and `active: true`).
+ * The two state refusals of `ralplan start`, checked in this order in its
+ * transaction: an active ultragoal (ultragoal revision plan C-3: its state is
+ * readable and `active: true`), then an active ralplan run (deep-interview
+ * revision plan DR-39, ralplan deviation 39: the state file is readable and
+ * `active: true`, with or without its row).
  */
 export const RALPLAN_ACTIVATION_REFUSAL =
   'ralplan cannot be started while ultragoal is active; call ultragoal handoff(to="ralplan", reason) instead, which makes ralplan active in its planner phase.';
+
+export function ralplanRunActiveRefusal(state: Record<string, unknown>): string {
+  const runId = typeof state.run_id === "string" ? state.run_id : "(none)";
+  const phase = typeof state.current_phase === "string" ? state.current_phase : "(none)";
+  const from = typeof state.handoff_from === "string" ? `, handed over from ${state.handoff_from}` : "";
+  return `ralplan run ${runId} is already active (phase ${phase}${from}); continue it with ralplan write. To plan anew, stop it first with ralplan state {"active": false} or ralplan clear.`;
+}
 
 /** gjc defaults with `source: "default"` (spec D-S1, DR-13). */
 export const DEFAULT_RALPLAN_SETTINGS: RalplanSettings = {
@@ -175,21 +187,26 @@ export function ralplanTool(store: StateStore, deps: RalplanToolDeps) {
   }
 
   async function start(args: Args, owner: string): Promise<string> {
-    // Read before the ralplan transaction (C-1.2); only an active ultragoal
-    // refuses (ultragoal revision plan C-3). An unreadable state is not active.
-    const ultragoal = await store.read(owner, ULTRAGOAL_MODE).catch(() => undefined);
-    if (ultragoal?.active === true) throw new Error(RALPLAN_ACTIVATION_REFUSAL);
-    const summary = await startRun(
-      store,
-      owner,
-      {
-        task: args.task ?? "",
-        interactive: args.interactive,
-        deliberate: args.deliberate,
-        run_id: args.run_id,
-      },
-      { projectDir: deps.projectDir },
-    );
+    // One ralplan transaction (deep-interview revision plan DR-37, E-13,
+    // E-15): an active ultragoal refuses, then an active ralplan run (DR-39),
+    // then a missing task. An unreadable state of either is not active: a
+    // corrupt ralplan state gets `startRunTx`'s own refusal.
+    const summary = await store.ralplanTransaction(owner, async (tx) => {
+      const ultragoal = await tx.readModeState(ULTRAGOAL_MODE).catch(() => undefined);
+      if (ultragoal?.active === true) throw new Error(RALPLAN_ACTIVATION_REFUSAL);
+      const running = await tx.readState().catch(() => undefined);
+      if (running?.active === true) throw new Error(ralplanRunActiveRefusal(running));
+      const task = args.task ?? "";
+      if (!task.trim())
+        throw new Error('ralplan start requires a task description, e.g. task: "<task>".');
+      return startRunTx(
+        tx,
+        owner,
+        { task, interactive: args.interactive, deliberate: args.deliberate, run_id: args.run_id },
+        deps.projectDir,
+        RUNTIME_OWNER,
+      );
+    });
     return json({ ok: true, ...summary });
   }
 

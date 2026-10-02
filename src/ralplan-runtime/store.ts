@@ -906,9 +906,11 @@ export type StartRunSummary = {
 /**
  * gjc `seedRalplanState` + `handleConsensusHandoff`: a whole new state on
  * `planner`, the run id per DR-19, the binding of the same run or a fresh
- * capture, and the active row. Exported for the deep-interview combined call
- * `spec(…, handoff: "ralplan")`, which seeds through it like `gjc ralplan
- * --deliberate` (deep-interview revision plan DR-29).
+ * capture, and the active row. `ralplan start` checks, in the same
+ * transaction, a running ultragoal, an already active run and the task before
+ * this (`./tool.ts`, deep-interview revision plan DR-37, DR-39); the
+ * deep-interview combined call `spec(…, handoff: "ralplan")` seeds through it
+ * without those checks, like `gjc ralplan --deliberate` (DR-29).
  */
 export async function startRunTx(
   tx: WorkflowTx,
@@ -983,24 +985,6 @@ export async function startRunTx(
     handoff: SKILL,
     repository_binding: repositoryBinding,
   };
-}
-
-/**
- * `ralplan start`, and the R-O1 entry (`handoff_from: "ultragoal"`). The
- * caller checks a running ultragoal before this (C-1.2).
- */
-export async function startRun(
-  store: StateStore,
-  sessionId: string,
-  input: StartRunInput,
-  deps: { projectDir: string },
-  owner: AuditOwner = RUNTIME_OWNER,
-): Promise<StartRunSummary> {
-  if (typeof input.task !== "string" || !input.task.trim())
-    throw new Error('ralplan start requires a task description, e.g. task: "<task>".');
-  return store.ralplanTransaction(sessionId, (tx) =>
-    startRunTx(tx, sessionId, input, deps.projectDir, owner),
-  );
 }
 
 // ---------------------------------------------------------------------------

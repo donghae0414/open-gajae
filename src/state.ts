@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { constants as fsConstants, promises as fs, realpathSync } from "node:fs";
 import path from "node:path";
 
-// State and payload-boundary behavior draws on OMC MIT sources; project notices carry attribution.
+// The payload boundary (size, depth and key limits; corrupt and foreign state
+// preserved, not reset) draws on OMC MIT sources; project notices carry
+// attribution. The workflow skills write only through the transactions below.
 export const DEEP_INTERVIEW_MODE = "deep-interview" as const;
 export const RALPLAN_MODE = "ralplan" as const;
 /** Plugin-owned: only the `ultragoal` tool writes it (plan §7, decision 21). */
@@ -14,7 +16,6 @@ export type StateMode =
   | typeof ULTRAGOAL_MODE;
 
 export type StateWriter =
-  | "state_write_tool"
   | "ralplan_hook"
   | "ultragoal_hook"
   | "ultragoal_tool"
@@ -31,23 +32,6 @@ export type StateMeta = {
 
 /** Model-owned fields are open-ended. `_meta` is regenerated on every write. */
 export type InterviewState = Record<string, unknown> & { _meta?: StateMeta };
-
-export type ExplicitStatePatch = {
-  active?: boolean;
-  iteration?: number;
-  max_iterations?: number;
-  current_phase?: string;
-  task_description?: string;
-  error?: string;
-  plan_path?: string;
-  started_at?: string;
-  completed_at?: string;
-  awaiting_confirmation?: boolean;
-  breaker_count?: number;
-  breaker_updated_at?: string;
-  deactivated_reason?: string;
-  restored_at?: string;
-};
 
 /**
  * The operations `ralplanTransaction` hands its body; none of them queue. Every
@@ -72,8 +56,7 @@ export type RalplanTx = {
   readState(): Promise<InterviewState | undefined>;
   /**
    * Replaces the whole state (not a merge); `_meta` is regenerated. The gjc
-   * envelope is open, so only the payload limits apply, not the explicit-field
-   * checks the `state_*` tools use.
+   * envelope is open, so only the payload limits apply.
    */
   writeState(
     state: Record<string, unknown>,
@@ -115,14 +98,6 @@ export type WorkflowTx = RalplanTx & {
     state: Record<string, unknown>,
     updatedBy: StateWriter,
   ): Promise<InterviewState>;
-};
-
-export type SessionPaths = {
-  sessionDir: string;
-  statePath: string;
-  specsDir: string;
-  plansDir: string;
-  draftsDir: string;
 };
 
 const MAX_PAYLOAD_BYTES = 1_048_576;
@@ -188,46 +163,6 @@ function payloadError(
 export function assertStatePayload(state: Record<string, unknown>): void {
   const error = payloadError(state, true);
   if (error) throw new Error(error);
-}
-
-function validateExplicitPatch(patch: ExplicitStatePatch) {
-  for (const [key, max] of [
-    ["current_phase", 200],
-    ["task_description", 2000],
-    ["error", 2000],
-    ["plan_path", 500],
-    ["started_at", 100],
-    ["completed_at", 100],
-    ["breaker_updated_at", 100],
-    ["restored_at", 100],
-    ["deactivated_reason", 200],
-  ] as const) {
-    const value = patch[key];
-    if (
-      value !== undefined &&
-      (typeof value !== "string" || value.length === 0 || value.length > max)
-    )
-      throw new Error(
-        `${key} must be a non-empty string up to ${max} characters`,
-      );
-  }
-  for (const key of ["active", "awaiting_confirmation"] as const) {
-    const value = patch[key];
-    if (value !== undefined && typeof value !== "boolean")
-      throw new Error(`${key} must be a boolean`);
-  }
-  for (const key of [
-    "iteration",
-    "max_iterations",
-    "breaker_count",
-  ] as const) {
-    const value = patch[key];
-    if (
-      value !== undefined &&
-      (typeof value !== "number" || !Number.isFinite(value))
-    )
-      throw new Error(`${key} must be a finite number`);
-  }
 }
 
 function snapshotState(
@@ -404,27 +339,6 @@ export class StateStore {
     return directory;
   }
 
-  async resolveSessionPaths(
-    sessionID: string,
-    mode: StateMode = DEEP_INTERVIEW_MODE,
-  ): Promise<SessionPaths> {
-    const sessionDir = await this.resolveSessionDir(sessionID);
-    return {
-      sessionDir,
-      statePath: path.join(sessionDir, "state", `${mode}-state.json`),
-      specsDir: path.join(sessionDir, "specs"),
-      plansDir: path.join(sessionDir, "plans"),
-      draftsDir: path.join(sessionDir, "drafts"),
-    };
-  }
-
-  async statePath(
-    sessionID: string,
-    mode: StateMode = DEEP_INTERVIEW_MODE,
-  ): Promise<string> {
-    return (await this.resolveSessionPaths(sessionID, mode)).statePath;
-  }
-
   private async inspectParent(file: string, create: boolean): Promise<boolean> {
     const canonicalWorktree = await fs.realpath(this.worktree).catch(() => {
       throw new Error("worktree does not exist");
@@ -530,75 +444,10 @@ export class StateStore {
    * part of the key, so two stores on one worktree share the queue.
    */
   private queueKey(sessionID: string): string {
-    // Plan C-1 (E-1): every mode's state access and every transaction of a
-    // session share one queue, so no workflow file of the session changes
-    // outside it and a cross-skill write never interleaves.
+    // Plan C-1 (E-1): every transaction of a session shares one queue, so no
+    // workflow file of the session changes outside it and a cross-skill write
+    // never interleaves.
     return `${this.root}\u0000${sessionID}\u0000workflow`;
-  }
-
-  async read(
-    sessionID: string,
-    mode: StateMode = DEEP_INTERVIEW_MODE,
-  ): Promise<InterviewState | undefined> {
-    return enqueue(this.queueKey(sessionID), async () =>
-      this.readFile(await this.statePath(sessionID, mode), sessionID),
-    );
-  }
-
-  async write(
-    sessionID: string,
-    state: Record<string, unknown> = {},
-    explicit: ExplicitStatePatch = {},
-    mode: StateMode = DEEP_INTERVIEW_MODE,
-  ): Promise<InterviewState> {
-    const stateSnapshot = snapshotState(state);
-    const explicitSnapshot = { ...explicit };
-    const payload = payloadError(stateSnapshot);
-    if (payload) throw new Error(payload);
-    validateExplicitPatch(explicitSnapshot);
-
-    return enqueue(this.queueKey(sessionID), async () => {
-      const target = await this.statePath(sessionID, mode);
-      await this.readFile(target, sessionID);
-      const next: InterviewState = {
-        ...stateSnapshot,
-        ...explicitSnapshot,
-        _meta: {
-          mode,
-          sessionId: sessionID,
-          updatedAt: now(),
-          updatedBy: "state_write_tool",
-        },
-      };
-      const error = payloadError(next, true);
-      if (error) throw new Error(error);
-      await this.atomicWrite(target, next);
-      return next;
-    });
-  }
-
-  /**
-   * Read-modify-write for trusted hook callers. Explicit fields are validated
-   * exactly as `write` validates them, so no unvalidated key can reach the file.
-   */
-  async patch(
-    sessionID: string,
-    explicit: ExplicitStatePatch,
-    mode: StateMode = DEEP_INTERVIEW_MODE,
-    updatedBy: StateWriter = "ralplan_hook",
-  ): Promise<InterviewState> {
-    // Shallow on purpose: a key set to `undefined` removes that field.
-    const explicitSnapshot = { ...explicit };
-    validateExplicitPatch(explicitSnapshot);
-
-    return enqueue(this.queueKey(sessionID), async () => {
-      const target = await this.statePath(sessionID, mode);
-      const current = (await this.readFile(target, sessionID)) ?? {};
-      return this.writeMerged(target, sessionID, mode, updatedBy, {
-        ...current,
-        ...explicitSnapshot,
-      });
-    });
   }
 
   private async writeMerged(
@@ -620,9 +469,9 @@ export class StateStore {
 
   /**
    * Plan C-1 (E-1): run `fn` holding the session's one workflow queue, the
-   * one every `read`/`write`/`patch`/`clear` and transaction of `owner` uses.
-   * `fn` must only use `tx`: calling a queued StateStore method inside it
-   * waits on its own queue forever (C-1.3). Host calls belong outside it.
+   * one every transaction of `owner` uses. `fn` must only use `tx`: starting
+   * another transaction of the same session inside it waits on its own queue
+   * forever (C-1.3). Host calls belong outside it.
    */
   async workflowTransaction<T>(
     owner: string,
@@ -774,18 +623,5 @@ export class StateStore {
     if (stat.isSymbolicLink() || !stat.isFile())
       throw new Error(`${path.basename(file)} is not a regular file`);
     return fs.readFile(file, "utf8");
-  }
-
-  async clear(
-    sessionID: string,
-    mode: StateMode = DEEP_INTERVIEW_MODE,
-  ): Promise<"deleted" | "missing"> {
-    return enqueue(this.queueKey(sessionID), async () => {
-      const target = await this.statePath(sessionID, mode);
-      const current = await this.readFile(target, sessionID);
-      if (!current) return "missing";
-      await fs.unlink(target);
-      return "deleted";
-    });
   }
 }
