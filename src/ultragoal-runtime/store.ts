@@ -639,11 +639,13 @@ export async function checkpointTx(tx: WorkflowTx, sessionId: string, args: Ultr
     ) &&
     (status !== "complete" || isValidCompletion(checkReceipt(goal, rows)));
   if (replay) {
+    const next = status === "complete" ? chooseNextGoal(file, false) : undefined;
     const text = renderCheckpoint({
       goalId: goal.id,
       status,
       allComplete: allRequiredComplete(file),
-      nextGoal: status === "complete" ? chooseNextGoal(file, false) : undefined,
+      nextGoal: next,
+      nextCriteria: next && completionView(file, next.id).activeCriterionIds,
       startedNext: false,
       goalObjective,
       run: runCompletion(file, rows),
@@ -741,6 +743,7 @@ export async function checkpointTx(tx: WorkflowTx, sessionId: string, args: Ultr
     status,
     allComplete: allRequiredComplete(plan),
     nextGoal,
+    nextCriteria: nextGoal && completionView(plan, nextGoal.id).activeCriterionIds,
     startedNext,
     goalObjective,
     run: runCompletion(plan, [...rows, ...added]),

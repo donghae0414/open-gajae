@@ -48,7 +48,8 @@ SKILL의 "Boundary verification (per goal, then once at the end)"은 이것을 "
 5. gate가 덮을 기준 ID(`activeCriterionIds`)를 정합니다. 목표별이면 대상 자신의 활성 기준뿐입니다. 최종이면 그 뒤에 `carriedCriterionIds(복사본, 대상 id)`를 붙입니다 (편차 44):
    - 완료된 각 수정 목표와 대상(수정 목표일 때)에서 `fixChain`으로 올라가며, `superseded`인 동안 만나는 목표를 모읍니다. 다른 status를 만나면 그 사슬은 멈춥니다.
    - 모은 목표의 활성 기준 ID를 `goals.json` 순서로 적습니다.
-   - 계획 변경으로 superseded된 목표(가리키는 수정 목표가 없음)나, 수정 목표가 하나도 완료되지 않은 사슬(예: 수정 목표까지 supersede한 경우)은 대상이 아닙니다.
+   - 완료된 수정 목표가 닿지 않는 superseded 목표는 대상이 아닙니다. 예: 계획 변경으로 뺀 대기 목표(가리키는 수정 목표가 없음), 수정 목표가 하나도 완료되지 않은 사슬(수정 목표까지 supersede한 경우). 거꾸로, 수정 목표가 완료될 때 `blocked`여서 걸음이 멈췄던 원 목표를 나중에 계획 변경으로 supersede하면 그 원 목표는 대상이 됩니다.
+   - 대상 자신은 이월 목록에서 뺍니다. 그래서 superseded 목표를 `validate_gate(goal_id)`로 판정해도 ID가 두 번 나오지 않습니다.
 
 따라 나오는 성질:
 
@@ -175,7 +176,7 @@ gate 결함이 있으면 진행 목록 결함은 보고되지 않습니다. 둘 
    - `evidence`가 비어 있으면 `missing_evidence`
 3. 행을 다 본 뒤, 활성 기준 ID 중 어느 행에도 없는 것마다 `missing_criterion` (경로 `criteriaCoverage`)
 
-결과적으로 중복, 없는 ID, 빠진 ID가 모두 거부됩니다. 개정(revise)이나 대체(supersede)로 물러난 기준 ID는 활성 목록에 없으므로 `unknown_criterion`입니다. 최종 gate에서 이월 대상이 아닌 목표(예: 계획 변경으로 superseded된 목표)의 기준을 적어도 `unknown_criterion`입니다. 활성 기준 목록 없이 부르면(1.3의 마지막 줄) 행 모양과 중복만 검사합니다.
+결과적으로 중복, 없는 ID, 빠진 ID가 모두 거부됩니다. 개정(revise)이나 대체(supersede)로 물러난 기준 ID는 활성 목록에 없으므로 `unknown_criterion`입니다. 최종 gate에서 이월 대상이 아닌 superseded 목표(예: 계획 변경으로 뺀 대기 목표)의 기준을 적어도 `unknown_criterion`입니다. 활성 기준 목록 없이 부르면(1.3의 마지막 줄) 행 모양과 중복만 검사합니다.
 
 **`reviewCohort`** (최종 gate만. 결함 코드는 모두 `review_cohort_invalid`, 편차 16, 28)
 

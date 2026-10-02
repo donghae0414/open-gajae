@@ -478,7 +478,7 @@ test("the deep-interview skill follows the gjc skill with its deviations marked"
     "`shell` is for read-only inspection only. Do not ask the user questions and do not delegate.",
   ])
     expect(`${required}: ${persona.includes(required)}`).toBe(`${required}: true`);
-  for (const forbidden of [".gjc", "nherited context", "in this prompt", "architect panel", "agent-supplied answer"])
+  for (const forbidden of [".gjc", "nherited context", "in the prompt", "in this prompt", "architect panel", "agent-supplied answer"])
     expect(`${forbidden}: ${persona.includes(forbidden)}`).toBe(`${forbidden}: false`);
 });
 

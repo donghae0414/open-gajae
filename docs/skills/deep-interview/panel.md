@@ -53,7 +53,7 @@ gjc의 persona는 부모 문맥을 물려받는(fork-context) subagent이고, �
 
 ### 프롬프트
 
-`prompts/open-gajae-lateral-reviewer.md`는 gjc 조각 `lateral-review-panel.md`에 호스트 치환만 한 것입니다(`:51-63` 출처와 치환 표). 플러그인이 시작할 때 다른 역할 프롬프트와 함께 읽어 등록하므로, 실행 중에 조각 파일을 읽는 쪽이 없습니다.
+`prompts/open-gajae-lateral-reviewer.md`는 gjc 조각 `lateral-review-panel.md`에 호스트 치환만 한 것입니다(`:51-64` 출처와 치환 표). 플러그인이 시작할 때 다른 역할 프롬프트와 함께 읽어 등록하므로, 실행 중에 조각 파일을 읽는 쪽이 없습니다.
 
 - 머리(`:3-9`): 패널의 persona 하나이고, 리더가 `subagent`로 한 번에 persona 하나씩 병렬로 부릅니다. 자기 문맥에서 돌므로 다른 persona가 할 말에 기대지 않습니다. 과제의 문맥은 읽기 전용 배경이고, 코드 편집, 파일 쓰기, `.open-gajae/` 변경, 포매터, workflow 인계, 구현을 하지 않습니다. `shell`은 읽기 전용 확인에만 쓰고, 사용자에게 묻지 않고 맡기지 않습니다. 답은 질문 하나에 접을 만큼 짧게 합니다.
 - persona 넷(`researcher`, `contrarian`, `simplifier`, `architect`)의 렌즈(`:11-16`)
@@ -72,7 +72,7 @@ gjc의 persona는 부모 문맥을 물려받는(fork-context) subagent이고, �
 - 규칙: `finding`은 비어 있지 않고 확정된 제약과 어긋나지 않음, `rationale` 1~3개, `suggested_options` 1~3개, `confidence`는 셋 중 하나(`:41-45`)
 - 문맥이 모자라면: `confidence` `low`, `finding`에 가장 중요한 빠진 문맥, `suggested_options`에 가장 안전한 확인 질문 하나(`:47-49`)
 
-호스트 치환(`:55-61`): 첫 문장에 역할 이름과 부르는 방식을 넣고 "read-only architect panel" → "read-only review panel"(persona는 architect 역할이 아니라 패널 역할로 돎, deep-interview 편차 37), agent가 대신 답하기 전 패널을 여는 부분 삭제(편차 6), "inherited context"·"in the prompt" → "the context passed in the assignment"·"in the assignment"(OpenCode `subagent`는 새 문맥이고 이 글은 과제가 아니라 역할 프롬프트, 편차 18), `.gjc/` → `.open-gajae/`, 역할 권한을 밝히는 문장 하나("`shell` is for read-only inspection only. Do not ask the user questions and do not delegate.") 추가. `tests/integration.test.ts:457-482`가 스킬 폴더에 조각 파일이 없음, 프롬프트의 머리와 출처, 조각 본문의 주요 문장, 치환 전 문구(`.gjc`, "inherited context", "architect panel" 등)가 남지 않음을 확인합니다.
+호스트 치환(`:55-62`): 제목을 역할 프롬프트 제목으로 바꾸고, 첫 문장에 역할 이름과 부르는 방식을 넣고 "read-only architect panel" → "read-only review panel"(persona는 architect 역할이 아니라 패널 역할로 돎, deep-interview 편차 37), agent가 대신 답하기 전 패널을 여는 부분 삭제(편차 6), "inherited context"·"in the prompt" → "the context passed in the assignment"·"in the assignment"(OpenCode `subagent`는 새 문맥이고 이 글은 과제가 아니라 역할 프롬프트, 편차 18), `.gjc/` → `.open-gajae/`, 역할 권한을 밝히는 문장 하나("`shell` is for read-only inspection only. Do not ask the user questions and do not delegate.") 추가. `tests/integration.test.ts:457-482`가 스킬 폴더에 조각 파일이 없음, 프롬프트의 머리와 출처, 조각 본문의 주요 문장, 치환 전 문구(`.gjc`, "inherited context", "architect panel" 등)가 남지 않음을 확인합니다.
 
 `shell`의 읽기 전용은 권한이 아니라 프롬프트로만 요구합니다(다른 모든 역할과 같음).
 

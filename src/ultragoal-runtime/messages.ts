@@ -380,6 +380,8 @@ export function renderCheckpoint(input: {
   status: "complete" | "failed" | "blocked" | "pending";
   allComplete: boolean;
   nextGoal?: Goal;
+  /** The IDs the next goal's gate covers (default: its own criteria). */
+  nextCriteria?: readonly string[];
   startedNext: boolean;
   goalObjective: string;
   run?: RunCompletion;
@@ -393,7 +395,8 @@ export function renderCheckpoint(input: {
       lines.push(`Next ultragoal goal: ${input.nextGoal.id} — ${input.nextGoal.title}`);
       lines.push(`Objective: ${input.nextGoal.description}`);
       lines.push(`Goal objective: ${input.goalObjective}`);
-      lines.push(`Criteria: ${input.nextGoal.acceptanceCriteria.map((criterion) => criterion.id).join(" ")}`);
+      const criteria = input.nextCriteria ?? input.nextGoal.acceptanceCriteria.map((criterion) => criterion.id);
+      lines.push(`Criteria: ${criteria.join(" ")}`);
       lines.push(
         input.startedNext
           ? "The next ultragoal goal is active; continue the current aggregate goal and checkpoint this goal when verified."

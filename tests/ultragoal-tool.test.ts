@@ -871,6 +871,29 @@ test("fix-of-a-fix chain: a root superseded by hand is still covered (deviation 
   });
 });
 
+test("a resolved chain carries into a later final goal, and the checkpoint's Criteria line says so (deviation 44)", async () => {
+  await fixture(async (h) => {
+    await create(h, 2);
+    await h.call({ op: "next" });
+    await complete(h, "G001", perGoal(["G001.AC1"]));
+    await h.call({ op: "record_review_blockers", goal_id: "G002", objective: "fix the finding", evidence: "review of G002 failed" });
+    expect(await h.call({ op: "next" })).toEndWith("\ncriteria=G003.AC1,G002.AC1");
+    expect(
+      await steer(h, { op: "add", target: "goal", title: "Goal 4", description: "do part 4", acceptanceCriteria: ["part 4 works"] }),
+    ).toBe("Accepted add steering. target=G004");
+    // G003 is no longer final: a per-goal gate covers only its own criterion.
+    const done = await complete(h, "G003", perGoal(["G003.AC1"]));
+    expect(done).toContain("\nNext ultragoal goal: G004 — Goal 4\n");
+    expect(done).toContain("\nCriteria: G004.AC1 G002.AC1\n");
+    expect((await goalRow(h, "G002")).status).toBe("superseded");
+    expect(await h.call({ op: "next" })).toEndWith("\ncriteria=G004.AC1,G002.AC1");
+    expect(await complete(h, "G004", finalGate(["G004.AC1", "G002.AC1"]))).toBe(
+      "Checkpointed G004 as complete.\nAll ultragoal goals are complete.",
+    );
+    expect(await h.call({ op: "status" })).toContain("- run_complete: yes");
+  });
+});
+
 test("late supersede: reopen the last completed goal", async () => {
   await fixture(async (h) => {
     await create(h, 2);

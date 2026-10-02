@@ -400,6 +400,35 @@ describe("receipts and run completion (C-7)", () => {
     });
   });
 
+  test("completion view: two fixes of one parent and a cyclic chain (deviations 43, 44)", () => {
+    // G002 was superseded when its first fix G003 completed; G004, a second
+    // fix of G002, closes the run and carries G002's criterion once.
+    const twice = plan(2);
+    goal(twice, "G001").status = "complete";
+    goal(twice, "G002").status = "superseded";
+    const fixOf = (id: string, parent: string, status: Goal["status"]): Goal => ({
+      ...newGoal(id, { title: "Fix", description: `fix ${parent} (${id})`, acceptanceCriteria: [`fix ${parent}${FIX_CRITERION_SUFFIX}`] }),
+      status,
+      steering: { kind: "review_blocker", blockedGoalId: parent },
+    });
+    twice.goals.push(fixOf("G003", "G002", "complete"), fixOf("G004", "G002", "active"));
+    expect(completionView(twice, "G004")).toMatchObject({
+      supersededParentIds: [],
+      receiptKind: "final-aggregate",
+      activeCriterionIds: ["G004.AC1", "G002.AC1"],
+    });
+    // A superseded goal judged by itself lists its own criterion once.
+    goal(twice, "G004").status = "complete";
+    expect(completionView(twice, "G002").activeCriterionIds).toEqual(["G002.AC1"]);
+    // A cycle in blockedGoalId stops the walk instead of looping.
+    const cyclic = plan(1);
+    goal(cyclic, "G001").status = "complete";
+    cyclic.goals.push(fixOf("G002", "G003", "review_blocked"), fixOf("G003", "G002", "review_blocked"), fixOf("G004", "G003", "active"));
+    const view = completionView(cyclic, "G004");
+    expect(view.supersededParentIds).toEqual(["G003", "G002"]);
+    expect(view.activeCriterionIds).toEqual(["G004.AC1", "G002.AC1", "G003.AC1"]);
+  });
+
   test("carried criteria come only from resolved fix chains (deviation 44)", () => {
     // An earlier chain resolved by a complete fix carries into a later final.
     const resolved = plan(3);

@@ -508,7 +508,7 @@ reconcile은 `goals.json`과 원장에서 실행 상태를 다시 계산해 mode
   Next ultragoal goal: <id> — <title>
   Objective: <description>
   Goal objective: <goal의 고정 objective>
-  Criteria: <기준 ID들, 공백으로 구분>
+  Criteria: <다음 목표의 gate가 덮을 기준 ID들, 공백으로 구분. 최종이면 이월된 ID 포함(편차 44)>
   ```
   마지막 줄은 둘 중 하나입니다. 다음 목표가 원래 active였을 때도 아래 줄이 나옵니다(임시 폴더에서 확인).
   ```

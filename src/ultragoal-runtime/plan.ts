@@ -546,8 +546,10 @@ function* fixChain(file: Pick<GoalsFile, "goals">, goal: Goal): Generator<Goal> 
  * Deviation 44: the criteria a final gate covers besides the closing goal's
  * own. Walking up from each complete fix goal, and from the closing goal,
  * every superseded goal reached carries its criteria; the walk stops at any
- * other status. A goal superseded by a plan change, or a chain none of whose
- * fixes completed, carries nothing. IDs follow the plan's goal order.
+ * other status. A superseded goal no complete fix reaches carries nothing
+ * (for example a pending goal dropped by a plan change, or a chain none of
+ * whose fixes completed). IDs follow the plan's goal order; the closing
+ * goal's own are left out.
  */
 export function carriedCriterionIds(file: Pick<GoalsFile, "goals">, closingGoalId: string): string[] {
   const carried = new Set<string>();
@@ -560,7 +562,7 @@ export function carriedCriterionIds(file: Pick<GoalsFile, "goals">, closingGoalI
     }
   }
   return file.goals
-    .filter((goal) => carried.has(goal.id))
+    .filter((goal) => carried.has(goal.id) && goal.id !== closingGoalId)
     .flatMap((goal) => goal.acceptanceCriteria.map((criterion) => criterion.id));
 }
 
@@ -654,7 +656,7 @@ export function runCompletion(file: Pick<GoalsFile, "goals">, rows: readonly Led
 }
 
 // ---------------------------------------------------------------------------
-// Fix goals (DR-6, PQ-17 C, PQ-23 A)
+// Fix goals (DR-6, PQ-17 C; chains: deviations 43, 44)
 // ---------------------------------------------------------------------------
 
 /** gjc record-review-blockers default `--title`. */

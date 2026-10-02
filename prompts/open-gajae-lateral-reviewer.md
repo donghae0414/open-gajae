@@ -54,6 +54,7 @@ This prompt is Gajae Code's deep-interview panel fragment `packages/coding-agent
 
 | GJC | Here | Why |
 |---|---|---|
+| "# Deep Interview Lateral Review Panel" | "# Open-gajae Lateral Reviewer" | The role prompt's title, as for the other roles |
 | "one persona on a read-only architect panel" | "`open-gajae-lateral-reviewer`, one persona on a read-only review panel", plus the sentence on how the leader calls this role | The personas run in this role, not the architect role (deviation 37) |
 | "(or before the workflow synthesizes an agent-supplied answer)" | Removed | The panel no longer convenes before an agent-supplied answer (deviation 6) |
 | "Inherited context", "inherited context", "in the prompt" | "The context passed in the assignment", "in the assignment" | An OpenCode `subagent` starts from a fresh context, and this text is the role prompt, not the assignment (deviation 18) |
