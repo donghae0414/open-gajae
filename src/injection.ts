@@ -32,6 +32,11 @@ export const INJECTION_MARKERS = [
   "<goal-continuation>",
   "<goal-context>",
   "<goal-notice>",
+  // Host additions for deep-interview (deep-interview revision plan DR-25):
+  // gjc's continuation reminder and the compaction recovery context
+  // (`./deep-interview-runtime/messages.ts`).
+  "<deep-interview-continuation>",
+  "<deep-interview-compaction-context>",
 ] as const;
 
 export type InjectionMarker = (typeof INJECTION_MARKERS)[number];

@@ -909,9 +909,11 @@ export type StartRunSummary = {
 /**
  * gjc `seedRalplanState` + `handleConsensusHandoff`: a whole new state on
  * `planner`, the run id per DR-19, the binding of the same run or a fresh
- * capture, and the active row.
+ * capture, and the active row. Exported for the deep-interview combined call
+ * `spec(…, handoff: "ralplan")`, which seeds through it like `gjc ralplan
+ * --deliberate` (deep-interview revision plan DR-29).
  */
-async function startRunTx(
+export async function startRunTx(
   tx: WorkflowTx,
   sessionId: string,
   input: StartRunInput,
@@ -1326,23 +1328,28 @@ export type RalplanHandoffResult = {
   pendingApprovalPath?: string;
 };
 
+/** The skills a ralplan handoff may target (deep-interview revision plan DR-11). */
+export type RalplanHandoffTarget = "ultragoal" | "deep-interview";
+
 /**
- * The ralplan → ultragoal handoff in one transaction, shared by the `ralplan
- * handoff` op and the `skill ultragoal` turn gate (PQ-6 A). The phase must be
- * in T (DR-7, deviation 34); then an inactive ralplan — after Stop here,
- * `clear` or an earlier handoff — is refused with a `RalplanNotActiveError`
- * (R-OD18), as gjc's Stop here ends the turn and a later turn's `ultragoal`
- * load finds no active skill to hand off (`tools/skill.ts:170-171,203-221`).
- * gjc's `state handoff` verb checks neither. Then the common journaled
- * handoff (`handoffWorkflowTx`): ultragoal active on `goal-planning` over its
- * kept fields, ralplan inactive on `handoff` over its kept fields, an
- * inactive ralplan `handoff_to` row and an active ultragoal row.
+ * The ralplan → ultragoal (or → deep-interview, D-SH5) handoff in one
+ * transaction, shared by the `ralplan handoff` op and the `skill ultragoal`
+ * turn gate (PQ-6 A). The phase must be in T (DR-7, deviation 34); then an
+ * inactive ralplan — after Stop here, `clear` or an earlier handoff — is
+ * refused with a `RalplanNotActiveError` (R-OD18), as gjc's Stop here ends
+ * the turn and a later turn's load finds no active skill to hand off
+ * (`tools/skill.ts:170-171,203-221`). gjc's `state handoff` verb checks
+ * neither. Then the common journaled handoff (`handoffWorkflowTx`): the
+ * callee active on its initial phase over its kept fields, ralplan inactive
+ * on `handoff` over its kept fields, an inactive ralplan `handoff_to` row and
+ * the callee's active row.
  */
 export async function ralplanHandoffTx(
   tx: WorkflowTx,
   sessionId: string,
   owner: AuditOwner,
   reason: string,
+  to: RalplanHandoffTarget = "ultragoal",
 ): Promise<RalplanHandoffResult> {
   const state = await readStateForMutation(tx);
   if (state === undefined)
@@ -1350,10 +1357,20 @@ export async function ralplanHandoffTx(
   const phase = trimmed(state.current_phase) ?? "";
   if (!TERMINAL_PHASES.has(phase))
     throw new Error(
-      `ralplan can hand off to ultragoal only from a finished phase (${[...TERMINAL_PHASES].join(", ")}); the current phase is ${phase || "(none)"}. Record the final plan first.`,
+      `ralplan can hand off to ${to} only from a finished phase (${[...TERMINAL_PHASES].join(", ")}); the current phase is ${phase || "(none)"}. Record the final plan first.`,
     );
   const pendingApprovalPath = await pendingApprovalPathTx(tx, state);
   if (state.active !== true) {
+    if (to === "deep-interview") {
+      // DR-11 (C2-4): name the skill that took over, and no ultragoal command.
+      if (phase === "handoff")
+        throw new RalplanNotActiveError(
+          `ralplan was already handed off (inactive, phase handoff); continue in the \`${trimmed(state.handoff_to) ?? "ultragoal"}\` skill.`,
+        );
+      throw new RalplanNotActiveError(
+        `ralplan is not active (phase ${phase}), so there is nothing to hand off: Stop here or \`clear\` ended the run. To interview again, load the \`deep-interview\` skill and call \`deep-interview start\`; to continue an existing interview, call \`deep-interview status\`.`,
+      );
+    }
     if (phase === "handoff")
       throw new RalplanNotActiveError(
         "ralplan was already handed off (inactive, phase handoff); continue in the `ultragoal` skill.",
@@ -1364,7 +1381,7 @@ export async function ralplanHandoffTx(
   }
   const receipt = await handoffWorkflowTx(tx, {
     caller: SKILL,
-    callee: "ultragoal",
+    callee: to,
     sessionId,
     owner,
     reason,

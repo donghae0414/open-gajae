@@ -26,6 +26,7 @@
 // - Envelope messages drop gjc's `, got <type>` suffix.
 
 import path from "node:path";
+import { isDeepInterviewPhase } from "../deep-interview-runtime/manifest.js";
 import { isKnownPhase, RALPLAN_PHASE_LOCK } from "../ralplan-runtime/manifest.js";
 import type { StateMode, WorkflowTx } from "../state.js";
 import { isUltragoalPhase } from "../ultragoal-runtime/manifest.js";
@@ -49,8 +50,12 @@ type DoctorSkill = {
   isKnownPhase(phase: string): boolean;
 };
 
-/** The registered skills, in scan order (ultragoal: plan S2 op table). */
+/**
+ * The registered skills, in scan order (ultragoal: plan S2 op table;
+ * deep-interview: deep-interview revision plan D-SR10, its three phases).
+ */
 const DOCTOR_SKILLS: readonly DoctorSkill[] = [
+  { skill: "deep-interview", isKnownPhase: isDeepInterviewPhase },
   { skill: "ralplan", isKnownPhase },
   { skill: "ultragoal", isKnownPhase: isUltragoalPhase },
 ];

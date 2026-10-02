@@ -434,3 +434,35 @@ test("handoff refuses an inactive ralplan after Stop here, clear or a handoff; a
     expect(await call({ op: "handoff", to: "ultragoal" })).toContain("ralplan is not active (phase complete)");
   });
 });
+
+// Characterization tests (deep-interview revision plan S1, §3.6 RP1, RP2,
+// RP5): green on the current code and unchanged after S3c moves the ultragoal
+// check into the ralplan transaction.
+test("RP1: an unreadable ultragoal state is not active, so start succeeds (F19)", async () => {
+  await fixture(async ({ call, file, json }) => {
+    await call({ op: "start", task: "seed the session folder" });
+    await call({ op: "clear" });
+    await writeFile(file("state", "ultragoal-state.json"), "{");
+    expect(JSON.parse(await call({ op: "start", task: "plan" }))).toMatchObject({ ok: true, skill: "ralplan" });
+    expect(await json("state", "ralplan-state.json")).toMatchObject({ active: true, current_phase: "planner", task: "plan" });
+  });
+});
+
+test("RP2: an active ultragoal refuses start before the task check (E-13)", async () => {
+  await fixture(async ({ store, call }) => {
+    await runningUltragoal(store);
+    expect(await call({ op: "start", task: "  " })).toBe(`Error: ${RALPLAN_ACTIVATION_REFUSAL}`);
+    expect(await call({ op: "start" })).toBe(`Error: ${RALPLAN_ACTIVATION_REFUSAL}`);
+  });
+});
+
+test("RP5: a corrupt ralplan state refuses start with the corrupt-state message and is left as it was (F38)", async () => {
+  await fixture(async ({ call, file }) => {
+    await call({ op: "start", task: "seed the session folder" });
+    await writeFile(file("state", "ralplan-state.json"), "{ corrupt");
+    const result = await call({ op: "start", task: "plan" });
+    expect(result).toStartWith("Error: existing ralplan state is corrupt or tampered (");
+    expect(result).toContain("Reset it with `ralplan clear` and force: true.");
+    expect(await readFile(file("state", "ralplan-state.json"), "utf8")).toBe("{ corrupt");
+  });
+});

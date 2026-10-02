@@ -150,3 +150,19 @@ export function isSessionState(
   const path = projectRelative(locationDir, projectDir, p);
   return path !== undefined && SESSION_STATE.test(path);
 }
+
+/**
+ * Deep-interview specs, written only by the `deep-interview` tool's `spec` op
+ * (deep-interview revision plan DR-24, spec D-SH1). Other `specs/` documents
+ * are not covered (deviation 35).
+ */
+const DEEP_INTERVIEW_OWNED = /^\.open-gajae\/_session-[^/]+\/specs\/deep-interview-[^/]+$/;
+
+export function isDeepInterviewOwned(
+  locationDir: string,
+  projectDir: string,
+  p: string,
+): boolean {
+  const path = projectRelative(locationDir, projectDir, p);
+  return path !== undefined && DEEP_INTERVIEW_OWNED.test(path);
+}

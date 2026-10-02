@@ -297,11 +297,12 @@ test("doctor: the ralplan summary is unchanged and renders as gjc's doctor text"
     const summary = await run(doctorTx);
     expect(summary).toEqual(expected as never);
     // Unfiltered, the doctor also checks the registered ultragoal skill (plan
-    // S2): its active row has no live mode-state.
+    // S2): its active row has no live mode-state. deep-interview is scanned
+    // too (deep-interview revision plan D-SR10) and has nothing to report.
     expect(await run((tx) => collectDoctorSummaryTx(tx))).toEqual({
       ...summary,
       summary: {
-        skills_scanned: 2,
+        skills_scanned: 3,
         files_scanned: 4,
         findings_total: 3,
         by_kind: { schema_violation: 0, stale_active_state: 3 },
@@ -330,5 +331,103 @@ test("doctor: the ralplan summary is unchanged and renders as gjc's doctor text"
         "",
       ].join("\n"),
     );
+  });
+});
+
+const GOAL = '{"goal":"keep me"}\n';
+const interview = {
+  skill: "deep-interview",
+  version: 2,
+  active: true,
+  current_phase: "handoff",
+  threshold: 0.05,
+  spec_path: "/spec.md",
+  state: { rounds: [{ round_key: "round-1", round: 1, lifecycle: "scored", ambiguity: 0.04 }], current_ambiguity: 0.04, threshold: 0.05 },
+};
+
+for (const callee of ["ralplan", "ultragoal"] as const)
+  test(`handoff deep-interview → ${callee}: journal removed, inactive caller row with chips, active callee row, goal untouched (plan S1 (a))`, async () => {
+    await fixture(async ({ run, json, file }) => {
+      await run(async (tx) => {
+        await tx.writeModeState("deep-interview", interview, "deep_interview_tool");
+        await row(tx, { skill: "deep-interview", active: true, phase: "handoff" });
+        await tx.writeText(tx.paths.goalState, GOAL);
+      });
+      const receipt = await run((tx) =>
+        handoffWorkflowTx(tx, { caller: "deep-interview", callee, sessionId: S, owner: RUNTIME_OWNER, reason: "spec ready" }),
+      );
+      expect(receipt).toMatchObject({ from: "deep-interview", to: callee, phases: { from: "handoff" } });
+      expect(await readdir(file("state", "transactions"))).toEqual([]);
+      expect(await json("state", "deep-interview-state.json")).toMatchObject({
+        active: false,
+        current_phase: "handoff",
+        handoff_to: callee,
+        spec_path: "/spec.md",
+        _meta: { updatedBy: "deep_interview_tool" },
+      });
+      const callerRow = await json("state", "active", "deep-interview.json");
+      expect(callerRow).toMatchObject({ active: false, phase: "handoff", handoff_to: callee });
+      expect(callerRow.hud.chips).toEqual([
+        { label: "phase", value: "handoff", priority: 10 },
+        { label: "ambiguity", value: "4%/5%", priority: 20 },
+        { label: "round", value: "1", priority: 30 },
+      ]);
+      expect(await json("state", "active", `${callee}.json`)).toMatchObject({ active: true, handoff_from: "deep-interview" });
+      expect(await json(`state/${callee}-state.json`)).toMatchObject({ active: true, handoff_from: "deep-interview", _meta: { updatedBy: "deep_interview_tool" } });
+      expect(await run(readVisiblePrimaryTx)).toMatchObject({ skill: callee });
+      expect(await readFile(file("state", "goal-state.json"), "utf8")).toBe(GOAL);
+    });
+  });
+
+test("doctor: deep-interview schema violations and stale rows, with the shared fix commands (plan S1 (b), D-SR10)", async () => {
+  await fixture(async ({ run, file }) => {
+    await run(async (tx) => {
+      await tx.writeModeState("deep-interview", { skill: "deep-interview", active: true, current_phase: "drafting" }, "deep_interview_tool");
+      await row(tx, { skill: "deep-interview", active: true, phase: "interviewing" });
+    });
+    const summary = await run((tx) => collectDoctorSummaryTx(tx, "deep-interview"));
+    expect(summary.summary.skills_scanned).toBe(1);
+    expect(summary.problems).toEqual([
+      {
+        type: "schema_violation",
+        skill: "deep-interview",
+        path: file("state", "deep-interview-state.json"),
+        message: 'unknown deep-interview phase "drafting"',
+        fixCommand: "deep-interview clear (force: true)",
+      },
+    ]);
+    await run(async (tx) => {
+      await tx.writeModeState("deep-interview", { skill: "deep-interview", active: false, current_phase: "complete" }, "deep_interview_tool");
+    });
+    expect((await run((tx) => collectDoctorSummaryTx(tx, "deep-interview"))).problems).toEqual([
+      {
+        type: "stale_active_state",
+        skill: "deep-interview",
+        path: file("state", "active", "deep-interview.json"),
+        message: "active entry for deep-interview does not match a live active mode-state",
+        fixCommand: "deep-interview clear",
+      },
+      {
+        type: "stale_active_state",
+        skill: "deep-interview",
+        path: file("state", "active", "deep-interview.json"),
+        message: "active entry for deep-interview phase interviewing differs from canonical mode-state phase complete",
+        fixCommand: "deep-interview clear",
+      },
+    ]);
+  });
+});
+
+test("handoff: a merged caller over the StateStore limits leaves no journal and no callee file (plan S1 (c), I-24)", async () => {
+  await fixture(async ({ run, file, exists }) => {
+    // 98 keys reads fine; the handoff adds 7 envelope keys, past the 100-key limit.
+    const wide = Object.fromEntries(Array.from({ length: 98 }, (_, index) => [`k${index}`, index]));
+    await run((tx) => tx.writeModeState("deep-interview", wide, "deep_interview_tool"));
+    await expect(
+      run((tx) => handoffWorkflowTx(tx, { caller: "deep-interview", callee: "ralplan", sessionId: S, owner: RUNTIME_OWNER, reason: "r" })),
+    ).rejects.toThrow("100 top-level keys");
+    expect(await readdir(file("state"))).not.toContain("transactions");
+    expect(await exists("state", "ralplan-state.json")).toBe(false);
+    expect(await exists("state", "audit.jsonl")).toBe(false);
   });
 });

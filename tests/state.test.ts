@@ -11,7 +11,13 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { epochMillis, sessionDirName, StateStore } from "../src/state";
+import {
+  assertStatePayload,
+  epochMillis,
+  safeComponent,
+  sessionDirName,
+  StateStore,
+} from "../src/state";
 
 // A fixed instant; the expected label is derived with the same local getters the
 // implementation uses, so these tests do not depend on the machine's timezone.
@@ -518,4 +524,24 @@ test("C-1: one workflow queue per session serializes every mode and transaction"
     await store.patch("ses_u", { iteration: undefined }, "ultragoal");
     expect((await store.read("ses_u", "ultragoal"))?.iteration).toBeUndefined();
   });
+});
+
+test("DR-31, DR-32: assertStatePayload checks the write limits up front; safeComponent is exported", () => {
+  const limit = 1_048_576;
+  const overhead = Buffer.byteLength(JSON.stringify({ text: "" }), "utf8");
+  const text = "x".repeat(limit - overhead);
+  expect(() => assertStatePayload({ text })).not.toThrow();
+  expect(() => assertStatePayload({ text: `${text}x` })).toThrow("1048576 bytes");
+  // `_meta` is regenerated on write, so it does not count.
+  expect(() => assertStatePayload({ text, _meta: { big: "y".repeat(1000) } })).not.toThrow();
+  let nested: Record<string, unknown> = { leaf: true };
+  for (let index = 0; index < 9; index++) nested = { nested };
+  expect(() => assertStatePayload(nested)).not.toThrow();
+  expect(() => assertStatePayload({ nested })).toThrow("depth 10");
+  const keys = (count: number) =>
+    Object.fromEntries(Array.from({ length: count }, (_, index) => [`k${index}`, index]));
+  expect(() => assertStatePayload(keys(100))).not.toThrow();
+  expect(() => assertStatePayload(keys(101))).toThrow("100 top-level keys");
+  expect(safeComponent("2026-10-02-0101-abcd", "slug")).toBe("2026-10-02-0101-abcd");
+  expect(() => safeComponent("../x", "slug")).toThrow("invalid path component for slug");
 });

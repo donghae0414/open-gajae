@@ -18,7 +18,9 @@ export type StateWriter =
   | "ralplan_hook"
   | "ultragoal_hook"
   | "ultragoal_tool"
-  | "ralplan_tool";
+  | "ralplan_tool"
+  | "deep_interview_tool"
+  | "deep_interview_hook";
 
 export type StateMeta = {
   mode: StateMode;
@@ -178,6 +180,16 @@ function payloadError(
   return undefined;
 }
 
+/**
+ * The payload limits `writeModeState` applies, checked before any write
+ * (deep-interview revision plan DR-31): a caller that writes several files
+ * learns that one of them would be refused before it writes the first.
+ */
+export function assertStatePayload(state: Record<string, unknown>): void {
+  const error = payloadError(state, true);
+  if (error) throw new Error(error);
+}
+
 function validateExplicitPatch(patch: ExplicitStatePatch) {
   for (const [key, max] of [
     ["current_phase", 200],
@@ -254,7 +266,7 @@ export function validateSessionID(sessionID: string): string {
 }
 
 /** gjc `assertSafePathComponent` (`gjc-runtime/workflow-cli-common.ts:24-30`). */
-function safeComponent(value: string, name: string): string {
+export function safeComponent(value: string, name: string): string {
   if (!/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$/.test(value) || value.includes(".."))
     throw new Error(`invalid path component for ${name}: ${value}`);
   return value;

@@ -1,6 +1,6 @@
 // The one cross-skill handoff (ultragoal revision plan C-5, PQ-6 A): `ralplan
-// handoff`, `ultragoal handoff` and the `skill ultragoal` turn gate all move
-// control with `handoffWorkflowTx`. A journal wraps the callee and caller
+// handoff`, `ultragoal handoff`, `deep-interview handoff` and the skill-load
+// turn gates all move control with `handoffWorkflowTx`. A journal wraps the callee and caller
 // state merges and the row writes; nothing replays or rolls it back (I-19).
 // Callers run their own checks first (ralplan DR-7 phase ∈ T and R-OD18
 // `active`). The goal state is never touched (D-HE2). The function takes the
@@ -26,14 +26,18 @@
 //   ledger and `progress.txt` through `recordCaller`, which gjc does not do.
 // - The receipt carries the handoff's `mutation_id` instead of gjc's
 //   per-state receipts.
+// - deep-interview revision plan DR-31 (I-24): both merged states pass the
+//   StateStore payload limits before the journal starts, so a state the write
+//   would refuse leaves no journal and no callee write behind.
 
+import { buildDeepInterviewHudFromState } from "../deep-interview-runtime/hud.js";
 import { buildRalplanHudFromState } from "../ralplan-runtime/hud.js";
 import {
   isValidTransition,
   RALPLAN_INITIAL_STATE,
   RALPLAN_STATES,
 } from "../ralplan-runtime/manifest.js";
-import type { InterviewState, StateWriter, WorkflowTx } from "../state.js";
+import { assertStatePayload, type InterviewState, type StateWriter, type WorkflowTx } from "../state.js";
 import { buildUltragoalHudFromState } from "../ultragoal-runtime/hud.js";
 import { ULTRAGOAL_INITIAL_STATE } from "../ultragoal-runtime/manifest.js";
 import { type AuditOwner, appendAudit, HOOK_OWNER, RUNTIME_OWNER } from "./audit.js";
@@ -50,8 +54,8 @@ type Json = Record<string, unknown>;
 /** gjc `WORKFLOW_STATE_VERSION`. */
 const WORKFLOW_STATE_VERSION = 2;
 
-export type HandoffCaller = "ralplan" | "ultragoal";
-export type HandoffCallee = HandoffCaller | "deep-interview";
+export type HandoffCaller = "ralplan" | "ultragoal" | "deep-interview";
+export type HandoffCallee = HandoffCaller;
 
 type HandoffSkill = {
   /** gjc `initialPhaseForSkill`, but deep-interview's (deviation 33). */
@@ -78,13 +82,18 @@ const HANDOFF_SKILLS: Record<HandoffCallee, HandoffSkill> = {
     row: true,
   },
   ultragoal: { initialPhase: ULTRAGOAL_INITIAL_STATE, hud: buildUltragoalHudFromState, row: true },
-  "deep-interview": { initialPhase: "deep-interview", row: false },
+  "deep-interview": {
+    initialPhase: "deep-interview",
+    hud: buildDeepInterviewHudFromState,
+    row: false,
+  },
 };
 
 /** `_meta.updatedBy` for both states: the caller's tool or hook writer. */
 const WRITERS: Record<HandoffCaller, Record<AuditOwner, StateWriter>> = {
   ralplan: { [RUNTIME_OWNER]: "ralplan_tool", [HOOK_OWNER]: "ralplan_hook" },
   ultragoal: { [RUNTIME_OWNER]: "ultragoal_tool", [HOOK_OWNER]: "ultragoal_hook" },
+  "deep-interview": { [RUNTIME_OWNER]: "deep_interview_tool", [HOOK_OWNER]: "deep_interview_hook" },
 };
 
 export type HandoffInput = {
@@ -239,6 +248,10 @@ export async function handoffWorkflowTx(
     updated_at: at,
   };
 
+  // DR-31 (I-24): the callee is written first, so a caller the StateStore
+  // would refuse must stop the handoff before anything is written.
+  assertStatePayload(calleeState);
+  assertStatePayload(callerState);
   await beginWorkflowTransactionJournalTx(
     tx,
     { mutationId, caller, callee, paths: [calleePath, callerPath, tx.paths.snapshotPath] },
