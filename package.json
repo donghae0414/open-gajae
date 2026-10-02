@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "OMC-aligned OpenCode deep-interview with session-scoped state and read-only specialists",
+  "description": "OpenCode plugin with gjc-based deep-interview, ralplan and ultragoal workflows, session-scoped state and read-only specialists",
   "license": "SEE LICENSE IN LICENSE",
   "exports": {
     ".": "./src/index.ts"

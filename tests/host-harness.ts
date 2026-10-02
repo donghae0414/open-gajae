@@ -49,6 +49,7 @@ export const HOST_VERSION = "opencode v2.0.15";
 
 export const OUR_TOOLS = [
   "ast_grep_search",
+  "deep-interview",
   "goal",
   "lsp_diagnostics",
   "lsp_document_symbols",
@@ -58,9 +59,6 @@ export const OUR_TOOLS = [
   "lsp_servers",
   "lsp_workspace_symbols",
   "ralplan",
-  "state_clear",
-  "state_read",
-  "state_write",
   "ultragoal",
 ];
 export const AGENTS = [
@@ -71,6 +69,7 @@ export const AGENTS = [
   "open-gajae-document-specialist",
   "open-gajae-executor",
   "open-gajae-explore",
+  "open-gajae-lateral-reviewer",
   "open-gajae-planner",
 ];
 export const READ_ONLY_AGENTS = AGENTS.filter(

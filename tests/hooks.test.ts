@@ -1092,7 +1092,7 @@ import { buildCompletionVerification } from "../src/ultragoal-runtime/receipt";
 const UG = "ultragoal" as const;
 const ugState = (store: StateStore, id: string) => store.read(id, UG);
 
-/** The `ralplan`, `ultragoal` and `goal` tools as the primary, over the fixture's hook lineage. */
+/** The `ralplan`, `ultragoal`, `goal` and `deep-interview` tools as the primary, over the fixture's hook lineage. */
 function tools(context: Fixture) {
   const list = createTools(context.store, { locationDir: context.root, projectDir: context.root }, {
     rootSession: context.hooks.rootSession,
@@ -1101,7 +1101,12 @@ function tools(context: Fixture) {
     const tool = list.find((t) => t.name === name)!;
     return (await tool.execute(tool.input.parse(args) as never, { agent: "open-gajae", sessionID, signal: new AbortController().signal })).content;
   };
-  return { ralplan: call("ralplan"), ultragoal: call("ultragoal"), goal: call("goal") };
+  return {
+    ralplan: call("ralplan"),
+    ultragoal: call("ultragoal"),
+    goal: call("goal"),
+    deepInterview: call("deep-interview"),
+  };
 }
 
 const skillLoad = (sessionID: string, id = "ultragoal", agent: string | undefined = "open-gajae") => ({
@@ -1675,20 +1680,20 @@ test("(J) the red-team fragment rides only a marked executor assignment, once; n
   });
 });
 
-test("(K2) C-11: goal and ultragoal belong to the primary alone; ralplan to the primary and its three roles", async () => {
+test("(K2, H5) C-11: goal, ultragoal and deep-interview belong to the primary alone; ralplan to the primary and its three roles", async () => {
   await fixture(async ({ hooks }) => {
     const offered = async (agent?: string, hook: "context" | "hideTools" = "hideTools") => {
       const event = {
         ...(agent === undefined ? {} : { agent }),
-        tools: { ralplan: {}, ultragoal: {}, goal: {}, read: {} },
+        tools: { ralplan: {}, ultragoal: {}, goal: {}, "deep-interview": {}, read: {} },
       };
       await hooks[hook](event);
       return Object.keys(event.tools).sort();
     };
     for (const hook of ["hideTools", "context"] as const) {
-      for (const agent of ["build", "general", "plan", "my-agent", "open-gajae-executor", "open-gajae-cleaner", undefined])
+      for (const agent of ["build", "general", "plan", "my-agent", "open-gajae-executor", "open-gajae-cleaner", "open-gajae-lateral-reviewer", undefined])
         expect(await offered(agent, hook)).toEqual(["read"]);
-      expect(await offered("open-gajae", hook)).toEqual(["goal", "ralplan", "read", "ultragoal"]);
+      expect(await offered("open-gajae", hook)).toEqual(["deep-interview", "goal", "ralplan", "read", "ultragoal"]);
       for (const agent of ["open-gajae-planner", "open-gajae-architect", "open-gajae-critic"])
         expect(await offered(agent, hook)).toEqual(["ralplan", "read"]);
     }
@@ -1739,10 +1744,10 @@ test("(L) compaction projects an active ultragoal run, not a paused goal or a te
   );
 });
 
-test("(M) handoff, create, goal, the turn gate, a continuation, a prompt, context, compaction and a state write all settle (C-1, P-AC6)", async () => {
+test("(M, H8) handoff, create, goal, deep-interview ops, the turn gates, a continuation, a prompt, context, compaction and a state write all settle (C-1, P-AC6, P-AC7)", async () => {
   await fixture(async (context) => {
     const { store, hooks } = context;
-    const { ralplan, ultragoal, goal } = tools(context);
+    const { ralplan, ultragoal, goal, deepInterview } = tools(context);
     const id = nextSession("M");
     await ralplan(id, { op: "start", task: "t" });
     await ralplan(id, { op: "write", stage: "final", stage_n: 1, content: "# f\n" });
@@ -1758,6 +1763,10 @@ test("(M) handoff, create, goal, the turn gate, a continuation, a prompt, contex
         hooks.context({ sessionID: id, agent: "open-gajae", tools: {}, messages: [user("hi")] }),
         hooks.compaction({ sessionID: id, system: [] }),
         store.write(id, { note: "n" }),
+        deepInterview(id, { op: "status" }),
+        deepInterview(id, { op: "doctor" }),
+        load(hooks, id, "deep-interview"),
+        load(hooks, id, "ralplan"),
       ]),
       new Promise<"timeout">((resolve) => {
         timer = setTimeout(() => resolve("timeout"), 5000);
@@ -1768,5 +1777,346 @@ test("(M) handoff, create, goal, the turn gate, a continuation, a prompt, contex
     expect((settled as PromiseSettledResult<unknown>[]).every((result) => result.status === "fulfilled")).toBe(true);
     expect(await store.read(id, RALPLAN_MODE)).toMatchObject({ active: false, current_phase: "handoff" });
     expect(await ugState(store, id)).toMatchObject({ active: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deep-interview revision plan S3a (§3.6 H1-H8): the edit guard, the
+// continuation before the goal loop, the same-execution load gate, the
+// compaction context, the entry and the spec guard.
+// ---------------------------------------------------------------------------
+
+import { chainRefusal, DEEP_INTERVIEW_MUTATION_BLOCK_MESSAGE, specGuardRefusal } from "../src/deep-interview-runtime/messages";
+import { rebuildSnapshotTx } from "../src/skill-state/rows";
+
+/** A mode-state file read straight from disk, or `undefined`. */
+const stateOf = async (store: StateStore, sessionID: string, mode: StateMode | "ultragoal") =>
+  readFile(join(await store.resolveSessionDir(sessionID), "state", `${mode}-state.json`), "utf8")
+    .then((text) => JSON.parse(text))
+    .catch(() => undefined);
+
+const diRound = (round: number) => ({
+  round,
+  round_key: `round-${round}`,
+  lifecycle: "scored",
+  question_text: `q${round}`,
+  answer: `a${round}`,
+  ambiguity: 0.4,
+  scores: { goal: 0.6, constraints: 0.6, criteria: 0.6 },
+});
+
+/** An interview on `handoff` with a spec, through the tool. */
+async function specced(context: Fixture, id: string) {
+  const { deepInterview } = tools(context);
+  await deepInterview(id, { op: "start", idea: "build a cli" });
+  await deepInterview(id, { op: "write", input: { state: { rounds: [diRound(1)] } } });
+  await deepInterview(id, { op: "spec", content: "# Spec\n", slug: "s" });
+}
+
+/** A fresh execution: clear the turn marker without a continuation. */
+const newExecution = (hooks: RalplanHooks, sessionID: string) => emit(hooks, "session.execution.failed", sessionID);
+
+const refusal = async (hooks: RalplanHooks, call: { tool: string; sessionID: string; id: string }) =>
+  ((await failed(hooks, call)).error as ToolError).message;
+
+test("(H1) the deep-interview edit guard blocks write/edit/patch outside a temp path on interviewing and handoff (DR-19, AC28)", async () => {
+  const id = nextSession("H1-root");
+  const child = nextSession("H1-child");
+  await fixture(
+    async (context) => {
+      const { root, store, hooks } = context;
+      const { deepInterview, ralplan } = tools(context);
+      // No state: no guard.
+      expect((await writeCall(hooks, id, join(root, "src/x.ts"))).input).not.toEqual({});
+      await deepInterview(id, { op: "start", idea: "i" });
+      for (const session of [id, child]) {
+        const call = await writeCall(hooks, session, join(root, "src/x.ts"));
+        expect(call.input).toEqual({});
+        expect(await refusal(hooks, call)).toBe(DEEP_INTERVIEW_MUTATION_BLOCK_MESSAGE);
+        expect((await toolCall(hooks, session, "edit", { path: join(root, "src/x.ts"), oldString: "a", newString: "b" })).input).toEqual({});
+        expect((await toolCall(hooks, session, "patch", { patchText: "*** Begin Patch\n*** Add File: src/y.ts\n+x\n*** End Patch" })).input).toEqual({});
+        expect((await writeCall(hooks, session, join(tmpdir(), "open-gajae-di-scratch.md"))).input).not.toEqual({});
+      }
+      // `handoff` keeps blocking (E1, K2).
+      await deepInterview(id, { op: "spec", content: "# s", slug: "s" });
+      expect((await writeCall(hooks, id, join(root, "src/x.ts"))).input).toEqual({});
+      // An inactive interview or a corrupt state releases it.
+      await deepInterview(id, { op: "state", patch: { active: false } });
+      expect((await writeCall(hooks, id, join(root, "src/x.ts"))).input).not.toEqual({});
+      await deepInterview(id, { op: "start", idea: "i" });
+      await writeFile(join(await store.resolveSessionDir(id), "state", "deep-interview-state.json"), "{");
+      expect((await writeCall(hooks, id, join(root, "src/x.ts"))).input).not.toEqual({});
+      // A ralplan row outranks it: the ralplan guard decides (no deep-interview branch).
+      await deepInterview(id, { op: "start", idea: "i" });
+      await ralplan(id, { op: "start", task: "t" });
+      await ralplan(id, { op: "state", patch: { active: false } });
+      await store.workflowTransaction(id, (tx) =>
+        syncActiveRowTx(tx, { skill: "ralplan", active: true, phase: "planner", sessionId: id }, RUNTIME_OWNER),
+      );
+      expect((await writeCall(hooks, id, join(root, "src/x.ts"))).input).not.toEqual({});
+    },
+    { parents: { [child]: id } },
+  );
+});
+
+test("(H2) continuation: interviewing twice per prompt and before the goal; handoff holds both; a failed decision falls to the goal (DR-20, AC29)", async () => {
+  await fixture(async (context) => {
+    const { store, hooks, synthetics } = context;
+    const { deepInterview } = tools(context);
+    const id = nextSession("H2");
+    await setGoal(store, id);
+    await deepInterview(id, { op: "start", idea: "i" });
+    await succeeded(hooks, id);
+    await succeeded(hooks, id);
+    await succeeded(hooks, id);
+    expect(synthetics.map((s) => s.description)).toEqual([
+      "open-gajae: deep-interview continuation 1/2",
+      "open-gajae: deep-interview continuation 2/2",
+    ]);
+    expect(synthetics[0]).toMatchObject({ resume: true });
+    expect(synthetics[0].text).toStartWith("<deep-interview-continuation>");
+    expect(synthetics[1].text).toContain("(Continuation 2/2 for this prompt)");
+    // The goal path never ran while deep-interview held it.
+    expect(await goalRecord(store, id)).toBeUndefined();
+    // A real prompt gives a fresh budget.
+    await deliver(context, id, "my answer");
+    await succeeded(hooks, id);
+    expect(synthetics.at(-1)!.description).toBe("open-gajae: deep-interview continuation 1/2");
+    // Esc stops it until the next real prompt.
+    await emit(hooks, "session.execution.interrupted", id, { reason: "user" });
+    const before = synthetics.length;
+    await succeeded(hooks, id);
+    expect(synthetics).toHaveLength(before);
+    await deliver(context, id, "go on");
+    // `handoff` (spec saved): neither deep-interview nor the goal continues.
+    await deepInterview(id, { op: "spec", content: "# s", slug: "s" });
+    const held = synthetics.length;
+    await succeeded(hooks, id);
+    expect(synthetics).toHaveLength(held);
+    // After the handoff the goal resumes.
+    await deepInterview(id, { op: "handoff", to: "ralplan" });
+    await succeeded(hooks, id);
+    expect(synthetics.at(-1)!.description).toBe("open-gajae: goal continuation");
+    // An unreadable row makes the deep-interview decision fail: the goal path still runs.
+    await deepInterview(id, { op: "clear" });
+    await store.workflowTransaction(id, (tx) => tx.writeText(tx.paths.activeRow("deep-interview"), "{"));
+    const count = synthetics.length;
+    await succeeded(hooks, id);
+    expect(synthetics).toHaveLength(count + 1);
+    expect(synthetics.at(-1)!.description).toBe("open-gajae: goal continuation");
+  });
+});
+
+test("(H3) the load gate in the deep-interview execution: refuse, hand off, link a finished interview, pass (DR-21, AC22)", async () => {
+  await fixture(async (context) => {
+    const { store, hooks } = context;
+    const { deepInterview, ralplan, ultragoal } = tools(context);
+    const DI_FILE = "deep-interview";
+
+    // interviewing refuses `skill ralplan` and `skill ultragoal` (no seed).
+    const a = nextSession("H3-a");
+    await deepInterview(a, { op: "start", idea: "i" });
+    await load(hooks, a, "deep-interview");
+    for (const skill of ["ralplan", "ultragoal"]) {
+      const call = await load(hooks, a, skill);
+      expect(call.input).toEqual({});
+      expect(await refusal(hooks, call)).toBe(chainRefusal("interviewing", skill));
+    }
+    expect(await stateOf(store, a, "ultragoal")).toBeUndefined();
+    // A later execution has no gate (K1); a non-primary agent never does.
+    await newExecution(hooks, a);
+    expect((await load(hooks, a, "ralplan")).input).toEqual({ id: "ralplan" });
+    await newExecution(hooks, a);
+    await load(hooks, a, "deep-interview", "build");
+    expect((await load(hooks, a, "ralplan", "build")).input).toEqual({ id: "ralplan" });
+
+    // U-1 A: an inactive interviewing, an unknown phase and no phase refuse.
+    const u = nextSession("H3-u");
+    await deepInterview(u, { op: "start", idea: "i" });
+    await deepInterview(u, { op: "state", patch: { active: false } });
+    await load(hooks, u, "deep-interview");
+    expect(await refusal(hooks, await load(hooks, u, "ralplan"))).toBe(chainRefusal("interviewing", "ralplan"));
+    for (const [phase, shown] of [["bogus", "bogus"], [undefined, "running"]] as const) {
+      await store.workflowTransaction(u, (tx) =>
+        tx.writeModeState(DI_FILE, { skill: DI_FILE, active: true, ...(phase ? { current_phase: phase } : {}) }, "deep_interview_tool"),
+      );
+      expect(await refusal(hooks, await load(hooks, u, "ralplan"))).toBe(chainRefusal(shown, "ralplan"));
+    }
+
+    // No state or a corrupt state passes (PQ-11 b=B).
+    const n = nextSession("H3-n");
+    await load(hooks, n, "deep-interview");
+    expect((await load(hooks, n, "ralplan")).input).toEqual({ id: "ralplan" });
+    await newExecution(hooks, n);
+    await deepInterview(n, { op: "start", idea: "i" });
+    await writeFile(join(await store.resolveSessionDir(n), "state", "deep-interview-state.json"), "{");
+    await load(hooks, n, "deep-interview");
+    expect((await load(hooks, n, "ralplan")).input).toEqual({ id: "ralplan" });
+
+    // An active handoff with its spec hands off; with the spec gone it refuses.
+    const h = nextSession("H3-h");
+    await specced(context, h);
+    await load(hooks, h, "deep-interview");
+    expect((await load(hooks, h, "ralplan")).input).toEqual({ id: "ralplan" });
+    expect(await stateOf(store, h, "ralplan")).toMatchObject({ active: true, current_phase: "planner", handoff_from: "deep-interview" });
+    expect(await stateOf(store, h, DEEP_INTERVIEW_MODE)).toMatchObject({ active: false, current_phase: "handoff", handoff_to: "ralplan" });
+    // Already handed off (inactive handoff): passes without a second handoff.
+    await newExecution(hooks, h);
+    await load(hooks, h, "deep-interview");
+    expect((await load(hooks, h, "ralplan")).input).toEqual({ id: "ralplan" });
+    const g = nextSession("H3-g");
+    await specced(context, g);
+    await rm(join(await store.resolveSessionDir(g), "specs", "deep-interview-s.md"));
+    await load(hooks, g, "deep-interview");
+    expect(await refusal(hooks, await load(hooks, g, "ralplan"))).toStartWith("open-gajae: deep-interview spec ");
+    // `skill ultragoal` hands off too, without a goal-planning seed of its own.
+    const ug = nextSession("H3-ug");
+    await specced(context, ug);
+    await load(hooks, ug, "deep-interview");
+    expect((await load(hooks, ug, "ultragoal")).input).toEqual({ id: "ultragoal" });
+    expect(await stateOf(store, ug, "ultragoal")).toMatchObject({ active: true, current_phase: "goal-planning", handoff_from: "deep-interview" });
+
+    // PQ-11 E: a finished interview with a verified spec is linked, inactive or active.
+    for (const finish of ["clear", "complete"] as const) {
+      const f = nextSession(`H3-${finish}`);
+      await specced(context, f);
+      if (finish === "clear") await deepInterview(f, { op: "clear" });
+      else await deepInterview(f, { op: "state", patch: { current_phase: "complete" } });
+      await load(hooks, f, "deep-interview");
+      expect((await load(hooks, f, "ralplan")).input).toEqual({ id: "ralplan" });
+      expect(await stateOf(store, f, "ralplan")).toMatchObject({ active: true, current_phase: "planner", handoff_from: "deep-interview" });
+      expect(await stateOf(store, f, DEEP_INTERVIEW_MODE)).toMatchObject({ active: false, current_phase: "handoff", handoff_to: "ralplan" });
+      const rows = (await readFile(join(await store.resolveSessionDir(f), "state", "audit.jsonl"), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .filter((row) => row.skill === "deep-interview" && ["handoff", "invalid_transition_detected"].includes(row.verb));
+      // The caller is written inactive: one handoff row, no diagnostic (C4-11).
+      expect(rows.map((row) => row.verb)).toEqual(["handoff"]);
+    }
+    // A4-6: every releasing phase links.
+    for (const phase of ["completed", "failed", "cancelled", "canceled", "inactive"]) {
+      const r = nextSession(`H3-${phase}`);
+      await specced(context, r);
+      const spec = await stateOf(store, r, DEEP_INTERVIEW_MODE);
+      const { _meta, ...rest } = spec;
+      await store.workflowTransaction(r, (tx) =>
+        tx.writeModeState(DI_FILE, { ...rest, active: false, current_phase: phase }, "deep_interview_tool"),
+      );
+      await load(hooks, r, "deep-interview");
+      expect((await load(hooks, r, "ralplan")).input).toEqual({ id: "ralplan" });
+      expect(await stateOf(store, r, "ralplan")).toMatchObject({ handoff_from: "deep-interview" });
+    }
+    // A finished interview without a valid spec passes and changes nothing; for ultragoal the seed follows (A4-7).
+    const m = nextSession("H3-m");
+    await specced(context, m);
+    await deepInterview(m, { op: "clear" });
+    await writeFile(join(await store.resolveSessionDir(m), "specs", "deep-interview-s.md"), "edited\n");
+    const before = await stateOf(store, m, DEEP_INTERVIEW_MODE);
+    await load(hooks, m, "deep-interview");
+    expect((await load(hooks, m, "ralplan")).input).toEqual({ id: "ralplan" });
+    expect(await stateOf(store, m, "ralplan")).toBeUndefined();
+    expect(await stateOf(store, m, DEEP_INTERVIEW_MODE)).toEqual(before);
+    expect((await load(hooks, m, "ultragoal")).input).toEqual({ id: "ultragoal" });
+    expect(await stateOf(store, m, "ultragoal")).toMatchObject({ active: true, current_phase: "goal-planning" });
+    expect((await stateOf(store, m, "ultragoal")).handoff_from).toBeUndefined();
+
+    // PQ-36 C (K15): an active callee is linked anyway and returns to its start phase.
+    const k = nextSession("H3-k");
+    await specced(context, k);
+    await deepInterview(k, { op: "clear" });
+    await ralplan(k, { op: "start", task: "t" });
+    await ralplan(k, { op: "write", stage: "planner", stage_n: 1, content: "# p\n" });
+    await ralplan(k, { op: "state", patch: { current_phase: "architect" } });
+    await load(hooks, k, "deep-interview");
+    expect((await load(hooks, k, "ralplan")).input).toEqual({ id: "ralplan" });
+    expect(await stateOf(store, k, "ralplan")).toMatchObject({ active: true, current_phase: "planner", run_id: k, handoff_from: "deep-interview" });
+    expect(await Bun.file(join(await store.resolveSessionDir(k), "plans", "ralplan", k, "stage-01-planner.md")).exists()).toBe(true);
+    const audit = (await readFile(join(await store.resolveSessionDir(k), "state", "audit.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((row) => row.skill === "ralplan");
+    expect(audit.slice(-2).map((row) => [row.verb, row.from_phase, row.to_phase])).toEqual([
+      ["invalid_transition_detected", "architect", "planner"],
+      ["handoff", "architect", "planner"],
+    ]);
+    // An active ultragoal returns to goal-planning: goals.json stays, product edits are refused (C4-1).
+    const v = nextSession("H3-v");
+    await specced(context, v);
+    await deepInterview(v, { op: "clear" });
+    await ultragoal(v, { op: "create", description: "ship", goals: GOALS });
+    await ultragoal(v, { op: "next" });
+    const goals = await readFile(join(await store.resolveSessionDir(v), "ultragoal", "goals.json"), "utf8");
+    // While ultragoal is the visible primary, the chain guard refuses the
+    // deep-interview load, so the gate meets an active ultragoal only when its
+    // row is gone (here removed by hand).
+    await newExecution(hooks, v);
+    expect((await load(hooks, v, "deep-interview")).input).toEqual({});
+    await store.workflowTransaction(v, async (tx) => {
+      await tx.remove(tx.paths.activeRow("ultragoal"));
+      await rebuildSnapshotTx(tx, RUNTIME_OWNER);
+    });
+    await newExecution(hooks, v);
+    expect((await load(hooks, v, "deep-interview")).input).toEqual({ id: "deep-interview" });
+    expect((await load(hooks, v, "ultragoal")).input).toEqual({ id: "ultragoal" });
+    expect(await stateOf(store, v, "ultragoal")).toMatchObject({ active: true, current_phase: "goal-planning", handoff_from: "deep-interview" });
+    expect(await readFile(join(await store.resolveSessionDir(v), "ultragoal", "goals.json"), "utf8")).toBe(goals);
+    const blocked = await writeCall(hooks, v, join(context.root, "src/x.ts"));
+    expect(blocked.input).toEqual({});
+  });
+});
+
+test("(H4) compaction adds the deep-interview context while it is the active primary on a guard phase (DR-22, AC30)", async () => {
+  const id = nextSession("H4-root");
+  const child = nextSession("H4-child");
+  await fixture(
+    async (context) => {
+      const { hooks } = context;
+      const { deepInterview, ultragoal } = tools(context);
+      const compact = async (sessionID = id) => {
+        const event = { sessionID, system: [] as { type: "text"; text: string }[] };
+        await hooks.compaction(event);
+        return event.system.map((part) => part.text).filter((text) => text.startsWith("<deep-interview-compaction-context>"));
+      };
+      expect(await compact()).toEqual([]);
+      await deepInterview(id, { op: "start", idea: "i" });
+      await deepInterview(id, { op: "write", input: { state: { rounds: [diRound(1), diRound(2)] } } });
+      const [text] = await compact();
+      for (const line of ["phase interviewing", "rounds: 2", "ambiguity: 40% (threshold 5%)", "`deep-interview status`"])
+        expect(text).toContain(line);
+      expect(await compact(child)).toEqual([]);
+      await deepInterview(id, { op: "spec", content: "# s", slug: "s" });
+      expect((await compact())[0]).toContain("spec: ");
+      await deepInterview(id, { op: "state", patch: { active: false } });
+      expect(await compact()).toEqual([]);
+      // A handed-over file without `state` reads as 0 rounds (A2-4).
+      const h = nextSession("H4-h");
+      await ultragoal(h, { op: "create", description: "ship", goals: GOALS });
+      await ultragoal(h, { op: "handoff", to: "deep-interview", reason: "clarify the goal" });
+      expect((await compact(h))[0]).toContain("rounds: 0");
+    },
+    { parents: { [child]: id } },
+  );
+});
+
+test("(H6, H7) entry seeds nothing; the panel role gets no notice; deep-interview specs refuse direct writes (AC27, AC19)", async () => {
+  await fixture(async (context) => {
+    const { root, store, hooks } = context;
+    const id = nextSession("H6");
+    await notices(context, id, "deep interview me about the cli");
+    await notices(context, id, "about the cli", { skills: ["deep-interview"] });
+    await load(hooks, id, "deep-interview");
+    expect(await stateOf(store, id, DEEP_INTERVIEW_MODE)).toBeUndefined();
+    expect(await activeRow(store, id, "deep-interview")).toBeUndefined();
+    const reviewer = nextSession("H6-reviewer");
+    expect(await notices(context, reviewer, "ralplan this, then deep interview", { agent: "open-gajae-lateral-reviewer" })).toEqual([]);
+    // H7: the spec files are the deep-interview tool's.
+    const folder = basename(await store.resolveSessionDir(id));
+    const spec = `.open-gajae/${folder}/specs/deep-interview-x.md`;
+    const call = await writeCall(hooks, id, join(root, spec));
+    expect(call.input).toEqual({});
+    expect(await refusal(hooks, call)).toBe(specGuardRefusal(spec));
+    expect((await writeCall(hooks, id, join(root, `.open-gajae/${folder}/specs/notes.md`))).input).not.toEqual({});
   });
 });

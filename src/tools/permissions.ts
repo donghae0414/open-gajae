@@ -30,6 +30,7 @@ const CODE_ACTORS = new Set([
   "open-gajae-document-specialist",
   "open-gajae-executor",
   "open-gajae-cleaner",
+  "open-gajae-lateral-reviewer",
 ]);
 
 /** The actor check shared by every code tool; also honors cancellation. */

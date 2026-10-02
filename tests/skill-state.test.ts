@@ -78,7 +78,7 @@ test("rows: the snapshot primary follows the pipeline rank, as does the visible 
 test("rows: an active row removes the upstream pipeline rows, never a downstream one", async () => {
   await fixture(async ({ run, json, exists, audit }) => {
     await run(async (tx) => {
-      await row(tx, { skill: "deep-interview", active: true, phase: "deep-interview" });
+      await row(tx, { skill: "deep-interview", active: true, phase: "interviewing" });
       await row(tx, { skill: "ralplan", active: true, phase: "planner" });
       await syncActiveRowTx(tx, { skill: "ultragoal", active: true, phase: "goal-planning", sessionId: S }, RUNTIME_OWNER);
     });
@@ -190,22 +190,31 @@ test("handoff ultragoal → ralplan: fields kept, ralplan planner on its run, ro
   });
 });
 
-test("handoff ultragoal → deep-interview: phase deep-interview, fields kept, no callee row (PQ-5)", async () => {
-  await fixture(async ({ run, json, exists }) => {
+test("handoff ultragoal → deep-interview: phase interviewing, fields kept, an active row with chips (DR-10)", async () => {
+  await fixture(async ({ run, json, audit }) => {
     await run(async (tx) => {
       await tx.writeModeState("ultragoal", { skill: "ultragoal", active: true, current_phase: "active" }, "ultragoal_tool");
-      await tx.writeModeState("deep-interview", { active: false, current_phase: "complete", state: { rounds: [1] } }, "state_write_tool");
+      await tx.writeModeState("deep-interview", { active: false, current_phase: "complete", state: { rounds: [{ round_key: "round-1" }] } }, "state_write_tool");
     });
     await run((tx) => handoffWorkflowTx(tx, { caller: "ultragoal", callee: "deep-interview", sessionId: S, owner: RUNTIME_OWNER, reason: "clarify" }));
     expect(await json("state", "deep-interview-state.json")).toMatchObject({
       active: true,
-      current_phase: "deep-interview",
+      current_phase: "interviewing",
       handoff_from: "ultragoal",
-      state: { rounds: [1] },
+      state: { rounds: [{ round_key: "round-1" }] },
     });
-    expect(await exists("state", "active", "deep-interview.json")).toBe(false);
+    const row = await json("state", "active", "deep-interview.json");
+    expect(row).toMatchObject({ active: true, phase: "interviewing", handoff_from: "ultragoal" });
+    expect(row.hud.chips).toEqual([
+      { label: "phase", value: "interviewing", priority: 10 },
+      { label: "round", value: "1", priority: 30 },
+    ]);
     expect(await json("state", "active", "ultragoal.json")).toMatchObject({ active: false, handoff_to: "deep-interview" });
-    expect(await json("state", "skill-active-state.json")).toMatchObject({ active: false, skill: "" });
+    expect(await json("state", "skill-active-state.json")).toMatchObject({ active: true, skill: "deep-interview", phase: "interviewing" });
+    // complete → interviewing is not a manifest edge: gjc's audit-only diagnostic.
+    expect((await audit()).filter((r) => r.verb === "invalid_transition_detected").map((r) => [r.skill, r.from_phase, r.to_phase])).toEqual([
+      ["deep-interview", "complete", "interviewing"],
+    ]);
   });
 });
 

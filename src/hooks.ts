@@ -46,6 +46,24 @@
 //   `@deep-interview` and their keywords get the handoff notice; the
 //   ultragoal keyword and mention get a notice only (D-HE4).
 //
+// Deep-interview revision plan S3a (same gjc revision; the decisions live in
+// `src/deep-interview-runtime/hooks.ts`):
+// - DR-19 (deviation 14): while deep-interview is the visible primary skill,
+//   active on `interviewing` or `handoff`, mutations outside a neutral temp
+//   path are refused (`workflow-mutation-guard.ts:22-23,265-268`); the
+//   deep-interview specs are always refused to the mutation tools (DR-24,
+//   deviation 35).
+// - DR-20 (deviation 16): on each root `succeeded`, deep-interview decides
+//   first: `interviewing` continues up to twice per real user prompt, and
+//   while it is `interviewing` or `handoff` the goal and ralplan
+//   continuations are skipped (`session/agent-session.ts:21137-21211,
+//   8138-8157`; an exception to D-TL6).
+// - DR-21 (deviation 31): with the deep-interview turn marker, `skill ralplan`
+//   (after the ultragoal chain guard) and `skill ultragoal` (before its turn
+//   gate) pass the deep-interview load gate (`tools/skill.ts:203-222`).
+// - DR-22 (deviation 15): compaction adds the deep-interview recovery context
+//   between ultragoal's and ralplan's.
+//
 // Notices are `session.synthetic({ resume: false })` messages. The host places
 // them before the user message of the same turn, while OMC and v1 appended after
 // it (Phase 0 P7); this is a recorded deviation. If `synthetic` rejects, the
@@ -71,6 +89,7 @@ import { Error as ToolError } from "@opencode/plugin/promise/tool";
 import {
   ARTIFACT_TOOLS,
   artifactPathsOf,
+  isDeepInterviewOwned,
   isRalplanOwned,
   isSessionState,
   isUltragoalOwned,
@@ -78,6 +97,8 @@ import {
   projectRelative,
   sessionArtifactOwner,
 } from "./artifact-guard.js";
+import { createDeepInterviewHooks } from "./deep-interview-runtime/hooks.js";
+import { specGuardRefusal } from "./deep-interview-runtime/messages.js";
 import { createGoalHooks } from "./goal/hooks.js";
 import { GOAL_CONTEXT_DESCRIPTION } from "./goal/messages.js";
 import { INJECTION_MARKERS } from "./injection.js";
@@ -217,7 +238,8 @@ export type RalplanHooks = {
   hideTools(event: ContextEvent): void;
   /**
    * The `compaction` session hook: the root's ultragoal recovery context
-   * (DR-17), then the active ralplan run's recovery contract (D-H2/AC19).
+   * (DR-17), the root's deep-interview context (deep-interview DR-22), then
+   * the active ralplan run's recovery contract (D-H2/AC19).
    */
   compaction(event: CompactionEvent): Promise<void>;
   executeBefore(event: ExecuteBeforeEvent): Promise<void>;
@@ -233,11 +255,11 @@ const PRIMARY_AGENT = "open-gajae";
 const RED_TEAM_AGENT = "open-gajae-executor";
 
 /**
- * G1's deny-list: the five owned role subagents from `src/config.ts`. A
+ * G1's deny-list: the six owned role subagents from `src/config.ts`. A
  * `subagent` turn runs in a child session carrying the child's agent, and a
  * role's brief can quote a workflow keyword, so the prompt hook skips these
  * roles: no keyword or mention notices in a session whose agent has
- * `state_clear` denied. Any other agent except `open-gajae` gets no notice
+ * `deep-interview` denied. Any other agent except `open-gajae` gets no notice
  * either (R-OD20) but still lifts the stop mark and the goal hold;
  * `undefined` or a failed lookup proceeds.
  */
@@ -247,13 +269,15 @@ const ROLE_SUBAGENTS = new Set([
   "open-gajae-critic",
   "open-gajae-executor",
   "open-gajae-cleaner",
+  "open-gajae-lateral-reviewer",
 ]);
 
 /**
  * Plan C-11 (D-HE8, E-2): each workflow tool and the agents that own it,
  * matching the tools' own actor checks — `ralplan` D-W3
- * (`src/ralplan-runtime/tool.ts`), `ultragoal` and `goal` the primary alone
- * (`src/ultragoal-runtime/tool.ts`, `src/goal/tool.ts`, I-12). The `context`
+ * (`src/ralplan-runtime/tool.ts`), `ultragoal`, `goal` and `deep-interview`
+ * the primary alone (`src/ultragoal-runtime/tool.ts`, `src/goal/tool.ts`,
+ * I-12, `src/deep-interview-runtime/tool.ts`, deep-interview D-HL7). The `context`
  * hook deletes a tool from any other agent's request, host and user-defined
  * agents included, so the host neither offers it nor runs a call to it
  * (`core/src/session/model-request.ts:225-255`, `core/src/tool.ts:272-275`),
@@ -270,6 +294,7 @@ const TOOL_OWNERS: Record<string, ReadonlySet<string>> = {
   ]),
   ultragoal: new Set([PRIMARY_AGENT]),
   goal: new Set([PRIMARY_AGENT]),
+  "deep-interview": new Set([PRIMARY_AGENT]),
 };
 
 /**
@@ -299,7 +324,7 @@ const WORKFLOW_SKILLS: ReadonlySet<unknown> = new Set([
  * runtime-owned paths and tools substituted (plan S3, AC18).
  */
 const WORKFLOW_STATE_MUTATION_BLOCK_MESSAGE =
-  ".open-gajae workflow state and ralplan artifacts are runtime-owned. Agent mutation tools cannot edit `.open-gajae/_session-*/state/**` or `.open-gajae/_session-*/plans/ralplan/**`; use the sanctioned tool instead.\nUse: `ralplan` for ralplan state and plans, `ultragoal` for ultragoal state, `goal` for the goal, `state_write`/`state_clear` for deep-interview state.";
+  ".open-gajae workflow state and ralplan artifacts are runtime-owned. Agent mutation tools cannot edit `.open-gajae/_session-*/state/**` or `.open-gajae/_session-*/plans/ralplan/**`; use the sanctioned tool instead.\nUse: `ralplan` for ralplan state and plans, `ultragoal` for ultragoal state, `goal` for the goal, `deep-interview` for deep-interview state and specs.";
 
 /**
  * gajae-code 5c52314 `skill-state/workflow-mutation-guard.ts:26-27`
@@ -332,6 +357,7 @@ export function createHooks(
   projectDir: string,
 ): RalplanHooks {
   const goal = createGoalHooks(store);
+  const deepInterview = createDeepInterviewHooks(store);
 
   // The absolute `Read fallback:` path OMC resolved through `resolveSkillPath`;
   // here it is always this package's own copy, so no existence probe is needed.
@@ -529,6 +555,20 @@ export function createHooks(
         return;
       }
 
+      // Deep-interview DR-20: deep-interview decides first; a decision that
+      // fails counts as none, so the goal path still runs.
+      let interview: Awaited<ReturnType<typeof deepInterview.decideContinuation>> = { kind: "none" };
+      try {
+        interview = await deepInterview.decideContinuation(sessionID);
+      } catch (error) {
+        log("deep-interview continuation could not decide; trying the goal", error);
+      }
+      if (interview.kind === "continue") {
+        await inject(sessionID, interview.text, interview.description);
+        return;
+      }
+      if (interview.kind === "hold") return;
+
       // D-TL6, I-6: an active goal takes the goal path only, held or not.
       let decision: Awaited<ReturnType<typeof goal.decideContinuation>>;
       try {
@@ -640,8 +680,9 @@ export function createHooks(
   /**
    * D2c: a session may only write plans and drafts under its own session
    * folder; only this can pin the session. Ahead of it, the runtime-owned
-   * paths — ultragoal files, the ralplan run folders and the session `state/`
-   * tree — are refused for every agent and session (plan S3 ①, AC18). Returns
+   * paths — ultragoal files, the deep-interview specs, the ralplan run
+   * folders and the session `state/` tree — are refused for every agent and
+   * session (plan S3 ①, AC18; deep-interview DR-24). Returns
    * the model-facing guidance when the call must be blocked, `undefined` when
    * it may run. Any failure to decide blocks (fail closed).
    */
@@ -656,6 +697,8 @@ export function createHooks(
         const shown = projectRelative(locationDir, projectDir, path) ?? path;
         return `open-gajae: ${shown} is ultragoal-owned; change it only through the ultragoal tool`;
       }
+      if (isDeepInterviewOwned(locationDir, projectDir, path))
+        return specGuardRefusal(projectRelative(locationDir, projectDir, path) ?? path);
       if (
         isRalplanOwned(locationDir, projectDir, path) ||
         isSessionState(locationDir, projectDir, path)
@@ -685,7 +728,9 @@ export function createHooks(
    * `planningBlockedTargets`): the lineage root's visible primary skill
    * decides. Ralplan blocks while its state is readable, active and on a
    * phase outside R — final and handoff keep blocking (DR-10); ultragoal
-   * blocks while its state is active on `goal-planning` (DR-22). A
+   * blocks while its state is active on `goal-planning` (DR-22);
+   * deep-interview blocks while active on `interviewing` or `handoff`
+   * (deep-interview DR-19). A
    * `write`/`edit`/`patch` from any agent of the lineage is then refused
    * unless every target is a neutral temp path (DR-11, PQ-13 A). A call
    * without a target is refused, as gjc refuses an unknown target. Returns
@@ -720,6 +765,7 @@ export function createHooks(
             ? ULTRAGOAL_GOAL_PLANNING_MUTATION_BLOCK_MESSAGE
             : undefined;
         }
+        if (primary?.skill === DEEP_INTERVIEW_SKILL_NAME) return deepInterview.guardMessageTx(tx);
         return undefined;
       });
       if (message === undefined) return undefined;
@@ -737,7 +783,10 @@ export function createHooks(
 
   /**
    * Plan C-10 (D-HE6, I-7, I-15): `skill ultragoal` at the lineage root. When
-   * this execution loaded ralplan (the turn marker) and ralplan is active, a
+   * this execution loaded deep-interview (the turn marker), the deep-interview
+   * load gate decides first (deep-interview DR-21): a refusal refuses the
+   * load, a handoff makes ultragoal active on `goal-planning` already, and a
+   * pass goes on. When this execution loaded ralplan and ralplan is active, a
    * phase in T is handed off through the shared journaled handoff (PQ-6 A)
    * and a phase outside T refuses the load. Otherwise — no marker, an
    * inactive, missing, unreadable or unknown-phase ralplan (DR-21) — the
@@ -748,6 +797,11 @@ export function createHooks(
     const root = await rootSession(sessionID);
     const marker = turnSkill.get(sessionID);
     return store.workflowTransaction(root, async (tx) => {
+      if (marker === DEEP_INTERVIEW_SKILL_NAME) {
+        const gate = await deepInterview.gateTx(tx, root, "ultragoal");
+        if (gate.kind === "refuse") return gate.message;
+        if (gate.kind === "handed-off") return undefined;
+      }
       if (marker === RALPLAN_SKILL_NAME) {
         const ralplan = await tx.readState().catch(() => undefined);
         const phase = ralplan?.current_phase;
@@ -835,6 +889,8 @@ export function createHooks(
         log("could not resolve the session lineage for the prompt", error);
       }
       if (root === sessionID) {
+        // Deep-interview DR-20: a real user prompt gives a fresh budget.
+        deepInterview.resetContinuation(sessionID);
         try {
           await goal.releaseHold(sessionID);
         } catch (error) {
@@ -1014,6 +1070,23 @@ export function createHooks(
         event.input = {};
         return;
       }
+      // ⑤ Deep-interview DR-21: `skill ralplan` after this execution loaded
+      // deep-interview passes the deep-interview load gate.
+      if (
+        skill === RALPLAN_SKILL_NAME &&
+        event.agent === PRIMARY_AGENT &&
+        turnSkill.get(event.sessionID) === DEEP_INTERVIEW_SKILL_NAME
+      ) {
+        const root = await rootSession(event.sessionID);
+        const gate = await store.workflowTransaction(root, (tx) =>
+          deepInterview.gateTx(tx, root, "ralplan"),
+        );
+        if (gate.kind === "refuse") {
+          blocked.set(event.id, gate.message);
+          event.input = {};
+          return;
+        }
+      }
       markTurn(event.sessionID, event.id, skill);
     } catch (error) {
       log("execute.before handler failed", error);
@@ -1105,6 +1178,8 @@ export function createHooks(
 
   /**
    * DR-17: the root's ultragoal recovery context (`src/goal/hooks.ts`), then
+   * the root's deep-interview context while it is the visible primary skill,
+   * active on `interviewing` or `handoff` (deep-interview DR-22, E-6), then
    * (D-H2/AC19) the active ralplan run's recovery contract — gjc's
    * projection of the newest final (else planner/revision) stage file,
    * verified against its ledger sha256, and render
@@ -1121,6 +1196,14 @@ export function createHooks(
       }
     } catch (error) {
       log("ultragoal compaction context failed", error);
+    }
+    try {
+      if ((await rootSession(event.sessionID)) === event.sessionID) {
+        const text = await deepInterview.compactionText(event.sessionID);
+        if (text !== undefined) event.system.push({ type: "text", text });
+      }
+    } catch (error) {
+      log("deep-interview compaction context failed", error);
     }
     try {
       const text = await store.ralplanTransaction(event.sessionID, async (tx) => {

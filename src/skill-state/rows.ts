@@ -164,12 +164,12 @@ export async function syncActiveRowTx(
 /**
  * gjc `applyHandoffToActiveState`: the caller's row stays as an inactive
  * `handoff_to` row, keeping a `handoff_from` its prior row had, and the
- * callee, when it has a row, gets an active one; both at the handoff time.
- * No upstream row is removed. Then the snapshot is rebuilt.
+ * callee gets an active one; both at the handoff time. No upstream row is
+ * removed. Then the snapshot is rebuilt.
  */
 export async function writeHandoffRowsTx(
   tx: WorkflowTx,
-  rows: { caller: ActiveRowInput; callee?: ActiveRowInput; at: string },
+  rows: { caller: ActiveRowInput; callee: ActiveRowInput; at: string },
   owner: AuditOwner,
 ): Promise<void> {
   const caller = rowEntry(rows.caller, rows.at);
@@ -179,7 +179,7 @@ export async function writeHandoffRowsTx(
     if (from) caller.handoff_from = from;
   }
   await writeRowTx(tx, caller, owner);
-  if (rows.callee) await writeRowTx(tx, rowEntry(rows.callee, rows.at), owner);
+  await writeRowTx(tx, rowEntry(rows.callee, rows.at), owner);
   await rebuildSnapshotTx(tx, owner);
 }
 

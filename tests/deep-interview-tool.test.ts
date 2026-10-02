@@ -20,6 +20,7 @@ import { DEEP_INTERVIEW_OPS, deepInterviewTool } from "../src/deep-interview-run
 import { startRunTx } from "../src/ralplan-runtime/store";
 import { readVisiblePrimaryTx } from "../src/skill-state/rows";
 import { StateStore, type WorkflowTx } from "../src/state";
+import { createTools } from "../src/tools";
 
 const T0 = Date.parse("2026-10-02T00:00:00.000Z");
 const ROOT = "ses_root";
@@ -589,4 +590,39 @@ test("T9: refused ops leave every file and the audit log byte for byte (P-AC6)",
     expect(await call({ op: "spec", content: "s", slug: "big" })).toContain("100 top-level keys");
     expect(await tree()).toEqual(before);
   });
+});
+
+// T10 (AC23). The ultragoal → deep-interview side is covered in
+// tests/ultragoal-tool.test.ts ("handoff to deep-interview").
+test("T10: ralplan final → ralplan handoff(to: deep-interview) reopens the interview on interviewing with a row (AC23)", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "open-gajae-di-t10-")));
+  try {
+    const store = new StateStore(root, async () => T0);
+    const tools = createTools(store, { locationDir: root, projectDir: root }, { rootSession: async (id) => id });
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const tool = tools.find((t) => t.name === name)!;
+      return (await tool.execute(tool.input.parse(args) as never, { agent: "open-gajae", sessionID: ROOT, signal: new AbortController().signal })).content;
+    };
+    const dir = await store.resolveSessionDir(ROOT);
+    const json = async (...parts: string[]) => JSON.parse(await readFile(join(dir, ...parts), "utf8"));
+    // An interview with a spec hands off to ralplan, which plans to final and hands back.
+    await call("deep-interview", { op: "start", idea: "i" });
+    await call("deep-interview", { op: "write", input: { state: { rounds: [scored(1)] } } });
+    await call("deep-interview", { op: "spec", content: "# s", slug: "t10" });
+    expect(await call("deep-interview", { op: "handoff", to: "ralplan" })).toStartWith("Handed off to ralplan");
+    await call("ralplan", { op: "write", stage: "final", stage_n: 1, content: "final" });
+    expect(await call("ralplan", { op: "handoff", to: "deep-interview" })).toStartWith("Handed off to deep-interview");
+    expect(await json("state", DI)).toMatchObject({
+      active: true,
+      current_phase: "interviewing",
+      handoff_from: "ralplan",
+      spec_slug: "t10",
+      state: { rounds: [scored(1)] },
+    });
+    expect(await json("state", "active", "deep-interview.json")).toMatchObject({ active: true, phase: "interviewing", handoff_from: "ralplan" });
+    // The reopened interview continues with write (no start).
+    expect(JSON.parse(await call("deep-interview", { op: "write", input: { state: { rounds: [scored(2)] } } }))).toMatchObject({ ok: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

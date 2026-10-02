@@ -601,7 +601,8 @@ for (const to of ["ralplan", "deep-interview"] as const)
       await create(h, 1);
       await h.call({ op: "next" });
       const goal = await h.text("state", "goal-state.json");
-      const initial = to === "ralplan" ? "planner" : "deep-interview";
+      // Deep-interview revision plan DR-10: gjc's `interviewing` and a row.
+      const initial = to === "ralplan" ? "planner" : "interviewing";
       const receipt = JSON.parse(await h.call({ op: "handoff", to, reason: "the plan needs a new design" }));
       expect(receipt).toMatchObject({ ok: true, from: "ultragoal", to, phases: { from: "handoff", to: initial } });
       expect(await h.json("state", "ultragoal-state.json")).toMatchObject({
@@ -628,9 +629,11 @@ for (const to of ["ralplan", "deep-interview"] as const)
           ]),
         },
       });
-      const calleeRow = await h.text("state", "active", `${to}.json`);
-      if (to === "ralplan") expect(JSON.parse(calleeRow!)).toMatchObject({ active: true, phase: "planner" });
-      else expect(calleeRow).toBeUndefined();
+      expect(await h.json("state", "active", `${to}.json`)).toMatchObject({
+        active: true,
+        phase: initial,
+        handoff_from: "ultragoal",
+      });
       expect(await h.text("state", "goal-state.json")).toBe(goal);
       expect((await h.ledger()).at(-1)).toMatchObject({
         event: "workflow_handoff",

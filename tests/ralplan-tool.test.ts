@@ -435,6 +435,63 @@ test("handoff refuses an inactive ralplan after Stop here, clear or a handoff; a
   });
 });
 
+test("handoff to deep-interview reopens the interview on interviewing over its fields; inactive refusals name deep-interview (D-SH5, DR-11, AC23)", async () => {
+  await fixture(async ({ call, write, json, file, store }) => {
+    await call({ op: "start", task: "t" });
+    await write("final", 1, "f");
+    await store.workflowTransaction(ROOT, (tx) =>
+      tx.writeModeState(
+        "deep-interview",
+        {
+          skill: "deep-interview",
+          version: 2,
+          active: false,
+          current_phase: "handoff",
+          handoff_to: "ralplan",
+          spec_path: "/spec.md",
+          spec_sha256: "abc",
+          threshold: 0.05,
+          state: { rounds: [{ round_key: "round-1", round: 1 }] },
+        },
+        "deep_interview_tool",
+      ),
+    );
+    const out = await call({ op: "handoff", to: "deep-interview" });
+    const [line, ...rest] = out.split("\n");
+    expect(line).toBe(
+      `Handed off to deep-interview: ralplan is inactive (phase handoff) and deep-interview is active in interviewing. Load the \`deep-interview\` skill now and continue the existing interview with \`deep-interview write\`; do not call \`deep-interview start\`, which would reseed it (the approved plan: ${file("plans", "ralplan", ROOT, "pending-approval.md")}).`,
+    );
+    expect(JSON.parse(rest.join("\n"))).toMatchObject({ from: "ralplan", to: "deep-interview", phases: { to: "interviewing" } });
+    expect(await json("state", "deep-interview-state.json")).toMatchObject({
+      active: true,
+      current_phase: "interviewing",
+      handoff_from: "ralplan",
+      spec_path: "/spec.md",
+      spec_sha256: "abc",
+      state: { rounds: [{ round_key: "round-1", round: 1 }] },
+    });
+    expect(await json("state", "active", "deep-interview.json")).toMatchObject({ active: true, phase: "interviewing", handoff_from: "ralplan" });
+    expect(await json("state", "ralplan-state.json")).toMatchObject({ active: false, current_phase: "handoff", handoff_to: "deep-interview" });
+    expect(await call({ op: "handoff", to: "deep-interview" })).toBe(
+      "Error: ralplan was already handed off (inactive, phase handoff); continue in the `deep-interview` skill.",
+    );
+  });
+  await fixture(async ({ call, write }) => {
+    await call({ op: "start", task: "t" });
+    await write("final", 1, "f");
+    await call({ op: "state", patch: { active: false } });
+    expect(await call({ op: "handoff", to: "deep-interview" })).toBe(
+      "Error: ralplan is not active (phase final), so there is nothing to hand off: Stop here or `clear` ended the run. To interview again, load the `deep-interview` skill and call `deep-interview start`; to continue an existing interview, call `deep-interview status`.",
+    );
+    expect(await call({ op: "handoff" })).toBe('Error: to must be "ultragoal" or "deep-interview"');
+    await call({ op: "state", patch: { active: true } });
+    await call({ op: "handoff", to: "ultragoal" });
+    expect(await call({ op: "handoff", to: "deep-interview" })).toBe(
+      "Error: ralplan was already handed off (inactive, phase handoff); continue in the `ultragoal` skill.",
+    );
+  });
+});
+
 // Characterization tests (deep-interview revision plan S1, §3.6 RP1, RP2,
 // RP5): green on the current code and unchanged after S3c moves the ultragoal
 // check into the ralplan transaction.

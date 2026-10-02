@@ -5,7 +5,7 @@ import path from "node:path";
 // State and payload-boundary behavior draws on OMC MIT sources; project notices carry attribution.
 export const DEEP_INTERVIEW_MODE = "deep-interview" as const;
 export const RALPLAN_MODE = "ralplan" as const;
-/** Plugin-owned: no `state_*` tool accepts it (plan §7, decision 21). */
+/** Plugin-owned: only the `ultragoal` tool writes it (plan §7, decision 21). */
 export const ULTRAGOAL_MODE = "ultragoal" as const;
 
 export type StateMode =

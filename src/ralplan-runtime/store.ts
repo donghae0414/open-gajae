@@ -43,9 +43,6 @@
 //   `ralplan clear`) instead of `--force`/`gjc state …`.
 // - 12: the repository binding is recorded, never enforced.
 // - 13: doctor has no checksum or orphan-journal checks.
-// - 14: only the ralplan row is written; the snapshot follows gjc's planning
-//   pipeline rank and a ralplan row removes an upstream deep-interview row
-//   (`../skill-state/rows.ts`).
 // - 17: no gjc envelope receipt, checksum or `state_revision`; the StateStore
 //   `_meta` stays. Rows and the snapshot carry no `source_state_revision` /
 //   `state_revision` and there is no stale-skip (R-OD6).
@@ -1390,18 +1387,24 @@ export async function ralplanHandoffTx(
 }
 
 /**
- * `ralplan handoff {to: "ultragoal"}`: `ralplanHandoffTx` in one transaction.
- * The result names the approved plan (D-HE1: the path rides the text only),
- * then gjc's handoff receipt.
+ * `ralplan handoff {to}`: `ralplanHandoffTx` in one transaction. The result
+ * names the next step and, for ultragoal, the approved plan (D-HE1: the path
+ * rides the text only), then gjc's handoff receipt.
  */
 export async function ralplanHandoff(
   store: StateStore,
   sessionId: string,
+  to: RalplanHandoffTarget = "ultragoal",
   owner: AuditOwner = RUNTIME_OWNER,
 ): Promise<string> {
   const { receipt, pendingApprovalPath } = await store.ralplanTransaction(sessionId, (tx) =>
-    ralplanHandoffTx(tx, sessionId, owner, "ralplan handoff to ultragoal"),
+    ralplanHandoffTx(tx, sessionId, owner, `ralplan handoff to ${to}`, to),
   );
   const plan = pendingApprovalPath ? ` (the approved plan: ${pendingApprovalPath})` : "";
-  return `Handed off to ultragoal: ralplan is inactive (phase handoff) and ultragoal is active in goal-planning. Load the \`ultragoal\` skill now and call \`ultragoal create\` with the approved plan's goals${plan}.\n${JSON.stringify(receipt, null, 2)}`;
+  const line =
+    to === "deep-interview"
+      ? // Deep-interview revision plan D-SH5: the interview reopens over its rounds and spec fields.
+        `Handed off to deep-interview: ralplan is inactive (phase handoff) and deep-interview is active in interviewing. Load the \`deep-interview\` skill now and continue the existing interview with \`deep-interview write\`; do not call \`deep-interview start\`, which would reseed it${plan}.`
+      : `Handed off to ultragoal: ralplan is inactive (phase handoff) and ultragoal is active in goal-planning. Load the \`ultragoal\` skill now and call \`ultragoal create\` with the approved plan's goals${plan}.`;
+  return `${line}\n${JSON.stringify(receipt, null, 2)}`;
 }

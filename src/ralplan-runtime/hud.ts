@@ -16,8 +16,8 @@
 // the stage just written, after start/state the resulting `current_phase`.
 // Deviation 9: the `stages` chip holds full stage words
 // (`formatRalplanStagePresence` in `./ledger.ts`). Only the ralplan builder
-// is here: the ultragoal one is `../ultragoal-runtime/hud.ts`, and
-// deep-interview writes no row, so it has none (deviation 14).
+// is here: the ultragoal one is `../ultragoal-runtime/hud.ts` and the
+// deep-interview one `../deep-interview-runtime/hud.ts`.
 
 import {
   chip,

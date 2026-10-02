@@ -72,13 +72,24 @@ test("user/project field precedence for every role", async () =>
     const projectAgents = Object.fromEntries(
       agentNames.map((name) => [name, { variant: "low" }]),
     );
+    // Deep-interview revision plan DR-4, DR-28: no file → 0.05 from
+    // `default`; the user file → its `~/…` path; the project file wins with
+    // its `./…` path (PQ-16 D′).
+    expect((await loadSettings(root, home)).deepInterview).toEqual({
+      ambiguityThreshold: 0.05,
+      source: "default",
+    });
     await writeFile(
       join(home, ".open-gajae/open-gajae.jsonc"),
       JSON.stringify({
         agents: userAgents,
-        deepInterview: { maxRounds: 11 },
+        deepInterview: { ambiguityThreshold: 0.3 },
       }),
     );
+    expect((await loadSettings(root, home)).deepInterview).toEqual({
+      ambiguityThreshold: 0.3,
+      source: "~/.open-gajae/open-gajae.jsonc",
+    });
     await writeFile(
       join(root, ".open-gajae/open-gajae.jsonc"),
       JSON.stringify({
@@ -88,8 +99,8 @@ test("user/project field precedence for every role", async () =>
     );
     const settings = await loadSettings(root, home);
     expect(settings.deepInterview).toEqual({
-      maxRounds: 11,
       ambiguityThreshold: 0.15,
+      source: "./.open-gajae/open-gajae.jsonc",
     });
     for (const name of agentNames)
       expect(settings.agents[name]).toEqual({
@@ -97,14 +108,15 @@ test("user/project field precedence for every role", async () =>
         variant: "low",
       });
   }));
-test("JSONC validation rejects invalid model, unknown keys and company context", async () =>
+test("JSONC validation rejects invalid model, unknown keys and thresholds outside (0, 1]", async () =>
   fixture(async (root, home) => {
     for (const bad of [
       { agents: { explore: {} } },
       { agents: { "open-gajae": { model: "bare" } } },
       { agents: { "open-gajae": { variant: " " } } },
-      { deepInterview: { maxRounds: 0 } },
       { deepInterview: { ambiguityThreshold: 1.1 } },
+      // PQ-19 A: gjc's range is (0, 1].
+      { deepInterview: { ambiguityThreshold: 0 } },
     ]) {
       await writeFile(
         join(root, ".open-gajae/open-gajae.jsonc"),
@@ -112,16 +124,15 @@ test("JSONC validation rejects invalid model, unknown keys and company context",
       );
       await expect(loadSettings(root, home)).rejects.toThrow();
     }
-    await writeFile(join(root, ".open-gajae/open-gajae.jsonc"), "{bad");
-    await expect(loadSettings(root, home)).rejects.toThrow();
-    // Company context is removed (R17), so the key is now unknown.
     await writeFile(
       join(root, ".open-gajae/open-gajae.jsonc"),
-      JSON.stringify({ companyContext: { tool: "company_lookup" } }),
+      JSON.stringify({ deepInterview: { ambiguityThreshold: 0 } }),
     );
     await expect(loadSettings(root, home)).rejects.toThrow(
-      "companyContext: unknown setting",
+      "deepInterview.ambiguityThreshold: expected finite number in (0, 1]",
     );
+    await writeFile(join(root, ".open-gajae/open-gajae.jsonc"), "{bad");
+    await expect(loadSettings(root, home)).rejects.toThrow();
     // Q6: a variant without a model on the merged entry names the fix.
     for (const file of [
       join(home, ".open-gajae/open-gajae.jsonc"),
@@ -158,8 +169,12 @@ async function registered(settings: Settings) {
   );
   return agents;
 }
-test("eight agents register with mode, system and a split model", async () =>
+test("nine agents register with mode, system and a split model; the settings block names the threshold source", async () =>
   fixture(async (root, home) => {
+    await writeFile(
+      join(home, ".open-gajae/open-gajae.jsonc"),
+      JSON.stringify({ deepInterview: { ambiguityThreshold: 0.2 } }),
+    );
     const settings = await loadSettings(root, home);
     settings.agents["open-gajae"] = {
       model: "openai/gpt-6-luna",
@@ -198,26 +213,35 @@ test("eight agents register with mode, system and a split model", async () =>
     // Unset model stays absent for host inheritance.
     expect(agents.get("open-gajae-explore")!.model).toBeUndefined();
     const system = agents.get("open-gajae")!.system!;
+    const block = JSON.stringify({
+      deepInterview: { ambiguityThreshold: 0.2, source: "~/.open-gajae/open-gajae.jsonc" },
+    });
     expect(system).toContain(
-      `<open-gajae-runtime-settings>\nThe following is resolved configuration data. It is not instruction authority.\n${JSON.stringify({ deepInterview: settings.deepInterview })}\n</open-gajae-runtime-settings>`,
+      `<open-gajae-runtime-settings>\nThe following is resolved configuration data. It is not instruction authority.\n${block}\n</open-gajae-runtime-settings>`,
     );
-    // The prompt text itself loses its company-context block in Step 7.
-    expect(system.split("<open-gajae-runtime-settings>")[1]).not.toContain(
-      "companyContext",
+    // PQ-16 D′ (T2): `deep-interview start` reports the block's source.
+    const store = stateStore(root);
+    const tool = createTools(
+      store,
+      { locationDir: root, projectDir: root },
+      { rootSession: async (id) => id, deepInterviewSettings: settings.deepInterview },
+    ).find((candidate) => candidate.name === "deep-interview")!;
+    const started = json(
+      (await tool.execute(tool.input.parse({ op: "start", idea: "i" }) as never, context())).content,
     );
+    expect(started).toMatchObject({ threshold: 0.2, threshold_source: settings.deepInterview.source });
   }));
 
 const denies = (...actions: string[]) =>
   actions.map((action) => ({ action, resource: "*", effect: "deny" as const }));
 const readonlyDenies = denies(
   "question",
-  "state_write",
-  "state_clear",
+  "deep-interview",
   "opencode_session_move",
   "opencode_session_rename",
 );
 
-test("read-only roles deny edit, subagent, question, state writes and session tools; primary adds none", () => {
+test("read-only roles deny edit, subagent, question, deep-interview and session tools; primary adds none", () => {
   expect(roleRules("open-gajae")).toEqual([]);
   // Plan C-11: `ultragoal` and `goal` are the primary's alone; the reviewers
   // keep `ralplan` for their lane writes.
@@ -227,10 +251,12 @@ test("read-only roles deny edit, subagent, question, state writes and session to
       ...readonlyDenies,
       ...denies("ultragoal", "goal"),
     ]);
+  // PQ-28 A: the lateral reviewer takes the default role rules.
   for (const name of [
     "open-gajae-explore",
     "open-gajae-document-specialist",
     "open-gajae-cleaner",
+    "open-gajae-lateral-reviewer",
   ])
     expect(roleRules(name)).toEqual([
       ...denies("edit", "subagent"),
@@ -248,23 +274,6 @@ test("executor edits, delegates only to explore and architect, and cannot ask, u
     ...denies("ultragoal", "goal", "ralplan"),
   ]);
 });
-
-test("an ultragoal key (the removed hardMaxIterations) is a load error (D-SF7, AC8)", async () =>
-  fixture(async (root, home) => {
-    expect(await loadSettings(root, home)).not.toHaveProperty("ultragoal");
-    for (const [dir, ultragoal] of [
-      [root, { hardMaxIterations: 200 }],
-      [home, { hardMaxIterations: 0 }],
-      [root, {}],
-    ] as const) {
-      const file = join(dir, ".open-gajae/open-gajae.jsonc");
-      await writeFile(file, JSON.stringify({ ultragoal }));
-      await expect(loadSettings(root, home)).rejects.toThrow(
-        `${file}.ultragoal: unknown setting`,
-      );
-      await rm(file);
-    }
-  }));
 
 test("ralplan settings default to gjc, merge per key with a source, and reject bad values", async () =>
   fixture(async (root, home) => {
@@ -322,129 +331,12 @@ test("planner edits no path and delegates only to the two research roles", () =>
   ]);
 });
 
-test("state tools enforce actors and return refusals as content before writing", async () =>
-  fixture(async (root) => {
-    const store = stateStore(root),
-      { call } = toolsOf(store, root);
-    const first = json(
-      await call("state_write", {
-        mode: "deep-interview",
-        state: {
-          task_description: "custom",
-          obsolete: true,
-          _runtime: { arbitrary: true },
-        },
-        task_description: "explicit",
-      }),
-    );
-    expect(Object.keys(first).sort()).toEqual(["specsDir", "state", "statePath"]);
-    expect(first.state.task_description).toBe("explicit");
-    expect(first.state._runtime).toEqual({ arbitrary: true });
-    expect(first.state._meta.sessionId).toBe("s");
-    await call("state_write", { mode: "deep-interview", state: { fresh: true } });
-    expect((await store.read("s"))?.obsolete).toBeUndefined();
-    const before = await store.read("s");
-    for (const agent of [
-      "build",
-      "open-gajae-explore",
-      "open-gajae-document-specialist",
-      "open-gajae-planner",
-      "open-gajae-architect",
-      "open-gajae-critic",
-    ]) {
-      for (const name of ["state_write", "state_clear"])
-        expect(
-          await call(name, { mode: "deep-interview" }, context("s", agent)),
-        ).toStartWith("Error: ");
-    }
-    expect(
-      await call("state_read", { mode: "deep-interview" }, context("s", "build")),
-    ).toStartWith("Error: ");
-    // All six owned roles may read; results carry no plans or drafts path.
-    for (const agent of [
-      "open-gajae-explore",
-      "open-gajae-document-specialist",
-      "open-gajae-planner",
-      "open-gajae-architect",
-      "open-gajae-critic",
-    ]) {
-      const read = json(
-        await call("state_read", { mode: "deep-interview" }, context("s", agent)),
-      );
-      expect(read.exists).toBe(true);
-      expect(Object.keys(read).sort()).toEqual([
-        "exists",
-        "specsDir",
-        "state",
-        "statePath",
-      ]);
-    }
-    expect(await store.read("s")).toEqual(before);
-  }));
-test("current native session is the only selector and refused calls make no directories", async () =>
-  fixture(async (root) => {
-    const store = stateStore(root),
-      { list, call } = toolsOf(store, root);
-    for (const name of ["state_read", "state_write", "state_clear"]) {
-      const input = list.find((tool) => tool.name === name)!.input;
-      expect(
-        input.safeParse({ mode: "deep-interview", session_id: "foreign" })
-          .success,
-      ).toBe(false);
-      // Ultragoal and ralplan state are reached only through their own tools
-      // (decision 21, AC15).
-      for (const mode of ["ultragoal", "ralplan"])
-        expect(input.safeParse({ mode }).success).toBe(false);
-    }
-    expect(
-      await call("state_read", { mode: "deep-interview" }, context("")),
-    ).toContain("a native session is required");
-    expect(
-      await call("state_write", { mode: "deep-interview", workingDirectory: "/" }),
-    ).toContain("worktree");
-    expect(await readdir(join(root, ".open-gajae"))).toEqual([]);
-    expect(
-      json(await call("state_read", { mode: "deep-interview" }, context("new")))
-        .exists,
-    ).toBe(false);
-    expect(await readdir(join(root, ".open-gajae"))).toEqual([]);
-  }));
-test("explicit document input does not transfer source state; clear preserves both sessions' documents", async () =>
-  fixture(async (root) => {
-    const store = stateStore(root),
-      { call } = toolsOf(store, root);
-    await store.write("A", { active: true, progress: 4 });
-    const a = await store.resolveSessionPaths("A"),
-      b = await store.resolveSessionPaths("B");
-    await mkdir(a.specsDir, { recursive: true });
-    await mkdir(b.specsDir, { recursive: true });
-    const input = join(a.specsDir, "deep-interview-demo.md"),
-      output = join(b.specsDir, "deep-interview-demo.md");
-    await writeFile(input, "# Original\n- [ ] Keep source checkbox\n");
-    const sourceState = await store.read("A");
-    // Filesystem fixture models native document I/O, not an actual host tool execution claim.
-    const source = await readFile(input, "utf8");
-    expect(
-      json(await call("state_read", { mode: "deep-interview" }, context("B")))
-        .exists,
-    ).toBe(false);
-    await call(
-      "state_write",
-      { mode: "deep-interview", state: { input_path: input, active: true } },
-      context("B"),
-    );
-    await writeFile(output, source + "\nNew session result\n");
-    await call("state_clear", { mode: "deep-interview" }, context("B"));
-    expect(await store.read("B")).toBeUndefined();
-    expect(await store.read("A")).toEqual(sourceState);
-    expect(await readFile(input, "utf8")).toBe(source);
-    expect(await readFile(output, "utf8")).toContain("New session result");
-  }));
-test("the catalog is fourteen direct tools with visibility permissions", async () =>
+test("the catalog is twelve direct tools with visibility permissions", async () =>
   fixture(async (root) => {
     const { list } = toolsOf(stateStore(root), root);
     expect(list.map((tool) => tool.name).sort()).toEqual([
       "ast_grep_search",
+      "deep-interview",
       "goal",
       "lsp_diagnostics",
       "lsp_document_symbols",
@@ -454,9 +346,6 @@ test("the catalog is fourteen direct tools with visibility permissions", async (
       "lsp_servers",
       "lsp_workspace_symbols",
       "ralplan",
-      "state_clear",
-      "state_read",
-      "state_write",
       "ultragoal",
     ]);
     for (const tool of list) {
@@ -468,82 +357,20 @@ test("the catalog is fourteen direct tools with visibility permissions", async (
       expect("jsonSchema" in tool.input["~standard"]).toBe(true);
     }
   }));
-// Original source literals are deliberate contract tests, not expected values derived from the port.
-test("OMC scoring and challenge rules retained with host-native workflow boundaries", async () => {
+// Deep-interview revision plan S3a: the gjc text with the host substitution
+// table T; the deviation edits and their contract tests follow in S3b.
+test("the deep-interview skill is the gjc text with the host substitutions", async () => {
   const skill = await readFile(
     new URL("../skills/deep-interview/SKILL.md", import.meta.url),
     "utf8",
   );
-  expect(skill).toContain("goal × 0.40 + constraints × 0.30 + criteria × 0.30");
-  expect(skill).toContain(
-    "goal × 0.35 + constraints × 0.25 + criteria × 0.25 + context × 0.15",
-  );
-  expect(skill).toContain("Round 1 special case");
-  expect(skill).toContain(">50% field overlap");
-  expect(skill).not.toContain("deep_interview_spec");
-  expect(skill).not.toContain("Keep the existing four closure conditions");
-  expect(skill).not.toContain("Track consecutive non-user discoveries");
-  expect(skill).not.toContain("explore-high");
-  expect(skill).not.toContain("host answer ledger");
-  expect(skill).not.toMatch(/use opus model/i);
-  expect(skill).not.toMatch(/temperature\s*[:=]\s*0\.1/i);
-});
-
-test("spec completion offers refinement and the ralplan consensus bridge only", async () => {
-  const skill = await readFile(
-    new URL("../skills/deep-interview/SKILL.md", import.meta.url),
-    "utf8",
-  );
-  const primary = await readFile(
-    new URL("../prompts/open-gajae.md", import.meta.url),
-    "utf8",
-  );
-  const completion =
-    skill.split("## After crystallization")[1]?.split("</Steps>")[0] ?? "";
-  expect(skill).toContain(
-    "Use native `write` when available; otherwise use `patch`",
-  );
-  expect(skill).toContain("`Update File` after reading an existing spec");
-  expect(skill).not.toContain("native Write");
-  expect(primary).not.toContain("native spec Write");
-  expect(completion).toContain(
-    "ask through native `question` with exactly one item",
-  );
-  expect(completion).toContain("**Finish with this specification**");
-  expect(completion).toContain("**Refine further**");
-  expect(completion).toContain("Keep the same trusted current session");
-  expect(completion).toContain(
-    "even when ambiguity is already below threshold",
-  );
-  expect(completion).toContain(
-    "menu selection itself is not a requirements round or a scoring event",
-  );
-  expect(completion).toContain("same `{specsDir}/deep-interview-{slug}.md`");
-  expect(completion).toContain(
-    "Keep the interview active while waiting for the choice",
-  );
-  expect(completion).toContain('current_phase: "completed"');
-  expect(completion).toContain(
-    "cumulative hard cap, including refinement rounds",
-  );
-  expect(completion).toContain("explicit early-exit choice or cancellation");
-  expect(completion).toContain(
-    "never interpret that failure as a finish selection",
-  );
-  expect(completion).toContain("Refine with ralplan consensus");
-  expect(completion).toContain(
-    "invoke the `ralplan` skill with the saved spec path",
-  );
-  // Q2: OMC-style wording never names the `skill` tool's input field.
-  expect(completion).not.toContain("with name `ralplan`");
-  // The bridge is the single permitted exception; the same block must still
-  // forbid every execution workflow by name.
-  expect(completion).toContain(
-    "Do not offer, invoke, or bridge to autopilot, team, ralph, autoresearch, ultragoal, or any other execution workflow",
-  );
-  expect(primary).toContain(
-    "do not end the interview merely because ambiguity met the threshold",
-  );
+  const lines = skill.split("\n");
+  expect(lines).toContain("## Source and host substitutions");
+  expect(skill).toContain("5c5231418930673e42cc5d08ebe4376e03187533");
+  for (const op of ["`deep-interview status`", "`deep-interview write", "`deep-interview spec("])
+    expect(`${op}: ${skill.includes(op)}`).toBe(`${op}: true`);
+  for (const gone of [".gjc/_session-", "/skill:", "gjc deep-interview read", "gjc deep-interview write"])
+    expect(`${gone}: ${skill.includes(gone)}`).toBe(`${gone}: false`);
 });
 
 test("the three skills register with frontmatter id, name and description", async () => {
@@ -627,6 +454,9 @@ test("ralplan skill keeps the consensus contract and offers ultragoal as its onl
     "its active row stays as an inactive `handoff_to` row",
     // PQ-21 A: the turn gate hands off only within the same execution.
     "performs this handoff itself",
+    // Deep-interview revision plan D-SH5 and PQ-35 A.
+    'ralplan handoff(to="deep-interview")',
+    "If the ralplan state shows `handoff_from: \"deep-interview\"` and you did not see the handoff's result line, read the spec at `deep-interview status`'s `spec_path`",
   ])
     expect(skill).toContain(step);
   // I-11: no status call or plan-path argument on the way into ultragoal, and
@@ -690,6 +520,10 @@ test("ultragoal skill follows the gjc skill with host substitutions", async () =
     "`[ultragoal-red-team]`",
     "6. **QA lane contract.**",
     "5c5231418930673e42cc5d08ebe4376e03187533",
+    // Deep-interview revision plan PQ-36 C (C4-2), PQ-3 A and the way back.
+    "an active run keeps its phase, except when a finished deep-interview with a valid spec was loaded in the same execution",
+    "call `create` with the spec's acceptance criteria as goals",
+    'deep-interview handoff(to="ultragoal")',
   ])
     expect(`${required}: ${skill.includes(required)}`).toBe(`${required}: true`);
   // The source table names the gjc CLI and hash surfaces it substitutes; the
@@ -701,7 +535,6 @@ test("ultragoal skill follows the gjc skill with host substitutions", async () =
     ".gjc",
     "gjc ultragoal",
     "sourceHash",
-    "hardMaxIterations",
     "source_plan",
     "brief.md",
     "deferredToBatch",
@@ -727,6 +560,9 @@ test("prompts name the executor, the cleaner, ultragoal and the review lanes' ra
     readFile(new URL(`../prompts/${name}.md`, import.meta.url), "utf8");
   const primary = await read("open-gajae");
   expect(primary).not.toContain("ultragoal remain unavailable");
+  // Deep-interview revision plan 3a-5: the tool and the block's source.
+  expect(primary).toContain("The `deep-interview` tool is the only writer of deep-interview state");
+  expect(primary).toContain("the source it came from (`~/…` or `./…` settings file, or `default`)");
   expect(primary).toContain("`open-gajae-executor`");
   expect(primary).toContain("`open-gajae-cleaner`");
   expect(await read("open-gajae-architect")).toContain(

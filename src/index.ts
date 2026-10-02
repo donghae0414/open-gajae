@@ -42,10 +42,11 @@ export default Plugin.define({
       prompts,
     });
     await registerSkills(ctx.skill, skills);
-    // The hooks come first: the `ralplan`, `ultragoal` and `goal` tools
-    // resolve their owner through the hooks' fail-closed `rootSession` (plan
-    // DR-1, D-SF6). The ralplan settings are resolved once here (DR-13);
-    // `projectDir` rides `paths`.
+    // The hooks come first: the `ralplan`, `ultragoal`, `goal` and
+    // `deep-interview` tools resolve their owner through the hooks'
+    // fail-closed `rootSession` (plan DR-1, D-SF6). The ralplan and
+    // deep-interview settings are resolved once here (DR-13, deep-interview
+    // DR-28); `projectDir` rides `paths`.
     const hooks = createHooks(
       store,
       ctx.session,
@@ -59,6 +60,7 @@ export default Plugin.define({
       {
         rootSession: hooks.rootSession,
         ralplanSettings: settings.ralplan,
+        deepInterviewSettings: settings.deepInterview,
       },
     );
     await ctx.tool.transform((editor) => {

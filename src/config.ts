@@ -15,6 +15,9 @@ export const agentNames = [
   "open-gajae-critic",
   "open-gajae-executor",
   "open-gajae-cleaner",
+  // Deep-interview revision plan DR-36 (PQ-7 N, PQ-26 B): the read-only role
+  // the lateral review panel's personas run in.
+  "open-gajae-lateral-reviewer",
 ] as const;
 type AgentName = (typeof agentNames)[number];
 type ModelSettings = { model?: string; variant?: string };
@@ -23,8 +26,16 @@ type RalplanSettings = {
   maxReviewPassesPerLane: number;
   autoHandoff: "off" | "ultragoal";
 };
+/**
+ * Deep-interview revision plan DR-4, DR-28 (PQ-16 D′, PQ-19 A): gjc's one
+ * setting, default 0.05, in (0, 1]; `source` names the winning file as
+ * `~/…` or `./…`, or `default`, so the system prompt carries no user name.
+ */
+type DeepInterviewSettings = { ambiguityThreshold: number };
+export const DEEP_INTERVIEW_USER_SOURCE = "~/.open-gajae/open-gajae.jsonc";
+export const DEEP_INTERVIEW_PROJECT_SOURCE = "./.open-gajae/open-gajae.jsonc";
 export interface Settings {
-  deepInterview: { ambiguityThreshold: number; maxRounds: number };
+  deepInterview: DeepInterviewSettings & { source: string };
   agents: Partial<Record<AgentName, ModelSettings>>;
   /**
    * gjc 5c52314 `gjc.ralplan.*` (`gjc-runtime/ralplan-runtime.ts:93-112,388-524`):
@@ -36,8 +47,9 @@ export interface Settings {
     source: Record<keyof RalplanSettings, string>;
   };
 }
-/** One settings file; `ralplan` carries only the keys that file sets. */
-type Layer = Partial<Omit<Settings, "ralplan">> & {
+/** One settings file; `deepInterview` and `ralplan` carry only the keys that file sets. */
+type Layer = Partial<Pick<Settings, "agents">> & {
+  deepInterview?: Partial<DeepInterviewSettings>;
   ralplan?: Partial<RalplanSettings>;
 };
 function object(value: unknown, location: string): Record<string, unknown> {
@@ -75,27 +87,18 @@ async function load(path: string): Promise<Layer> {
   const result: Layer = {};
   if ("deepInterview" in value) {
     const config = object(value.deepInterview, `${path}.deepInterview`);
-    keys(config, ["ambiguityThreshold", "maxRounds"], `${path}.deepInterview`);
+    keys(config, ["ambiguityThreshold"], `${path}.deepInterview`);
     if (
       "ambiguityThreshold" in config &&
       (typeof config.ambiguityThreshold !== "number" ||
         !Number.isFinite(config.ambiguityThreshold) ||
-        config.ambiguityThreshold < 0 ||
+        config.ambiguityThreshold <= 0 ||
         config.ambiguityThreshold > 1)
     )
       throw new Error(
-        `${path}.deepInterview.ambiguityThreshold: expected finite number in [0, 1]`,
+        `${path}.deepInterview.ambiguityThreshold: expected finite number in (0, 1]`,
       );
-    if (
-      "maxRounds" in config &&
-      (typeof config.maxRounds !== "number" ||
-        !Number.isSafeInteger(config.maxRounds) ||
-        config.maxRounds < 1)
-    )
-      throw new Error(
-        `${path}.deepInterview.maxRounds: expected positive integer`,
-      );
-    result.deepInterview = config as Settings["deepInterview"];
+    result.deepInterview = config as Partial<DeepInterviewSettings>;
   }
   if ("ralplan" in value) {
     const config = object(value.ralplan, `${path}.ralplan`);
@@ -179,12 +182,16 @@ export async function loadSettings(
         `${name}.variant is set without model; add model "provider/model"`,
       );
   }
+  const threshold = project.deepInterview?.ambiguityThreshold ?? user.deepInterview?.ambiguityThreshold;
   return {
     deepInterview: {
-      ambiguityThreshold: 0.1,
-      maxRounds: 20,
-      ...user.deepInterview,
-      ...project.deepInterview,
+      ambiguityThreshold: threshold ?? 0.05,
+      source:
+        project.deepInterview?.ambiguityThreshold !== undefined
+          ? DEEP_INTERVIEW_PROJECT_SOURCE
+          : user.deepInterview?.ambiguityThreshold !== undefined
+            ? DEEP_INTERVIEW_USER_SOURCE
+            : "default",
     },
     agents,
     ralplan: {
@@ -238,6 +245,8 @@ const descriptions: Record<AgentName, string> = {
     "Implement scoped code changes with verification; used by ultragoal.",
   "open-gajae-cleaner":
     "Read-only AI-slop and cleanup review of changed files; reports blocking issues.",
+  "open-gajae-lateral-reviewer":
+    "Read-only lateral-review persona for deep-interview panels; answers in the shape its assignment asks for.",
 };
 
 const deny = (action: string): Rule => ({
@@ -247,10 +256,11 @@ const deny = (action: string): Rule => ({
 });
 // `opencode_session_move`/`opencode_session_rename` are the effective permission
 // names of the namespaced Code Mode session tools (`core/src/tool.ts:183,231`).
+// Deep-interview revision plan I-17: `deep-interview` replaces the former
+// `state_*` write and clear tools.
 const readonlyDenies = [
   "question",
-  "state_write",
-  "state_clear",
+  "deep-interview",
   "opencode_session_move",
   "opencode_session_rename",
 ].map(deny);
@@ -303,9 +313,10 @@ export function roleRules(id: string): Rule[] {
       deny("ultragoal"),
       deny("goal"),
     ];
-  // explore, document-specialist and the cleaner. The cleaner keeps `shell`
-  // for read-only inspection; its prompt forbids changing files (decision 23).
-  // Plan S2: none of the three drive ralplan.
+  // explore, document-specialist, the cleaner and the lateral reviewer
+  // (deep-interview revision plan PQ-28 A). The cleaner keeps `shell` for
+  // read-only inspection; its prompt forbids changing files (decision 23).
+  // Plan S2: none of them drive ralplan.
   return [
     deny("edit"),
     deny("subagent"),

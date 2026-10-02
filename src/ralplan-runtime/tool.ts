@@ -3,7 +3,7 @@
 // (spec D-W1). Seven ops mirror the gjc CLI and state verbs (D-W2): `start`
 // (`gjc ralplan "<task>"`), `write` (`gjc ralplan --write`), `status`
 // (`gjc state read ralplan`, OQ4), `doctor`, `state` (`gjc state ralplan
-// write`), `handoff` (to ultragoal) and `clear`. Every op works on the calling
+// write`), `handoff` (to ultragoal or deep-interview) and `clear`. Every op works on the calling
 // session's lineage root (DR-1); record operations run in one
 // `ralplanTransaction` each (`./store.ts`).
 //
@@ -141,7 +141,7 @@ const input = z.object({
     .record(z.string(), z.unknown())
     .optional()
     .describe('state: fields to merge; null deletes a field. Stop here is {"active": false}.'),
-  to: z.enum(["ultragoal"]).optional().describe("handoff: the target skill."),
+  to: z.enum(["ultragoal", "deep-interview"]).optional().describe("handoff: the target skill."),
   force: z.boolean().optional().describe("clear: overwrite a corrupt state."),
 });
 
@@ -252,7 +252,7 @@ export function ralplanTool(store: StateStore, deps: RalplanToolDeps) {
     name: "ralplan",
     permission: "ralplan",
     description:
-      "Operate this session's ralplan run (gjc ralplan): start a run, write a stage artifact (planner, intent, architect, critic, disposition, revision, post-interview, adr, final) and get its receipt, status, doctor, state (merge patch; Stop here is {active:false}), handoff to ultragoal after final, clear. The only way to change ralplan files and state.",
+      "Operate this session's ralplan run (gjc ralplan): start a run, write a stage artifact (planner, intent, architect, critic, disposition, revision, post-interview, adr, final) and get its receipt, status, doctor, state (merge patch; Stop here is {active:false}), handoff to ultragoal or deep-interview after final, clear. The only way to change ralplan files and state.",
     input,
     async execute(args, context) {
       const owner = await ownerSession(context, args.op);
@@ -277,8 +277,8 @@ export function ralplanTool(store: StateStore, deps: RalplanToolDeps) {
           );
         }
         case "handoff":
-          if (args.to !== "ultragoal") throw new Error('to must be "ultragoal"');
-          return ralplanHandoff(store, owner);
+          if (args.to === undefined) throw new Error('to must be "ultragoal" or "deep-interview"');
+          return ralplanHandoff(store, owner, args.to);
         case "clear":
           return json(
             await store.ralplanTransaction(owner, (tx) =>

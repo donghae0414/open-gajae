@@ -17,8 +17,6 @@
 //   `./rows.ts`); both rows carry gjc `buildHudForMode` of their merged
 //   state (`state-runtime.ts:1824,1838`), ralplan's and ultragoal's alike
 // Deviations:
-// - ultragoal 33 (PQ-5 (1) B, (2) A): a deep-interview callee gets the phase
-//   `"deep-interview"` (gjc `interviewing`) and no row.
 // - ralplan 17: no envelope receipt, checksum or `state_revision`; the
 //   StateStore `_meta` stays. There is no `--force`: a corrupt state is
 //   refused.
@@ -31,6 +29,11 @@
 //   would refuse leaves no journal and no callee write behind.
 
 import { buildDeepInterviewHudFromState } from "../deep-interview-runtime/hud.js";
+import {
+  DEEP_INTERVIEW_INITIAL_STATE,
+  isDeepInterviewPhase,
+  isValidDeepInterviewTransition,
+} from "../deep-interview-runtime/manifest.js";
 import { buildRalplanHudFromState } from "../ralplan-runtime/hud.js";
 import {
   isValidTransition,
@@ -58,7 +61,7 @@ export type HandoffCaller = "ralplan" | "ultragoal" | "deep-interview";
 export type HandoffCallee = HandoffCaller;
 
 type HandoffSkill = {
-  /** gjc `initialPhaseForSkill`, but deep-interview's (deviation 33). */
+  /** gjc `initialPhaseForSkill`. */
   initialPhase: string;
   /** The manifest behind gjc's audit-only transition diagnostic. */
   manifest?: {
@@ -67,8 +70,6 @@ type HandoffSkill = {
   };
   /** gjc `buildHudForMode`: the row's HUD from the merged state. */
   hud?(state: Json, at: string): WorkflowHudSummary;
-  /** PQ-5 (2) A: a deep-interview callee writes no row. */
-  row: boolean;
 };
 
 const HANDOFF_SKILLS: Record<HandoffCallee, HandoffSkill> = {
@@ -79,13 +80,14 @@ const HANDOFF_SKILLS: Record<HandoffCallee, HandoffSkill> = {
       isValidTransition,
     },
     hud: buildRalplanHudFromState,
-    row: true,
   },
-  ultragoal: { initialPhase: ULTRAGOAL_INITIAL_STATE, hud: buildUltragoalHudFromState, row: true },
+  ultragoal: { initialPhase: ULTRAGOAL_INITIAL_STATE, hud: buildUltragoalHudFromState },
+  // Deep-interview revision plan DR-10: gjc's `interviewing` and row; the
+  // callee is not normalized here (the deep-interview reads are).
   "deep-interview": {
-    initialPhase: "deep-interview",
+    initialPhase: DEEP_INTERVIEW_INITIAL_STATE,
+    manifest: { isState: isDeepInterviewPhase, isValidTransition: isValidDeepInterviewTransition },
     hud: buildDeepInterviewHudFromState,
-    row: false,
   },
 };
 
@@ -204,8 +206,7 @@ async function writeHandoffStateTx(
  * `pending` journal; ③ the callee merged over its kept fields, active on its
  * initial phase with `handoff_from`/`handoff_at`; ④ the caller merged over
  * its kept fields, inactive on `handoff` with `handoff_to`/`handoff_at`; ⑤
- * the caller's inactive row, the callee's active row (none for
- * deep-interview) and the snapshot; ⑥ `recordCaller`; ⑦ the journal
+ * the caller's inactive row, the callee's active row and the snapshot; ⑥ `recordCaller`; ⑦ the journal
  * committed, then removed. A throw leaves the journal `pending`.
  */
 export async function handoffWorkflowTx(
@@ -291,17 +292,15 @@ export async function handoffWorkflowTx(
         handoff_to: callee,
         handoff_at: at,
       },
-      callee: calleeSkill.row
-        ? {
-            skill: callee,
-            active: true,
-            phase: calleeSkill.initialPhase,
-            sessionId,
-            hud: calleeSkill.hud?.(calleeState, at),
-            handoff_from: caller,
-            handoff_at: at,
-          }
-        : undefined,
+      callee: {
+        skill: callee,
+        active: true,
+        phase: calleeSkill.initialPhase,
+        sessionId,
+        hud: calleeSkill.hud?.(calleeState, at),
+        handoff_from: caller,
+        handoff_at: at,
+      },
     },
     owner,
   );

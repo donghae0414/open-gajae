@@ -23,9 +23,10 @@ import { wrapInjected } from "../injection.js";
 export const DEEP_INTERVIEW_MUTATION_BLOCK_MESSAGE =
   "Deep-interview phase boundary: continue gathering context/questions/risks and emit a handoff/spec before code edits. Mutation tools and patch execution are blocked while deep-interview is active; finalize specs through `deep-interview spec` or hand off to an execution phase.\nIf this deep-interview is stale or was started by mistake, end it with `deep-interview clear`.";
 
-/** DR-24: a direct write of a deep-interview spec. */
-export const DEEP_INTERVIEW_SPEC_GUARD_MESSAGE =
-  ".open-gajae/_session-*/specs/deep-interview-* is deep-interview-owned; write specs only through `deep-interview spec`.";
+/** DR-24: a direct write of a deep-interview spec; `shown` is the project-relative path. */
+export function specGuardRefusal(shown: string): string {
+  return `open-gajae: ${shown} is deep-interview-owned; write specs only through \`deep-interview spec\``;
+}
 
 /**
  * gjc `tools/skill.ts:205-209` for the same-execution load gate (DR-21): the
