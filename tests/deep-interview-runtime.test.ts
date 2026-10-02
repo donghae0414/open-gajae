@@ -20,6 +20,7 @@ import {
   mergeEstablishedFacts,
   normalizeForRead,
   sanitizeWritePayload,
+  topLevelTranscriptError,
 } from "../src/deep-interview-runtime/envelope";
 import { buildDeepInterviewHudFromState, deriveDeepInterviewHud } from "../src/deep-interview-runtime/hud";
 import {
@@ -205,11 +206,15 @@ test("RT6 write sanitizer: the nine gjc lifecycle keys only (PQ-14 A); top-level
     expect(() => sanitizeWritePayload({ [field]: [] })).toThrow(
       `deep-interview write: ${field} belong inside "state"; resend them as {"state": {…}} (top-level transcript fields are rejected, not moved).`,
     );
-  // The `state` op refusal: D-SR9 at both levels, transcript fields at the top level.
+  // The `state` op refusal: D-SR9 at both levels; the other top-level
+  // transcript fields get write's refusal (DR-14).
   expect(statePatchFieldError({ spec_path: "p", rounds: [], state: { current_ambiguity: 0, topology: {} } })).toBe(
-    'deep-interview state cannot set spec_path, rounds, state.current_ambiguity: rounds, facts and ambiguity are written by `deep-interview write` (inside "state"), and the spec fields by `deep-interview spec`',
+    'deep-interview state cannot set spec_path, rounds, state.current_ambiguity: rounds, facts and ambiguity are written by `deep-interview write` (inside "state"), and the spec fields by `deep-interview spec`.',
   );
-  expect(statePatchFieldError({ topology: {} })).toContain("cannot set topology");
+  expect(statePatchFieldError({ topology: {} })).toBeUndefined();
+  expect(topLevelTranscriptError("state", { topology: {}, rounds: [] }, new Set(["rounds"]))).toBe(
+    'deep-interview state: topology belong inside "state"; resend them as {"state": {…}} (top-level transcript fields are rejected, not moved).',
+  );
   expect(statePatchFieldError({ state: { topology: {} }, note: 1 })).toBeUndefined();
 });
 

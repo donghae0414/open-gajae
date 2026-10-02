@@ -199,9 +199,16 @@ export function mergeEstablishedFacts(existing: readonly unknown[], incoming: re
   return result;
 }
 
-/** The refusal for a payload with top-level transcript fields (PQ-20 C). */
-export function topLevelTranscriptError(op: "write" | "state", payload: Json): string | undefined {
-  const named = TRANSCRIPT_STATE_FIELDS.filter((field) => Object.hasOwn(payload, field));
+/**
+ * The refusal for a payload with top-level transcript fields (PQ-20 C);
+ * `skip` leaves out fields another refusal names.
+ */
+export function topLevelTranscriptError(
+  op: "write" | "state",
+  payload: Json,
+  skip: ReadonlySet<string> = new Set(),
+): string | undefined {
+  const named = TRANSCRIPT_STATE_FIELDS.filter((field) => Object.hasOwn(payload, field) && !skip.has(field));
   if (named.length === 0) return undefined;
   return `deep-interview ${op}: ${named.join(", ")} belong inside "state"; resend them as {"state": {…}} (top-level transcript fields are rejected, not moved).`;
 }

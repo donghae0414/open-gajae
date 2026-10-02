@@ -93,14 +93,17 @@ function weakestDimensionFromTopology(topology: Json, targetComponent: string | 
 }
 
 /**
- * gjc `deriveDeepInterviewHud`: the chips of a whole mode-state envelope.
+ * The facts gjc `deriveDeepInterviewHud` reads from a whole mode-state
+ * envelope; the compaction context reads the same ones (plan DR-22).
  * `target`/`weakest` come from `state.topology` (none for `legacy_missing`);
  * a field missing under `state` falls back to the top level, as in gjc.
  */
-export function deriveDeepInterviewHud(
+export function deepInterviewHudFacts(
   value: unknown,
-  options: DeepInterviewHudDeriveOptions = {},
-): WorkflowHudSummary {
+): Pick<
+  DeepInterviewHudState,
+  "phase" | "ambiguity" | "threshold" | "roundCount" | "targetComponent" | "weakestDimension"
+> {
   const payload = normalizeForRead(value);
   const stateField = payload.state;
   const isNumber = (item: unknown): item is number => typeof item === "number" && Number.isFinite(item);
@@ -110,7 +113,7 @@ export function deriveDeepInterviewHud(
     return guard(item) ? item : undefined;
   };
 
-  const phase = options.phase ?? (typeof payload.current_phase === "string" ? payload.current_phase : undefined);
+  const phase = typeof payload.current_phase === "string" ? payload.current_phase : undefined;
   const rounds = pick("rounds", isArray);
   const ambiguity = pick("current_ambiguity", isNumber) ?? latestScoredAmbiguity(rounds);
   const threshold = pick("threshold", isNumber);
@@ -125,15 +128,20 @@ export function deriveDeepInterviewHud(
       ? topology.last_targeted_component_id
       : undefined;
   const weakestDimension = topology ? weakestDimensionFromTopology(topology, targetComponent) : undefined;
-  const specStatus = options.specStatus ?? (typeof payload.spec_status === "string" ? payload.spec_status : undefined);
+  return { phase, ambiguity, threshold, roundCount: rounds?.length, targetComponent, weakestDimension };
+}
 
+/** gjc `deriveDeepInterviewHud`: the chips of a whole mode-state envelope. */
+export function deriveDeepInterviewHud(
+  value: unknown,
+  options: DeepInterviewHudDeriveOptions = {},
+): WorkflowHudSummary {
+  const facts = deepInterviewHudFacts(value);
+  const specStatus =
+    options.specStatus ?? (isRecord(value) && typeof value.spec_status === "string" ? value.spec_status : undefined);
   return buildDeepInterviewHudSummary({
-    phase,
-    ambiguity,
-    threshold,
-    roundCount: rounds?.length,
-    targetComponent,
-    weakestDimension,
+    ...facts,
+    phase: options.phase ?? facts.phase,
     specStatus,
     updatedAt: options.updatedAt ?? new Date().toISOString(),
   });

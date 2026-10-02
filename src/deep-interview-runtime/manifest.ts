@@ -157,10 +157,9 @@ export const STATE_OP_REFUSED_STATE_FIELDS = [
 ] as const;
 
 /**
- * The `state` op's refusal (deviation 19): the D-SR9 fields at either level,
- * and the nine transcript fields at the top level. The same transcript fields
- * inside `state` are allowed, except the D-SR9 ones. Returns the refusal, or
- * undefined.
+ * The `state` op's refusal of the runtime-owned fields (spec D-SR9,
+ * deviation 19), at either level. Returns the refusal, or undefined. The
+ * other top-level transcript fields get `write`'s refusal (PQ-20 C).
  */
 export function statePatchFieldError(patch: Record<string, unknown>): string | undefined {
   const nested =
@@ -168,12 +167,14 @@ export function statePatchFieldError(patch: Record<string, unknown>): string | u
       ? (patch.state as Record<string, unknown>)
       : {};
   const owned = new Set<string>([...SPEC_FIELDS, ...STATE_OP_REFUSED_STATE_FIELDS]);
-  const named: string[] = [];
-  for (const key of Object.keys(patch))
-    if (owned.has(key) || (TRANSCRIPT_STATE_FIELDS as readonly string[]).includes(key)) named.push(key);
-  for (const key of Object.keys(nested)) if (owned.has(key)) named.push(`state.${key}`);
+  const named = [
+    ...Object.keys(patch).filter((key) => owned.has(key)),
+    ...Object.keys(nested)
+      .filter((key) => owned.has(key))
+      .map((key) => `state.${key}`),
+  ];
   if (named.length === 0) return undefined;
-  return `deep-interview state cannot set ${named.join(", ")}: rounds, facts and ambiguity are written by \`deep-interview write\` (inside "state"), and the spec fields by \`deep-interview spec\``;
+  return `deep-interview state cannot set ${named.join(", ")}: rounds, facts and ambiguity are written by \`deep-interview write\` (inside "state"), and the spec fields by \`deep-interview spec\`.`;
 }
 
 /**
