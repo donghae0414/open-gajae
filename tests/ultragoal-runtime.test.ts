@@ -29,6 +29,7 @@ import {
   ALLOWED_STATUSES,
   buildGoalsFile,
   chooseNextGoal,
+  carriedCriterionIds,
   completionView,
   FIX_CRITERION_SUFFIX,
   type Goal,
@@ -341,7 +342,9 @@ describe("receipts and run completion (C-7)", () => {
     });
     const view = completionView(file, "G003", { evidence: "fixed" });
     expect(view.receiptKind).toBe("final-aggregate");
-    expect(view.supersededParentId).toBe("G002");
+    expect(view.supersededParentIds).toEqual(["G002"]);
+    // Deviation 44: the final gate also covers the superseded parent's criteria.
+    expect(view.activeCriterionIds).toEqual(["G003.AC1", "G002.AC1"]);
     expect(goal(view.file, "G002")).toMatchObject({
       status: "superseded",
       evidence: "Resolved by verification blocker goal G003: fixed",
@@ -349,8 +352,71 @@ describe("receipts and run completion (C-7)", () => {
     expect(goal(file, "G002").status).toBe("review_blocked");
     // Only a review_blocked parent is superseded; a blocked one stays required.
     goal(file, "G002").status = "blocked";
-    expect(completionView(file, "G003")).toMatchObject({ receiptKind: "per-goal", supersededParentId: undefined });
+    expect(completionView(file, "G003")).toMatchObject({
+      receiptKind: "per-goal",
+      supersededParentIds: [],
+      activeCriterionIds: ["G003.AC1"],
+    });
     expect(completionView(plan(2), "G001").receiptKind).toBe("per-goal");
+  });
+
+  /** G001 complete; G002 review_blocked, fixed by G003, itself fixed by G004. */
+  function fixOfAFix(): GoalsFile {
+    const file = plan(2);
+    goal(file, "G001").status = "complete";
+    goal(file, "G002").status = "review_blocked";
+    const fix = (id: string, parent: string, status: Goal["status"]): Goal => ({
+      ...newGoal(id, { title: "Fix", description: `fix ${parent}`, acceptanceCriteria: [`fix ${parent}${FIX_CRITERION_SUFFIX}`] }),
+      status,
+      steering: { kind: "review_blocker", blockedGoalId: parent },
+    });
+    file.goals.push(fix("G003", "G002", "review_blocked"), fix("G004", "G003", "active"));
+    return file;
+  }
+
+  test("completion view: the last fix supersedes its whole chain and carries the criteria (deviations 43, 44)", () => {
+    const file = fixOfAFix();
+    const view = completionView(file, "G004", { evidence: "fixed" });
+    expect(view.supersededParentIds).toEqual(["G003", "G002"]);
+    expect(view.receiptKind).toBe("final-aggregate");
+    expect(view.activeCriterionIds).toEqual(["G004.AC1", "G002.AC1", "G003.AC1"]);
+    for (const id of ["G002", "G003"])
+      expect(goal(view.file, id)).toMatchObject({
+        status: "superseded",
+        evidence: "Resolved by verification blocker goal G004: fixed",
+      });
+    // A goal of the chain superseded by hand earlier is passed, and still carried.
+    goal(file, "G002").status = "superseded";
+    expect(completionView(file, "G004")).toMatchObject({
+      supersededParentIds: ["G003"],
+      activeCriterionIds: ["G004.AC1", "G002.AC1", "G003.AC1"],
+    });
+    // The walk stops at any other status, which stays required.
+    goal(file, "G003").status = "blocked";
+    expect(completionView(file, "G004")).toMatchObject({
+      supersededParentIds: [],
+      receiptKind: "per-goal",
+      activeCriterionIds: ["G004.AC1"],
+    });
+  });
+
+  test("carried criteria come only from resolved fix chains (deviation 44)", () => {
+    // An earlier chain resolved by a complete fix carries into a later final.
+    const resolved = plan(3);
+    goal(resolved, "G001").status = "superseded";
+    resolved.goals.push({
+      ...newGoal("G004", { title: "Fix", description: "fix G001", acceptanceCriteria: ["fix G001 works"] }),
+      status: "complete",
+      steering: { kind: "review_blocker", blockedGoalId: "G001" },
+    });
+    expect(carriedCriterionIds(resolved, "G003")).toEqual(["G001.AC1"]);
+    // A chain whose fix never completed carries nothing...
+    goal(resolved, "G004").status = "superseded";
+    expect(carriedCriterionIds(resolved, "G003")).toEqual([]);
+    // ...and neither does a goal superseded by a plan change.
+    const changed = plan(2);
+    goal(changed, "G001").status = "superseded";
+    expect(carriedCriterionIds(changed, "G002")).toEqual([]);
   });
 });
 

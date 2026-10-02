@@ -3,7 +3,9 @@
 // the strict pass vocabulary (D-VF6), and every defect collected as
 // `{path, code, message}` in one pass. Pure: `checkpoint(complete)` and
 // `validate_gate` share it; the caller picks the kind from the completion
-// view (`./plan.ts` `completionView`) and passes the goal's active criteria.
+// view (`./plan.ts` `completionView`) and passes its active criteria: the
+// goal's own, plus for a final gate those carried from resolved fix chains
+// (deviation 44).
 //
 // Source: gajae-code 5c5231418930673e42cc5d08ebe4376e03187533 (MIT),
 // `packages/coding-agent/src/`:
@@ -252,8 +254,9 @@ function checkCriticReview(found: Diagnostics, value: unknown): void {
 
 /**
  * Every defect of `gate` for a `receiptKind` checkpoint. `activeCriterionIds`
- * are the goal's active criteria; without them only the row shapes and
- * duplicates of `criteriaCoverage` are checked. An empty list means valid.
+ * are the completion view's active criteria; without them only the row
+ * shapes and duplicates of `criteriaCoverage` are checked. An empty list
+ * means valid.
  */
 export function validateGate(
   gate: unknown,

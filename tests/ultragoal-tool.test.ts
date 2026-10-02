@@ -776,14 +776,15 @@ test("fix goal closes the run through the final gate", async () => {
         evidence: "the qa lane crashed on empty input",
       }),
     ).toBe("Recorded review blockers. blocker-goal-id=G003");
-    // 4. the fix goal has one criterion and needs the final gate
+    // 4. the fix goal has one criterion and needs the final gate, which also
+    // covers the criteria of the goal it supersedes (deviation 44)
     expect(await h.call({ op: "next" })).toBe(
       [
         "ultragoal next-action=execute-goal goal-id=G003",
         "objective=fix the empty-input crash",
         `goal-objective=${h.objective}`,
         FINAL_REQUIRES,
-        "criteria=G003.AC1",
+        "criteria=G003.AC1,G002.AC1",
       ].join("\n"),
     );
     // 5. a per-goal gate is refused
@@ -792,11 +793,16 @@ test("fix goal closes the run through the final gate", async () => {
       "  reviewCohort [review_cohort_invalid]: qualityGate reviewCohort is required at the review boundary",
       "  criticReview.verdict [critic_verdict_not_okay]: checkpoint(status: complete) (final aggregate) requires criticReview with verdict OKAY, non-empty evidence, and empty blockers",
     ].join("\n");
-    expect(await complete(h, "G003", perGoal(["G003.AC1"]))).toBe(`Error: ${cohortErrors}`);
+    expect(await complete(h, "G003", perGoal(["G003.AC1", "G002.AC1"]))).toBe(`Error: ${cohortErrors}`);
     // 6. validate_gate judges it final too
-    expect(await h.call({ op: "validate_gate", gate: perGoal(["G003.AC1"]), goal_id: "G003" })).toBe(cohortErrors);
-    // 7. the second-generation final gate passes
+    expect(await h.call({ op: "validate_gate", gate: perGoal(["G003.AC1", "G002.AC1"]), goal_id: "G003" })).toBe(
+      cohortErrors,
+    );
+    // 7. the second-generation final gate passes once it covers G002's criterion
     expect(await complete(h, "G003", finalGate(["G003.AC1"], 2))).toBe(
+      "Error: 1 quality-gate error(s):\n  criteriaCoverage [missing_criterion]: qualityGate criteriaCoverage is missing active criterion G002.AC1",
+    );
+    expect(await complete(h, "G003", finalGate(["G003.AC1", "G002.AC1"], 2))).toBe(
       "Checkpointed G003 as complete.\nAll ultragoal goals are complete.",
     );
     // 8. G2 superseded, G3 final, run complete, row gone
@@ -824,43 +830,70 @@ async function fixOfAFix(h: Harness) {
   expect(await block("G003", "fix the finding of the fix")).toBe("Recorded review blockers. blocker-goal-id=G004");
 }
 
-test("fix-of-a-fix chain: supersede the root before the last fix completes", async () => {
+test("fix-of-a-fix chain: the last fix supersedes the whole chain and covers its criteria (deviations 43, 44)", async () => {
   await fixture(async (h) => {
     await fixOfAFix(h);
-    expect(await steer(h, { op: "supersede", target: "goal", goal_id: "G002" })).toBe(
-      "Accepted supersede steering. target=G002",
-    );
-    expect(await h.call({ op: "next" })).toContain(`\n${FINAL_REQUIRES}\n`);
+    const next = await h.call({ op: "next" });
+    expect(next).toContain(`\n${FINAL_REQUIRES}\n`);
+    expect(next).toEndWith("\ncriteria=G004.AC1,G002.AC1,G003.AC1");
     expect(await complete(h, "G004", finalGate(["G004.AC1"], 2))).toBe(
+      [
+        "Error: 2 quality-gate error(s):",
+        "  criteriaCoverage [missing_criterion]: qualityGate criteriaCoverage is missing active criterion G002.AC1",
+        "  criteriaCoverage [missing_criterion]: qualityGate criteriaCoverage is missing active criterion G003.AC1",
+      ].join("\n"),
+    );
+    expect(await complete(h, "G004", finalGate(["G004.AC1", "G002.AC1", "G003.AC1"], 2))).toBe(
       "Checkpointed G004 as complete.\nAll ultragoal goals are complete.",
     );
-    expect((await goalRow(h, "G003")).status).toBe("superseded");
+    for (const id of ["G002", "G003"])
+      expect(await goalRow(h, id)).toMatchObject({
+        status: "superseded",
+        evidence: "Resolved by verification blocker goal G004: verified G004",
+      });
     expect((await goalRow(h, "G004")).completionVerification.receiptKind).toBe("final-aggregate");
     expect(await h.call({ op: "status" })).toContain("- run_complete: yes");
     expect(await h.guard()).toBeUndefined();
   });
 });
 
-test("late root supersede: reopen the last completed goal", async () => {
+test("fix-of-a-fix chain: a root superseded by hand is still covered (deviation 44)", async () => {
   await fixture(async (h) => {
     await fixOfAFix(h);
-    expect(await h.call({ op: "next" })).toContain(`\n${PER_GOAL_REQUIRES}\n`);
-    expect(await complete(h, "G004", perGoal(["G004.AC1"]))).toBe("Checkpointed G004 as complete.");
-    await steer(h, { op: "supersede", target: "goal", goal_id: "G002" });
-    const reason = "last completed goal G004 has no valid final-aggregate receipt";
+    expect(await steer(h, { op: "supersede", target: "goal", goal_id: "G002" })).toBe(
+      "Accepted supersede steering. target=G002",
+    );
+    expect(await h.call({ op: "next" })).toEndWith("\ncriteria=G004.AC1,G002.AC1,G003.AC1");
+    expect(await complete(h, "G004", finalGate(["G004.AC1", "G002.AC1", "G003.AC1"], 2))).toBe(
+      "Checkpointed G004 as complete.\nAll ultragoal goals are complete.",
+    );
+    expect(await h.call({ op: "status" })).toContain("- run_complete: yes");
+  });
+});
+
+test("late supersede: reopen the last completed goal", async () => {
+  await fixture(async (h) => {
+    await create(h, 2);
+    await h.call({ op: "next" });
+    expect(await complete(h, "G001", perGoal(["G001.AC1"]))).toStartWith("Checkpointed G001 as complete.");
+    await h.call({ op: "checkpoint", goal_id: "G002", status: "blocked", evidence: "the goal is no longer needed" });
+    expect(await steer(h, { op: "supersede", target: "goal", goal_id: "G002" })).toBe(
+      "Accepted supersede steering. target=G002",
+    );
+    const reason = "last completed goal G001 has no valid final-aggregate receipt";
     expect(await h.call({ op: "status" })).toContain(`- run_complete: no (${reason})`);
-    expect(await h.guard()).toContain("Reopen G004");
+    expect(await h.guard()).toContain("Reopen G001");
     expect(await h.call({ op: "next" })).toBe(
       [
         "ultragoal complete all=true",
         `run-complete=no reason=${reason}`,
-        "hint=reopen G004 with ultragoal checkpoint(status: pending) and re-verify with the final gate",
+        "hint=reopen G001 with ultragoal checkpoint(status: pending) and re-verify with the final gate",
       ].join("\n"),
     );
-    await h.call({ op: "checkpoint", goal_id: "G004", status: "pending", evidence: "the run needs a final receipt" });
+    await h.call({ op: "checkpoint", goal_id: "G001", status: "pending", evidence: "the run needs a final receipt" });
     expect(await h.call({ op: "next" })).toContain(`\n${FINAL_REQUIRES}\n`);
-    expect(await complete(h, "G004", finalGate(["G004.AC1"], 2), "re-verified G004")).toBe(
-      "Checkpointed G004 as complete.\nAll ultragoal goals are complete.",
+    expect(await complete(h, "G001", finalGate(["G001.AC1"]), "re-verified G001")).toBe(
+      "Checkpointed G001 as complete.\nAll ultragoal goals are complete.",
     );
     expect(await h.call({ op: "status" })).toContain("- run_complete: yes");
     expect(await h.guard()).toBeUndefined();

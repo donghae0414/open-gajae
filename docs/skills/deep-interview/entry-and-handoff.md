@@ -220,7 +220,7 @@ Handed off to deep-interview: ralplan is inactive (phase handoff) and deep-inter
 
 ### `ultragoal handoff(to:"deep-interview", reason)`
 
-`ultragoal` 도구의 `handoff` op(`src/ultragoal-runtime/store.ts:1096-1116`). `reason`이 비면 `reason is required (a non-empty string)`. ultragoal이 활성인지, 어느 phase인지는 보지 않습니다. 공통 인계에 `recordCaller`를 넘겨, 행을 쓴 뒤 원장에 `workflow_handoff`, `progress.txt`에 `HANDOFF` 메모를 남깁니다.
+`ultragoal` 도구의 `handoff` op(`src/ultragoal-runtime/store.ts:1094-1114`). `reason`이 비면 `reason is required (a non-empty string)`. ultragoal이 활성인지, 어느 phase인지는 보지 않습니다. 공통 인계에 `recordCaller`를 넘겨, 행을 쓴 뒤 원장에 `workflow_handoff`, `progress.txt`에 `HANDOFF` 메모를 남깁니다.
 
 결과는 결과 줄 없이 한 줄 JSON 영수증입니다.
 

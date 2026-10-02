@@ -589,11 +589,12 @@ export async function nextTx(tx: WorkflowTx, sessionId: string, args: UltragoalA
     await appendLedgerTx(tx, [newRow({ event: "goal_started", goalId: goal.id })], RUNTIME_OWNER);
     action = { kind: "execute-goal", goal };
   }
+  const view = action.kind === "execute-goal" ? completionView(plan, action.goal.id) : undefined;
   const text = renderNext({
     action,
     goalObjective: goalObjectiveOf(tx),
-    finalGate:
-      action.kind === "execute-goal" && completionView(plan, action.goal.id).receiptKind === "final-aggregate",
+    finalGate: view?.receiptKind === "final-aggregate",
+    criteria: view?.activeCriterionIds,
     run: action.kind === "none" ? runCompletion(plan, rows) : undefined,
   });
   await reconcileUltragoalTx(tx, sessionId);
@@ -664,7 +665,7 @@ export async function checkpointTx(tx: WorkflowTx, sessionId: string, args: Ultr
     const view = completionView(file, goal.id, { evidence });
     const diagnostics = validateGate(args.gate, {
       receiptKind: view.receiptKind,
-      activeCriterionIds: view.goal.acceptanceCriteria.map((criterion) => criterion.id),
+      activeCriterionIds: view.activeCriterionIds,
     });
     if (diagnostics.length > 0) throw new Error(renderGateDiagnostics(diagnostics));
     const implementation = checkList(args.implementation, "implementation", LIMITS.text);
@@ -770,10 +771,7 @@ export async function validateGateTx(tx: WorkflowTx, args: UltragoalArgs): Promi
   if (!file || !goal) return renderGateDiagnostics(validateGate(gate, { receiptKind: "per-goal" }));
   const view = completionView(file, goal.id);
   return renderGateDiagnostics(
-    validateGate(gate, {
-      receiptKind: view.receiptKind,
-      activeCriterionIds: view.goal.acceptanceCriteria.map((criterion) => criterion.id),
-    }),
+    validateGate(gate, { receiptKind: view.receiptKind, activeCriterionIds: view.activeCriterionIds }),
   );
 }
 

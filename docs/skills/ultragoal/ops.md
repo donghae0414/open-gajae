@@ -352,7 +352,7 @@ reconcile은 `goals.json`과 원장에서 실행 상태를 다시 계산해 mode
     checkpoint requires=<요구 목록>
     criteria=<기준 ID들, 쉼표로 구분>
     ```
-    요구 목록은 목표의 완료 판정 view(`completionView`)가 `final-aggregate`인지로 정합니다. 목표별 gate와 최종 gate의 선택 규칙은 [gates-and-receipts.md](gates-and-receipts.md)에 있습니다.
+    요구 목록은 목표의 완료 판정 view(`completionView`)가 `final-aggregate`인지로 정합니다. `criteria=`는 그 view의 `activeCriterionIds`입니다. 최종 gate면 목표 자신의 ID 뒤에 해결된 수정 사슬에서 이월된 ID가 붙습니다(편차 44). 목표별 gate와 최종 gate의 선택 규칙은 [gates-and-receipts.md](gates-and-receipts.md)에 있습니다.
     ```
     targetedVerification:passed,architectReview:CLEAR+APPROVE,criteriaCoverage:all
     targetedVerification:passed,architectReview:CLEAR+APPROVE,criteriaCoverage:all,reviewCohort:joined,criticReview:OKAY
@@ -442,7 +442,7 @@ reconcile은 `goals.json`과 원장에서 실행 상태를 다시 계산해 mode
    ```
 3. **gate 검사**: `completionView(file, goal.id, { evidence })`로 완료 판정 view를 만듭니다.
    - 이 view에서는 수정 목표의 `review_blocked` 부모가 이미 `superseded`입니다.
-   - `validateGate`에 view가 정한 영수증 종류(`per-goal`/`final-aggregate`)와 목표의 현재 기준 ID들을 넘깁니다.
+   - `validateGate`에 view가 정한 영수증 종류(`per-goal`/`final-aggregate`)와 view의 `activeCriterionIds`(목표의 현재 기준 ID들, 최종이면 이월된 기준 ID도, 편차 44)를 넘깁니다.
    - 결함이 하나라도 있으면 전체 목록을 던집니다.
      ```
      Error: <N> quality-gate error(s):
@@ -453,11 +453,11 @@ reconcile은 `goals.json`과 원장에서 실행 상태를 다시 계산해 mode
    - 영수증 필드는 `receiptId`, `receiptKind`, `criteriaRevision`, `qualityGateHash`, `checkpointLedgerEventId`, `verifiedAt`입니다. 뜻은 [gates-and-receipts.md](gates-and-receipts.md)에 있습니다.
    - `checkpointLedgerEventId`는 이 호출이 미리 만든 `eventId`입니다. 이 값이 원장 행의 `eventId`가 됩니다.
    - 목표에는 `status: "complete"`, `evidence`, `completed_at`도 씁니다.
-6. **부모 대체**: 목표가 수정 목표이고 부모가 `review_blocked`면, view에서 이미 부모가 바뀌어 있습니다. 부모는 `status: "superseded"`이고 `evidence`는 다음 문장입니다.
+6. **사슬 대체**: 목표가 수정 목표면, view에서 이미 사슬 위쪽의 `review_blocked` 목표가 바뀌어 있습니다(편차 43). 바뀐 목표마다 `status: "superseded"`이고 `evidence`는 다음 문장입니다.
    ```
    Resolved by verification blocker goal <fix id>: <evidence>
    ```
-   부모 쪽에는 원장 행이나 `amendments` 항목이 따로 생기지 않습니다. 한 단계 위 부모만 봅니다(PQ-23 A).
+   바뀐 목표 쪽에는 원장 행이나 `amendments` 항목이 따로 생기지 않습니다. 이미 superseded인 목표는 지나가고, 다른 status를 만나면 멈춥니다. gjc는 한 단계 위 부모만 바꿉니다.
 7. **다음 목표** (gjc `advanceNext`, PQ-9 A): `chooseNextGoal(plan, false)`로 첫 `active`, 없으면 첫 `pending` 목표를 고릅니다. `pending`이면 `active`로 바꾸고 `started_at`을 채웁니다(`startedNext`). 이미 active인 목표면 그대로 둡니다.
 8. **진행 메모 항목**: 기존 진행 메모에 덧붙입니다. 파일이 없으면 머리글부터 만듭니다(`appendProgressEntry`, `initialProgress`). 항목은 한 줄로 바꿔 적습니다.
    ```
@@ -555,7 +555,7 @@ reconcile은 `goals.json`과 원장에서 실행 상태를 다시 계산해 mode
      ```
   4. `goal_id`가 없으면 `currentGoal`, 곧 파일 순서의 첫 `pending`/`active`/`failed` 목표를 씁니다. active 목표보다 앞에 `pending` 목표가 있으면 그 목표를 판정합니다.
   5. 계획이나 목표가 없으면 목표별 gate로, 기준 ID 없이 모양만 검사합니다.
-  6. 그 밖에는 `completionView(file, goal.id)`의 영수증 종류와 목표의 현재 기준 ID로 `validateGate`를 돌립니다. `checkpoint(complete)`와 같은 함수와 같은 종류 선택입니다.
+  6. 그 밖에는 `completionView(file, goal.id)`의 영수증 종류와 `activeCriterionIds`로 `validateGate`를 돌립니다. `checkpoint(complete)`와 같은 함수와 같은 종류 선택입니다.
 - **보지 않는 것**: 목표의 시작 상태(`pending` 목표도 판정합니다), `evidence`, 진행 목록.
 - **읽는 것**: `goals.json`.
 - **쓰는 것**: 없음. reconcile도 없습니다. 테스트 "validate_gate judges like checkpoint and writes nothing"이 `goals.json`, 원장, mode-state, 행, 감사 로그가 그대로임을 확인합니다.

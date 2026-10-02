@@ -266,6 +266,15 @@
   - 다시 진입하면 시드가 옛 `status`·`goals`·`counts`를 두므로, `goal-planning` 행의 HUD가 `status=complete`로 보일 수 있습니다.
 - **인계 이유**: ralplan 쪽 인계 이유(`ralplan handoff`, 같은 execution의 `skill ultragoal`)는 어디에도 저장되지 않습니다.
 
+## test-app 수동 실행에서 확인한 항목 (2026-10-03)
+
+### U42. 최종 gate는 원래 계획·스펙과 대조하지 않음 (gjc 그대로, 기록만)
+
+- **무엇**: 최종 gate가 다시 확인하는 것은 `goals.json`의 기준입니다. 마지막 목표의 기준과, 해결된 수정 사슬로 superseded된 목표의 기준(편차 44)입니다. 그 기준이 계획 단계에서 이미 약해졌으면(예: deep-interview 스펙의 "실제에 가까운 색과 표면"이 계획과 G001.AC1에서 "plausible"로 바뀜) 최종 gate도 약해진 문장으로 판정합니다.
+- **terminal critic**: SKILL은 `goals.json`(설명 포함), `ledger.jsonl`, `progress.txt`, 누적 변경분을 줍니다(gjc는 `brief.md`, goals, ledger, 변경분). 승인된 계획 파일이나 deep-interview 스펙을 주라는 지시는 없습니다. 2026-10-03 관리자 결정으로 gjc 그대로 둡니다.
+- **기준 증거**: `criteriaCoverage`의 각 행은 모델이 씁니다. 런타임은 ID마다 한 행이 있는지, status와 evidence가 있는지만 봅니다. 증거가 그 기준을 실제로 보여 주는지는 리뷰어와 critic의 판단입니다.
+- **스펙 약화를 잡는 곳**: ralplan의 intent·post-interview 단계(`skills/ralplan/SKILL.md:70,104`)가 스펙과 계획을 대조합니다. 이것도 모델 판단입니다.
+
 ## 옛 번호 대응표
 
 | # | 항목 | 상태 | 지금 어디 |

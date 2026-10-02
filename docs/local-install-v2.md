@@ -152,7 +152,7 @@ opencode debug agent open-gajae-lateral-reviewer
 10. **Esc.** 실행 중 Esc로 중단하면 continuation이 없는지, 다음 프롬프트를 보내면 그 턴이 끝난 뒤 continuation이 다시 들어오는지 확인합니다.
 11. **압축.** 실행 중 `/compact`를 합니다. 압축 요약에 `[ULTRAGOAL RUN ACTIVE]` 문맥(현재 목표, 다음 행동)이 반영되는지, 다음 요청에 TUI `open-gajae: goal context added`와 함께 goal 문맥이 다시 들어가는지 확인합니다. 9번의 보류 중에 `/compact`를 하면 보류 안내가 전달되고 호스트가 모델을 한두 단계 돌려도 보류는 유지되는지 관찰해 기록합니다(README 알려진 동작).
 12. **다른 agent로 바꿨을 때(수용 동작).** 실행 중 세션 agent를 `build`로 바꾸고 goal continuation이 계속 들어오는지 관찰합니다. Esc, 또는 `open-gajae`로 돌아가 `goal drop`으로 끝냅니다(README 알려진 동작, `docs/skills/ultragoal/known-limits.md` U27).
-13. **수정 목표(가능하면).** cohort에 blocker가 있을 때 `record_review_blockers`가 `Recorded review blockers. blocker-goal-id=<id>`를 돌려주고, 원 목표가 `review_blocked`, 수정 목표의 기준이 `<objective> is resolved and re-verified` 하나인지, 수정 목표가 첫 checkpoint부터 final gate를 요구받고 완료되면 원 목표가 `superseded`가 되어 실행이 완료되는지 확인합니다.
+13. **수정 목표(가능하면).** cohort에 blocker가 있을 때 `record_review_blockers`가 `Recorded review blockers. blocker-goal-id=<id>`를 돌려주고, 원 목표가 `review_blocked`, 수정 목표의 기준이 `<objective> is resolved and re-verified` 하나인지, 수정 목표가 첫 checkpoint부터 final gate를 요구받고, 그 `next`의 `criteria=`에 원 목표의 기준이 함께 나오며(ultragoal 편차 44), 완료되면 원 목표가 `superseded`가 되어 실행이 완료되는지 확인합니다. 수정의 수정 사슬이 생기면 모델이 사슬 앞 목표를 손으로 supersede하지 않아도 마지막 수정 목표의 완료로 사슬 전체가 `superseded`가 되는지 확인합니다(편차 43).
 14. **정리.** `ultragoal doctor`가 텍스트 결과를 내는지, `ultragoal clear`가 한 줄 JSON 영수증과, goal이 열려 있으면 `The goal is still <status>; run goal drop to end it.`를 돌려주는지, `goal drop` 뒤 `goal get`이 `No active goal.`인지 확인합니다.
 15. 결과(통과·실패·관찰)를 날짜와 함께 아래 6절에 기록합니다.
 

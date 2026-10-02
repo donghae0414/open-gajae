@@ -337,13 +337,15 @@ function reopenLines(run: RunCompletion | undefined): string[] {
 
 /**
  * gjc `renderCompleteHandoff` text for `next`. `finalGate` says whether the
- * goal to execute needs the final gate (its completion view is final); `run`
+ * goal to execute needs the final gate (its completion view is final), and
+ * `criteria` lists the IDs its gate covers (default: the goal's own); `run`
  * adds the reopen hint when every file status is complete but the run is not.
  */
 export function renderNext(input: {
   action: NextAction;
   goalObjective: string;
   finalGate?: boolean;
+  criteria?: readonly string[];
   run?: RunCompletion;
 }): string {
   const { action } = input;
@@ -354,7 +356,7 @@ export function renderNext(input: {
       `objective=${action.goal.description}`,
       `goal-objective=${input.goalObjective}`,
       `checkpoint requires=${input.finalGate ? FINAL_REQUIRES : PER_GOAL_REQUIRES}`,
-      `criteria=${action.goal.acceptanceCriteria.map((criterion) => criterion.id).join(",")}`,
+      `criteria=${(input.criteria ?? action.goal.acceptanceCriteria.map((criterion) => criterion.id)).join(",")}`,
     ].join("\n");
   if (action.kind === "resolve-blockers" && action.blockedGoals.length > 0)
     return [

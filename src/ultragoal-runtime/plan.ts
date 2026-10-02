@@ -32,6 +32,10 @@
 // - 27, 38 (C-15, PQ-26 A): the allowed-status table below.
 // - 29 (E-20): gate kind and receipt kind both come from the completion view,
 //   in which a fix goal's `review_blocked` parent is already superseded.
+// - 43: a fix goal's completion supersedes every `review_blocked` goal up its
+//   fix chain, not only the direct parent.
+// - 44: a final gate also covers the criteria of goals superseded through a
+//   resolved fix chain (`carriedCriterionIds`).
 // - 34 (PQ-19 B, 「E6」): `retry_failed` with no active goal takes the first
 //   failed goal before any pending one.
 // - 40 (PQ-17 C): a fix goal's one criterion is "<objective> is resolved and
@@ -507,20 +511,66 @@ export function resolveNextAction(file: Pick<GoalsFile, "goals">, retryFailed: b
 // ---------------------------------------------------------------------------
 
 export type CompletionView = {
-  /** A copy of the plan; the fix goal's `review_blocked` parent is superseded. */
+  /** A copy of the plan; the fix goal's `review_blocked` chain is superseded. */
   file: GoalsFile;
   goal: Goal;
-  supersededParentId?: string;
+  /** The goals up the fix chain that this view superseded, nearest first. */
+  supersededParentIds: string[];
   /** DR-5 in this view; a final receipt needs the final gate. */
   receiptKind: ReceiptKind;
+  /**
+   * The IDs the gate's `criteriaCoverage` must cover: the goal's own, and for
+   * a final gate the criteria carried from resolved fix chains (deviation 44).
+   */
+  activeCriterionIds: string[];
 };
 
 /**
+ * The goals up a fix goal's chain, nearest first: its `blockedGoalId` parent,
+ * then that parent's parent while the parent is itself a fix goal.
+ */
+function* fixChain(file: Pick<GoalsFile, "goals">, goal: Goal): Generator<Goal> {
+  const seen = new Set([goal.id]);
+  let child = goal;
+  while (child.steering?.kind === "review_blocker") {
+    const parentId = child.steering.blockedGoalId;
+    const parent = file.goals.find((item) => item.id === parentId);
+    if (!parent || seen.has(parent.id)) return;
+    seen.add(parent.id);
+    yield parent;
+    child = parent;
+  }
+}
+
+/**
+ * Deviation 44: the criteria a final gate covers besides the closing goal's
+ * own. Walking up from each complete fix goal, and from the closing goal,
+ * every superseded goal reached carries its criteria; the walk stops at any
+ * other status. A goal superseded by a plan change, or a chain none of whose
+ * fixes completed, carries nothing. IDs follow the plan's goal order.
+ */
+export function carriedCriterionIds(file: Pick<GoalsFile, "goals">, closingGoalId: string): string[] {
+  const carried = new Set<string>();
+  for (const fix of file.goals) {
+    if (fix.steering?.kind !== "review_blocker") continue;
+    if (fix.status !== "complete" && fix.id !== closingGoalId) continue;
+    for (const parent of fixChain(file, fix)) {
+      if (parent.status !== "superseded") break;
+      carried.add(parent.id);
+    }
+  }
+  return file.goals
+    .filter((goal) => carried.has(goal.id))
+    .flatMap((goal) => goal.acceptanceCriteria.map((criterion) => criterion.id));
+}
+
+/**
  * C-8: the plan `checkpoint(complete)` and `validate_gate` judge. When the
- * goal is a fix goal whose `blockedGoalId` is `review_blocked`, that parent is
- * superseded in the copy, as gjc does at write time (`rt:3738-3748`); any other
- * parent status is left alone, and only one level is looked at (PQ-23 A).
- * With `resolution`, the parent's evidence is set as gjc writes it.
+ * goal is a fix goal, every `review_blocked` goal up its fix chain is
+ * superseded in the copy; gjc supersedes only the direct parent, at write
+ * time (`rt:3738-3748`; deviation 43). The walk passes goals already
+ * superseded and stops at any other status, which stays required. With
+ * `resolution`, each goal it supersedes gets gjc's evidence.
  */
 export function completionView(
   file: GoalsFile,
@@ -530,23 +580,24 @@ export function completionView(
   const copy = structuredClone(file);
   const goal = copy.goals.find((item) => item.id === goalId);
   if (!goal) throw new Error(`No ultragoal goal found for ${goalId}.`);
-  let supersededParentId: string | undefined;
-  if (goal.steering?.kind === "review_blocker") {
-    const parent = copy.goals.find((item) => item.id === goal.steering?.blockedGoalId);
-    if (parent?.status === "review_blocked") {
-      parent.status = "superseded";
-      if (resolution)
-        parent.evidence = `Resolved by verification blocker goal ${goal.id}: ${resolution.evidence}`;
-      supersededParentId = parent.id;
-    }
+  const supersededParentIds: string[] = [];
+  for (const parent of fixChain(copy, goal)) {
+    if (parent.status === "superseded") continue;
+    if (parent.status !== "review_blocked") break;
+    parent.status = "superseded";
+    if (resolution) parent.evidence = `Resolved by verification blocker goal ${goal.id}: ${resolution.evidence}`;
+    supersededParentIds.push(parent.id);
   }
   // DR-5 (`rt:626-658` minus per-story, batch and fresh-final branches).
   const unfinished = requiredGoals(copy).filter((item) => item.id !== goal.id && item.status !== "complete");
+  const receiptKind: ReceiptKind = unfinished.length === 0 ? "final-aggregate" : "per-goal";
+  const own = goal.acceptanceCriteria.map((criterion) => criterion.id);
   return {
     file: copy,
     goal,
-    supersededParentId,
-    receiptKind: unfinished.length === 0 ? "final-aggregate" : "per-goal",
+    supersededParentIds,
+    receiptKind,
+    activeCriterionIds: receiptKind === "final-aggregate" ? [...own, ...carriedCriterionIds(copy, goal.id)] : own,
   };
 }
 

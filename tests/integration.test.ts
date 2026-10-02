@@ -651,8 +651,10 @@ test("ultragoal skill follows the gjc skill with host substitutions", async () =
     "**Approve execution via ultragoal**",
     // C-15, PQ-14 (1) B': completed goals change only after a reopen.
     'The path to change and re-verify one is reopening it with `checkpoint(status: "pending")`',
-    // C-7 (d), PQ-23 A: the fix-of-a-fix chain.
-    "Before you complete the last fix goal of the chain, `supersede` every other `review_blocked` goal of the chain",
+    // Deviations 43, 44: the last fix supersedes its chain and the final gate
+    // covers the chain's criteria.
+    "Completing the last fix goal supersedes every `review_blocked` goal up the chain",
+    "The final gate's `criteriaCoverage` also covers the criteria of every goal superseded through a resolved fix chain",
     // R3: reconciling ops end goal-planning.
     "do not call `status` or `classify_blocker`",
     // I-17: gjc SKILL.md:425-427.

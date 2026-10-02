@@ -38,20 +38,26 @@ SKILL의 "Boundary verification (per goal, then once at the end)"은 이것을 "
 `src/ultragoal-runtime/plan.ts` `completionView(file, goalId, resolution?)`가 판정합니다. 순서는 다음과 같습니다.
 
 1. `goals.json` 내용을 복사합니다 (`structuredClone`). 원본은 바꾸지 않습니다. 대상 목표가 없으면 `No ultragoal goal found for <id>.`를 던집니다.
-2. 대상이 수정 목표(`steering.kind === "review_blocker"`)이면 `steering.blockedGoalId`가 가리키는 부모를 찾습니다. 부모 status가 **`review_blocked`일 때만** 복사본에서 부모를 `superseded`로 바꾸고 `supersededParentId`에 기록합니다. `resolution`이 주어지면 부모의 `evidence`를 `Resolved by verification blocker goal <대상 id>: <resolution.evidence>`로 바꿉니다.
-   - 부모가 `blocked`, `complete`, `superseded` 등 다른 status면 손대지 않습니다.
-   - 한 단계만 봅니다. 부모의 부모는 보지 않습니다 (PQ-23 A).
+2. 대상이 수정 목표(`steering.kind === "review_blocker"`)이면 수정 사슬을 위로 올라갑니다(`fixChain`): `steering.blockedGoalId`가 가리키는 부모, 그 부모가 다시 수정 목표이면 그 부모, … 순입니다 (편차 43).
+   - 부모가 `review_blocked`면 복사본에서 `superseded`로 바꾸고 `supersededParentIds`에 가까운 것부터 기록합니다. `resolution`이 주어지면 그 부모의 `evidence`를 `Resolved by verification blocker goal <대상 id>: <resolution.evidence>`로 바꿉니다.
+   - 부모가 이미 `superseded`면 바꾸지 않고 지나갑니다(사슬 앞 목표를 손으로 supersede한 경우).
+   - 부모가 `blocked`, `complete` 등 다른 status면 거기서 멈춥니다. 그 목표는 필수 목표로 남습니다.
+   - gjc는 바로 위 부모 하나만 바꿉니다(`rt:3738-3748`). 처음 이식은 이를 따랐으나(PQ-23 A) 2026-10-03 수동 실행 뒤 사슬 전체로 바꿨습니다(spec 「E7」).
 3. 복사본의 필수 목표 가운데 대상이 아니고 status가 `complete`가 아닌 목표를 모읍니다 (`unfinished`).
 4. `unfinished`가 비면 `receiptKind`는 `final-aggregate`, 아니면 `per-goal`입니다.
+5. gate가 덮을 기준 ID(`activeCriterionIds`)를 정합니다. 목표별이면 대상 자신의 활성 기준뿐입니다. 최종이면 그 뒤에 `carriedCriterionIds(복사본, 대상 id)`를 붙입니다 (편차 44):
+   - 완료된 각 수정 목표와 대상(수정 목표일 때)에서 `fixChain`으로 올라가며, `superseded`인 동안 만나는 목표를 모읍니다. 다른 status를 만나면 그 사슬은 멈춥니다.
+   - 모은 목표의 활성 기준 ID를 `goals.json` 순서로 적습니다.
+   - 계획 변경으로 superseded된 목표(가리키는 수정 목표가 없음)나, 수정 목표가 하나도 완료되지 않은 사슬(예: 수정 목표까지 supersede한 경우)은 대상이 아닙니다.
 
 따라 나오는 성질:
 
 - 대상 목표 자신의 status는 판정에 쓰지 않습니다.
-- 다른 목표가 `pending`, `active`, `failed`, `blocked`, `review_blocked` 중 하나라도 있으면 대상은 최종 목표가 아닙니다. 예외는 2단계의 경우입니다: 대상이 수정 목표이면 그 직접 부모인 `review_blocked` 목표는 view에서 superseded로 바뀌므로 끝나지 않은 목표로 세지 않습니다 (8.2의 3단계).
+- 다른 목표가 `pending`, `active`, `failed`, `blocked`, `review_blocked` 중 하나라도 있으면 대상은 최종 목표가 아닙니다. 예외는 2단계의 경우입니다: 대상이 수정 목표이면 사슬 위쪽의 `review_blocked` 목표는 view에서 superseded로 바뀌므로 끝나지 않은 목표로 세지 않습니다 (8.2의 3, 5단계).
 - 이미 끝난 앞 목표를 재오픈하면, 나머지가 모두 `complete`이므로 그 목표가 최종 목표가 됩니다. 예: G001(per-goal), G002(final)로 끝난 run에서 G001을 재오픈하면 `next`는 G001에 최종 gate를 요구합니다.
 - 같은 부모에 열린 수정 목표가 둘 이상이면, 먼저 완료되는 수정 목표가 부모를 `superseded`로 바꿉니다. 나머지 수정 목표는 필수 목표로 남습니다.
 
-코드 머리말은 gjc `ultragoal-runtime.ts`의 `chooseReceiptKind`(per-story, batch, fresh-final 분기 제외)와 `:3738-3748`(수정 목표 완료가 부모를 supersede)을 출처로 적고, 편차 29를 답니다. 루트 README의 편차 29 기록에 따르면 gjc는 부모를 supersede하기 전의 plan으로 gate를 검사하고 영수증 종류는 그 뒤에 다시 고릅니다. open-gajae는 두 가지 모두 부모가 이미 superseded인 복사본으로 정합니다. 그래서 run을 닫는 수정 목표는 첫 checkpoint부터 최종 gate를 내야 합니다.
+코드 머리말은 gjc `ultragoal-runtime.ts`의 `chooseReceiptKind`(per-story, batch, fresh-final 분기 제외)와 `:3738-3748`(수정 목표 완료가 부모를 supersede)을 출처로 적고, 편차 29, 43, 44를 답니다. 루트 README의 편차 29 기록에 따르면 gjc는 부모를 supersede하기 전의 plan으로 gate를 검사하고 영수증 종류는 그 뒤에 다시 고릅니다. open-gajae는 두 가지 모두 부모가 이미 superseded인 복사본으로 정합니다. 그래서 run을 닫는 수정 목표는 첫 checkpoint부터 최종 gate를 내야 합니다.
 
 ### 1.2 `next`의 `checkpoint requires=`
 
@@ -62,13 +68,13 @@ checkpoint requires=targetedVerification:passed,architectReview:CLEAR+APPROVE,cr
 checkpoint requires=targetedVerification:passed,architectReview:CLEAR+APPROVE,criteriaCoverage:all,reviewCohort:joined,criticReview:OKAY
 ```
 
-첫 줄은 목표별 gate(`PER_GOAL_REQUIRES`), 둘째 줄은 최종 gate(`FINAL_REQUIRES`)입니다. 바로 다음 줄 `criteria=`는 그 목표의 활성 기준 ID를 쉼표로 이어 적습니다 (예: `criteria=G001.AC1`). 이 두 줄은 next-action이 `execute-goal`일 때만 나옵니다.
+첫 줄은 목표별 gate(`PER_GOAL_REQUIRES`), 둘째 줄은 최종 gate(`FINAL_REQUIRES`)입니다. 바로 다음 줄 `criteria=`는 gate가 덮을 기준 ID(view의 `activeCriterionIds`)를 쉼표로 이어 적습니다 (예: `criteria=G001.AC1`). 최종 gate면 목표 자신의 ID 뒤에 이월된 ID가 붙습니다 (예: `criteria=G003.AC1,G001.AC1,G002.AC1`, 8.2). 이 두 줄은 next-action이 `execute-goal`일 때만 나옵니다.
 
 값은 `next`를 부른 그 순간의 plan으로 계산합니다. 그 뒤에 다른 목표를 `supersede`하거나 `add`하면 답이 바뀝니다. `next`는 이미 `active`인 목표를 쓰기 없이 그대로 돌려주면서 이 값을 다시 계산하므로, plan을 바꾼 뒤에는 `next`를 다시 불러 확인할 수 있습니다.
 
 ### 1.3 `checkpoint`와 `validate_gate`는 같은 선택을 씁니다
 
-- `checkpoint(status: "complete")`(`checkpointTx`)는 `completionView(file, goal.id, { evidence })`를 만들고, 그 `receiptKind`와 대상의 활성 기준 ID로 `validateGate`를 부릅니다. 통과하면 같은 `receiptKind`로 영수증을 만들고, 복사본(`view.file`, 부모가 superseded된 plan)을 새 `goals.json`으로 씁니다.
+- `checkpoint(status: "complete")`(`checkpointTx`)는 `completionView(file, goal.id, { evidence })`를 만들고, 그 `receiptKind`와 `activeCriterionIds`로 `validateGate`를 부릅니다. 통과하면 같은 `receiptKind`로 영수증을 만들고, 복사본(`view.file`, 사슬이 superseded된 plan)을 새 `goals.json`으로 씁니다. 영수증의 `criteriaRevision`은 대상 자신의 기준만으로 만듭니다 (5.1).
 - `validate_gate`(`validateGateTx`)는 `completionView(file, goal.id)`를 `resolution` 없이 부릅니다. `resolution`은 부모 evidence 문구만 바꾸므로 gate 종류는 같습니다.
 
 `validate_gate`의 대상 목표:
@@ -158,7 +164,7 @@ gate 결함이 있으면 진행 목록 결함은 보고되지 않습니다. 둘 
 
 `commands` 필드는 없습니다 (편차 14). SKILL이 비청정으로 드는 `WATCH`, `BLOCK`, `COMMENT`, `REQUEST CHANGES`는 모두 `"CLEAR"`/`"APPROVE"`가 아니므로 `architect_not_clear`가 됩니다.
 
-**`criteriaCoverage`** (편차 15: 활성 기준마다 정확히 한 행)
+**`criteriaCoverage`** (편차 15: 활성 기준마다 정확히 한 행. 최종 gate는 이월된 기준도, 편차 44)
 
 1. 배열이 아니거나 비어 있으면 `criteria_coverage_invalid` 하나를 남기고 이 섹션 검사를 끝냅니다. 이 경우 `missing_criterion`은 나오지 않습니다.
 2. 행마다(`criteriaCoverage[i]`):
@@ -169,7 +175,7 @@ gate 결함이 있으면 진행 목록 결함은 보고되지 않습니다. 둘 
    - `evidence`가 비어 있으면 `missing_evidence`
 3. 행을 다 본 뒤, 활성 기준 ID 중 어느 행에도 없는 것마다 `missing_criterion` (경로 `criteriaCoverage`)
 
-결과적으로 중복, 없는 ID, 빠진 ID가 모두 거부됩니다. 개정(revise)이나 대체(supersede)로 물러난 기준 ID는 활성 목록에 없으므로 `unknown_criterion`입니다. 활성 기준 목록 없이 부르면(1.3의 마지막 줄) 행 모양과 중복만 검사합니다.
+결과적으로 중복, 없는 ID, 빠진 ID가 모두 거부됩니다. 개정(revise)이나 대체(supersede)로 물러난 기준 ID는 활성 목록에 없으므로 `unknown_criterion`입니다. 최종 gate에서 이월 대상이 아닌 목표(예: 계획 변경으로 superseded된 목표)의 기준을 적어도 `unknown_criterion`입니다. 활성 기준 목록 없이 부르면(1.3의 마지막 줄) 행 모양과 중복만 검사합니다.
 
 **`reviewCohort`** (최종 gate만. 결함 코드는 모두 `review_cohort_invalid`, 편차 16, 28)
 
@@ -399,7 +405,8 @@ Reopen <id> with ultragoal checkpoint(goal_id: "<id>", status: "pending", eviden
 
 - 다른 목표가 모두 per-goal로 끝난 뒤 남은 마지막 목표를 `supersede`했을 때. 마지막으로 끝난 목표가 per-goal 영수증만 가지고 있습니다. 다만 per-goal `checkpoint(complete)`는 남은 `pending` 목표를 바로 `active`로 바꾸고(`checkpointTx`의 `chooseNextGoal` 진행), `supersede`는 `active` 목표를 `... found active`로 거부합니다. `supersede`가 받는 status는 `pending`, `blocked`, `review_blocked`이므로, 이 경우는 그 목표를 `checkpoint(status: "blocked")`로 막았거나 `checkpoint(status: "pending")`로 되돌린 뒤에만 생깁니다. `review_blocked` 목표는 `record_review_blockers`가 붙인 수정 목표가 필수 목표로 남으므로, 그 수정 목표까지 정리되지 않는 한 "남은 마지막 목표"가 아닙니다. SKILL의 "Reopening a goal"과 steering invariants는 이 경우를 "the last remaining pending goal is superseded"로 적습니다.
 - final 뒤에 목표를 `add`했다가 그 목표를 다시 `supersede`했을 때. 옛 final은 `superseded-final`이라 run을 닫지 못합니다.
-- 수정 목표 사슬에서 뿌리 목표를 마지막 수정 목표 완료 **뒤에** `supersede`했을 때 (6.4)
+
+수정 목표 사슬은 이제 이 경우가 아닙니다. 마지막 수정 목표가 사슬 전체를 superseded로 보므로 첫 checkpoint부터 최종 gate를 받습니다 (6.4).
 
 final 뒤에 목표를 `add`만 하면 재오픈할 필요가 없습니다. 새 목표가 최종 목표가 되어 새 final을 받습니다 (6.5).
 
@@ -485,16 +492,12 @@ review_blocker_recursion_cap: goal <id> already has <n> unresolved review_blocke
 
 ### 6.4 수정 목표의 사슬 (fix-of-a-fix)
 
-수정 목표의 최종 gate도 통과하지 못하면 SKILL은 그 수정 목표에 다시 `record_review_blockers`를 부르라고 합니다. 그러면 그 수정 목표가 `review_blocked`가 되고 또 하나의 수정 목표가 붙습니다. 마지막 수정 목표의 completion view는 **직접 부모만** superseded로 보므로, 사슬 뿌리의 `review_blocked` 목표는 끝나지 않은 필수 목표로 남고 마지막 수정 목표는 최종 목표가 아닙니다. `next`는 목표별 gate를 출력합니다.
+수정 목표의 최종 gate도 통과하지 못하면 SKILL은 그 수정 목표에 다시 `record_review_blockers`를 부르라고 합니다. 그러면 그 수정 목표가 `review_blocked`가 되고 또 하나의 수정 목표가 붙습니다.
 
-그래서 SKILL은 마지막 수정 목표를 완료하기 **전에** 사슬의 다른 `review_blocked` 목표(마지막 수정 목표의 직접 부모만 빼고)를 모두 `supersede`하라고 합니다. `supersede`는 `review_blocked` 목표에 허용되고, 남은 필수 목표가 그것 하나일 때만 거부됩니다. 그 뒤 `next`는 최종 gate를 출력합니다.
-
-순서를 거꾸로 하면(마지막 수정 목표를 목표별 gate로 먼저 완료):
-
-1. 결과는 `Checkpointed <id> as complete.` 한 줄입니다. 뿌리가 아직 `review_blocked`라 다음 목표도, 완료 줄도 없습니다.
-2. `status`는 `run_complete: no (required goals not complete: <뿌리> (review_blocked))`, `next`는 `resolve-blockers`입니다.
-3. 뿌리를 `supersede`하면 `run_complete: no (last completed goal <마지막 수정 목표> has no valid final-aggregate receipt)`가 됩니다.
-4. 마지막 수정 목표를 재오픈하고 `next`를 부르면 최종 gate가 출력되고, 최종 gate로 다시 완료하면 run이 닫힙니다 (테스트 "late root supersede: reopen the last completed goal").
+- **사슬 끝에서 한꺼번에** (편차 43): 마지막 수정 목표의 completion view는 사슬 위쪽의 `review_blocked` 목표를 모두 superseded로 봅니다 (1.1의 2단계). 그래서 다른 필수 목표가 끝났으면 마지막 수정 목표가 처음부터 최종 목표이고, `next`는 최종 gate를 출력합니다. 완료하면 사슬의 목표들이 `goals.json`에서 실제로 superseded가 됩니다.
+- **원래 기준의 이월** (편차 44): 그 최종 gate의 `criteriaCoverage`는 마지막 수정 목표의 기준에 더해, 사슬로 superseded된 목표(원 목표와 앞 수정 목표)의 기준을 모두 덮어야 합니다. `next`가 `criteria=`에 모두 적습니다. 하나라도 빠지면 `missing_criterion`입니다.
+- **손으로 supersede해도 됩니다**: SKILL은 더 이상 사슬 앞 목표를 손으로 supersede하라고 하지 않습니다. 그래도 `supersede`는 `review_blocked` 목표에 허용됩니다. 손으로 먼저 supersede한 목표도 사슬이 완료되면 이월 대상입니다 (테스트 "fix-of-a-fix chain: a root superseded by hand is still covered").
+- 처음 이식(PQ-23 A, gjc 그대로)에서는 직접 부모만 superseded로 봤습니다. 그래서 SKILL이 사슬 앞 목표를 마지막 수정 목표 완료 전에 손으로 supersede하라고 했고, 순서가 늦으면 마지막 수정 목표를 재오픈해야 했습니다. 2026-10-03 test-app 수동 실행에서 모델이 수정 목표의 리뷰가 끝나기 전에 앞 목표를 supersede했고, 두 run 모두 최종 gate가 마지막 수정 목표의 기준 하나만 덮어 원래 기준을 끝에서 다시 확인하지 않았습니다. 관리자 결정으로 두 편차를 더했습니다 (spec 「E7」).
 
 ### 6.5 final 영수증 뒤에 목표 추가
 
@@ -650,22 +653,22 @@ G001의 영수증 모양 (해시와 UUID는 값 대신 설명):
 
 이 뒤에 G003을 `add`하면 G002의 표시가 `per-goal(superseded final)`로 바뀌고 `run_complete: no (required goals not complete: G003 (pending))`가 되며, G003이 최종 gate를 받습니다 (6.5).
 
-### 8.2 수정 목표 사슬: G001 → G002(수정) → G003(수정), 뿌리 supersede
+### 8.2 수정 목표 사슬: G001 → G002(수정) → G003(수정)
 
-목표 하나(G001, 제목 `Goal 1`)로 `create`한 run입니다. 세대 번호는 SKILL의 절차를 따른 값이고, 코드는 세대 번호를 강제하지 않습니다.
+목표 하나(G001, 제목 `Goal 1`, 기준 `G001.AC1`)로 `create`한 run입니다. 세대 번호는 SKILL의 절차를 따른 값이고, 코드는 세대 번호를 강제하지 않습니다.
 
-| 단계 | 호출과 결과 | G001 | G002 | G003 | `checkpoint requires=` |
+| 단계 | 호출과 결과 | G001 | G002 | G003 | `checkpoint requires=` / `criteria=` |
 |---|---|---|---|---|---|
-| 1 | `next` | `active` | — | — | 최종 (유일한 목표) |
+| 1 | `next` | `active` | — | — | 최종 (유일한 목표) / `G001.AC1` |
 | 2 | 1세대 cohort에 blocker. `record_review_blockers(G001, objective: "fix it", evidence)` → `Recorded review blockers. blocker-goal-id=G002` | `review_blocked` | `pending`, `blockedGoalId: G001` | — | |
-| 3 | `next` | `review_blocked` | `active` | — | 최종 (G001을 superseded로 봄) |
+| 3 | `next` | `review_blocked` | `active` | — | 최종 (G001을 superseded로 봄) / `G002.AC1,G001.AC1` |
 | 4 | 2세대 cohort에 blocker. `record_review_blockers(G002, objective: "fix fix", evidence)` → `blocker-goal-id=G003` | `review_blocked` | `review_blocked` | `pending`, `blockedGoalId: G002` | |
-| 5 | `next` | `review_blocked` | `review_blocked` | `active` | **목표별** (G002만 superseded로 보고 G001은 끝나지 않음) |
-| 6 | `supersede(target: "goal", goal_id: "G001", rationale, evidence)` → `Accepted supersede steering. target=G001` | `superseded` | `review_blocked` | `active` | |
-| 7 | `next` (쓰기 없음, 다시 계산) | `superseded` | `review_blocked` | `active` | **최종** |
-| 8 | `checkpoint(G003, complete, evidence: "fixed", 최종 gate 3세대)` → `Checkpointed G003 as complete.` / `All ultragoal goals are complete.` | `superseded` | `superseded`, evidence `Resolved by verification blocker goal G003: fixed` | `complete`, final-aggregate | |
+| 5 | `next` | `review_blocked` | `review_blocked` | `active` | **최종** (G002와 G001을 superseded로 봄) / `G003.AC1,G001.AC1,G002.AC1` |
+| 6 | `checkpoint(G003, complete, evidence: "fixed", 3세대 최종 gate, criteriaCoverage에 세 ID)` → `Checkpointed G003 as complete.` / `All ultragoal goals are complete.` | `superseded`, evidence `Resolved by verification blocker goal G003: fixed` | `superseded`, 같은 evidence | `complete`, final-aggregate | |
 
-8단계 뒤 `status`:
+6단계에서 `criteriaCoverage`에 `G003.AC1`만 적으면 `missing_criterion`이 두 개(`G001.AC1`, `G002.AC1`) 나오고 아무것도 쓰지 않습니다.
+
+6단계 뒤 `status`:
 
 ```
 - status: complete
@@ -682,6 +685,6 @@ G001의 영수증 모양 (해시와 UUID는 값 대신 설명):
 
 (`## goals`의 기준 줄은 생략했습니다. G002의 기준은 `G002.AC1: fix it is resolved and re-verified`입니다.)
 
-원장에 붙는 행 순서: `plan_created`, `goal_started G001`, `goal_checkpointed G001 review_blocked`, `review_blockers_recorded G001→G002`, `goal_started G002`, `goal_checkpointed G002 review_blocked`, `review_blockers_recorded G002→G003`, `goal_started G003`, `steering_accepted supersede G001`, `goal_checkpointed G003 complete`(final-aggregate). G002를 superseded로 바꾼 것은 마지막 행과 같은 checkpoint에서 `goals.json`에만 반영됩니다.
+원장에 붙는 행 순서: `plan_created`, `goal_started G001`, `goal_checkpointed G001 review_blocked`, `review_blockers_recorded G001→G002`, `goal_started G002`, `goal_checkpointed G002 review_blocked`, `review_blockers_recorded G002→G003`, `goal_started G003`, `goal_checkpointed G003 complete`(final-aggregate). G001과 G002를 superseded로 바꾼 것은 마지막 행과 같은 checkpoint에서 `goals.json`에만 반영됩니다.
 
-6단계(뿌리 supersede)를 건너뛰고 5단계에서 G003을 목표별 gate로 완료하면 6.4의 "순서를 거꾸로 하면" 흐름이 됩니다: 뿌리를 나중에 supersede한 뒤 `next`가 `hint=reopen G003 with ultragoal checkpoint(status: pending) and re-verify with the final gate`를 출력하고, G003을 재오픈해 최종 gate로 다시 완료해야 합니다.
+5단계 전에 G001을 손으로 `supersede`해도 결과는 같습니다. 6단계는 G002만 바꾸고 G001은 지나가며, `criteria=`와 최종 gate의 기준 세 개도 그대로입니다.
