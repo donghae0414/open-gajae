@@ -15,8 +15,8 @@
 // resolution follow `src/ultragoal-runtime/tool.ts`.
 // Deviations (README "Deviations from GJC (deep-interview)"): 1 (CLI verbs →
 // eight ops; the owner is the lineage root), 2 (no stage/check/apply/discard),
-// 24 (the tool belongs to `open-gajae` alone), 38 (`spec(…, handoff:
-// "ralplan")` stands for `--deliberate`; no `--force`).
+// 24 (the tool is `open-gajae`'s alone), 30 (the description names cancel and
+// resume), 38 (`spec(…, handoff: "ralplan")` is `--deliberate`; no `--force`).
 
 import { z } from "zod";
 import type { StateStore } from "../state.js";

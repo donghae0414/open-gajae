@@ -14,8 +14,11 @@
 // Deviations: commands are tool ops (1); the guard adds a recovery line, as
 // ralplan's does (`src/hooks.ts` `RALPLAN_MUTATION_BLOCK_MESSAGE`); the
 // continuation is wrapped in `<deep-interview-continuation>` and names
-// `question` and `deep-interview write` (16); the compaction context is a host
-// addition (15); the `start` refusal is a host addition (12).
+// `question`, `deep-interview write` and the cancel call (16, 30); the
+// compaction context is a host addition (15); the `start` refusal is a host
+// addition (12); the cancelled-interview texts — the resume hint, the resume
+// and repeated-cancel refusals and the chain refusal's cancelled form — are
+// host additions (30).
 
 import { wrapInjected } from "../injection.js";
 
@@ -32,7 +35,9 @@ export function specGuardRefusal(shown: string): string {
  * gjc `tools/skill.ts:205-209` for the same-execution load gate (DR-21): the
  * interview has not finished, or its phase is unknown.
  */
-export function chainRefusal(phase: string, skill: string): string {
+export function chainRefusal(phase: string, skill: string, cancelled = false): string {
+  if (cancelled)
+    return `open-gajae: refusing to chain from "deep-interview" (phase=${phase}, cancelled) into "${skill}". The interview was cancelled: clear it with deep-interview clear first, or resume it with deep-interview state(patch={"active": true}).`;
   return `open-gajae: refusing to chain from "deep-interview" (phase=${phase}) into "${skill}". Persist the spec with deep-interview spec, then call deep-interview handoff(to: "${skill}"), or clear the interview first.`;
 }
 
@@ -58,6 +63,11 @@ export function noStateRefusal(op: string): string {
 /** C-3: a corrupt state refuses every op but `start`, `status`, `doctor` and a forced `clear`. */
 export function corruptStateRefusal(op: string, error: string): string {
   return `deep-interview ${op}: the deep-interview state is corrupt or tampered (${error}); reset it with \`deep-interview clear\` and force: true.`;
+}
+
+/** Deviation 30: `state(patch={"active": false})` on an interview already cancelled. */
+export function alreadyCancelledRefusal(): string {
+  return `deep-interview state: the interview is already cancelled (inactive, phase interviewing). Resume it with \`deep-interview state(patch={"active": true})\`, or end it with \`deep-interview clear\`.`;
 }
 
 /**

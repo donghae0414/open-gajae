@@ -2,7 +2,7 @@
 
 이 폴더는 open-gajae `deep-interview`가 **지금 코드에서 어떻게 동작하는지**를 단계별로 적은 문서입니다.
 
-- **기준 코드**: 브랜치 `feat/deep-interview-gjc-revision`(S3c, 그리고 S4 뒤 Architect 리뷰를 반영한 커밋). 코드 위치는 이 기준 코드의 `path:line`으로 적습니다.
+- **기준 코드**: 브랜치 `feat/deep-interview-gjc-revision`(S3c, S4 뒤 Architect 리뷰 반영 커밋, 그리고 2026-10-03 리뷰의 취소·재개와 종료 조건 반영 커밋). 코드 위치는 이 기준 코드의 `path:line`으로 적습니다.
 - **참조한 gajae-code(gjc)**: `5c5231418930673e42cc5d08ebe4376e03187533`. gjc 줄 번호는 각 open-gajae 파일의 머리말 주석이 적은 값을 옮긴 것이고, 이 문서를 쓰며 gjc 소스로 다시 확인하지는 않았습니다.
 
 다른 문서와는 이렇게 나뉩니다.
@@ -78,6 +78,8 @@ deep-interview는 모호한 요청을 한 번에 질문 하나씩 묻고, 답마
 [취소와 재개]
   사용자가 멈춤 → deep-interview state(patch={"active": false})
                  비활성 interviewing, 라운드 유지, 행 삭제, 가드·continuation 멈춤
+                 (스펙 뒤에는 deep-interview clear: 재개 없음, 스펙은 남음)
+                 열린 goal이 있으면 그다음은 goal continuation (K18)
   skill 다시 로드 → Phase 0이 재개·새로·지우기를 물음
                  재개 → deep-interview state(patch={"active": true}) → write로 이어 감
 ```

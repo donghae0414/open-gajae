@@ -1932,7 +1932,10 @@ test("(H3) the load gate in the deep-interview execution: refuse, hand off, link
     await deepInterview(u, { op: "start", idea: "i" });
     await deepInterview(u, { op: "state", patch: { active: false } });
     await load(hooks, u, "deep-interview");
-    expect(await refusal(hooks, await load(hooks, u, "ralplan"))).toBe(chainRefusal("interviewing", "ralplan"));
+    // A cancelled interview's refusal points to clear or resume (deviation 30).
+    const cancelled = await refusal(hooks, await load(hooks, u, "ralplan"));
+    expect(cancelled).toBe(chainRefusal("interviewing", "ralplan", true));
+    expect(cancelled).toContain("clear it with deep-interview clear first");
     for (const [phase, shown] of [["bogus", "bogus"], [undefined, "running"]] as const) {
       await store.workflowTransaction(u, (tx) =>
         tx.writeModeState(DI_FILE, { skill: DI_FILE, active: true, ...(phase ? { current_phase: phase } : {}) }, "deep_interview_tool"),
@@ -2124,5 +2127,28 @@ test("(H6, H7) entry seeds nothing; the panel role gets no notice; deep-intervie
     expect(call.input).toEqual({});
     expect(await refusal(hooks, call)).toBe(specGuardRefusal(spec));
     expect((await writeCall(hooks, id, join(root, `.open-gajae/${folder}/specs/notes.md`))).input).not.toEqual({});
+  });
+});
+
+test("(H9) cancel and resume: the guard and the continuation stop and come back; an open goal takes the turn after a cancel, as in GJC (deviation 30, K18)", async () => {
+  await fixture(async (context) => {
+    const { root, hooks, store, synthetics } = context;
+    const { deepInterview } = tools(context);
+    const id = nextSession("H9");
+    await setGoal(store, id);
+    await deepInterview(id, { op: "start", idea: "i" });
+    expect((await writeCall(hooks, id, join(root, "src/x.ts"))).input).toEqual({});
+    // Cancel: the edit guard is released and the goal continuation takes the turn.
+    await deliver(context, id, "stop");
+    await deepInterview(id, { op: "state", patch: { active: false } });
+    expect((await writeCall(hooks, id, join(root, "src/x.ts"))).input).not.toEqual({});
+    await succeeded(hooks, id);
+    expect(synthetics.at(-1)!.description).toBe("open-gajae: goal continuation");
+    // Resume: the guard and the deep-interview continuation are back.
+    await deliver(context, id, "resume the interview");
+    await deepInterview(id, { op: "state", patch: { active: true } });
+    expect((await writeCall(hooks, id, join(root, "src/x.ts"))).input).toEqual({});
+    await succeeded(hooks, id);
+    expect(synthetics.at(-1)!.description).toBe("open-gajae: deep-interview continuation 1/2");
   });
 });

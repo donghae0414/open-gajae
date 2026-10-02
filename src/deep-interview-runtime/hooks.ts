@@ -162,7 +162,7 @@ export function createDeepInterviewHooks(store: StateStore) {
     }
     // U-1 A: `interviewing`, active or not, and any phase the manifest and
     // the releasing set do not know.
-    return { kind: "refuse", message: chainRefusal(phase, callee) };
+    return { kind: "refuse", message: chainRefusal(phase, callee, phase === "interviewing" && state.active !== true) };
   }
 
   /**

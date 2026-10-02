@@ -89,6 +89,7 @@ import {
   handedOffToRalplan,
   handedOffToUltragoal,
   inactiveStateRefusal,
+  alreadyCancelledRefusal,
   noStateRefusal,
   resumeRefusal,
   startRefusal,
@@ -197,18 +198,20 @@ export async function readDeepInterviewStateTx(tx: WorkflowTx): Promise<StateRea
 }
 
 /**
- * C-3 (PQ-12 B′): the state of an op that needs an active interview. With
- * `resume`, an interview cancelled on `interviewing` is taken too (deviation
- * 30); a finished or handed-off one is not.
+ * C-3 (PQ-12 B′): the state of an op that needs an active interview. A
+ * `state` patch with `active: true` also takes an interview cancelled on
+ * `interviewing` (deviation 30); one with `active: false` gets the
+ * repeated-cancel refusal there. A finished or handed-off one is refused.
  */
-async function activeStateTx(tx: WorkflowTx, op: string, resume = false): Promise<Json> {
+async function activeStateTx(tx: WorkflowTx, op: string, patchActive?: unknown): Promise<Json> {
   const read = await readDeepInterviewStateTx(tx);
   if (read.kind === "absent") throw new Error(noStateRefusal(op));
   if (read.kind === "corrupt") throw new Error(corruptStateRefusal(op, read.error));
   const phase = trimmed(read.value.current_phase);
-  if (read.value.active !== true && !(resume && phase === DEEP_INTERVIEW_INITIAL_STATE))
-    throw new Error(inactiveStateRefusal(op, phase));
-  return read.value;
+  if (read.value.active === true) return read.value;
+  if (phase === DEEP_INTERVIEW_INITIAL_STATE && patchActive === true) return read.value;
+  if (phase === DEEP_INTERVIEW_INITIAL_STATE && patchActive === false) throw new Error(alreadyCancelledRefusal());
+  throw new Error(inactiveStateRefusal(op, phase));
 }
 
 /** D-HL2: the other workflow that is the visible primary; an unreadable row file does not count. */
@@ -701,7 +704,7 @@ export async function patchStateTx(tx: WorkflowTx, root: string, patch: Json): P
     topLevelTranscriptError("state", payload, OWNED_FIELDS),
   ].filter((text): text is string => text !== undefined);
   if (refusals.length > 0) throw new Error(refusals.join("\n"));
-  const existing = await activeStateTx(tx, "state", payload.active === true);
+  const existing = await activeStateTx(tx, "state", payload.active);
   if (existing.active !== true) {
     // Resuming a cancelled interview follows `start`'s D-HL2 rule (deviations 12, 30).
     const other = await otherPrimaryTx(tx);

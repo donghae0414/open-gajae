@@ -2,10 +2,10 @@
 
 이 문서는 deep-interview에 남아 있는 한계를 모읍니다. 기준 코드는 [README.md](README.md) 머리에 있습니다.
 
-- **출처**: spec `.omc/specs/deep-interview-deep-interview-gjc-revision.md`의 "Known consequences"(K1–K4)와 계획 `.omc/plans/ralplan-deep-interview-gjc-revision.md` S4의 known-limits 목록(K5–K17). 번호는 그대로 씁니다.
+- **출처**: spec `.omc/specs/deep-interview-deep-interview-gjc-revision.md`의 "Known consequences"(K1–K4)와 계획 `.omc/plans/ralplan-deep-interview-gjc-revision.md` S4의 known-limits 목록(K5–K17), 그리고 2026-10-03 리뷰에서 더한 K18–K19. 번호는 그대로 씁니다.
 - **번호 없는 항목**: 번호 목록 밖에서 이 문서를 쓰며 정리한 것은 맨 끝 "그 밖의 한계"에 둡니다.
 - **gjc와 같음**: 표시한 항목은 gjc에서도 같은 결과가 나는 것입니다.
-- 근거의 테스트 ID: RT1–RT13은 `tests/deep-interview-runtime.test.ts`, T1–T10은 `tests/deep-interview-tool.test.ts`, H1–H8은 `tests/hooks.test.ts`, RP1–RP5는 `tests/ralplan-tool.test.ts`.
+- 근거의 테스트 ID: RT1–RT13은 `tests/deep-interview-runtime.test.ts`, T1–T10은 `tests/deep-interview-tool.test.ts`, H1–H9는 `tests/hooks.test.ts`, RP1–RP5는 `tests/ralplan-tool.test.ts`. T11–T12와 H9는 2026-10-03 리뷰에서 더했습니다.
 
 ## 한눈에 보기
 
@@ -19,15 +19,17 @@
 | K6 | 1 MiB / 깊이 10 / 최상위 키 100 한도. 아주 긴 인터뷰의 `write`가 실패하고 파일은 그대로 남는다 | `assertStatePayload`(`src/state.ts:163-166`)를 쓰기 전에 부름(계획 DR-31), deep-interview 편차 34 | 요약해서 줄이거나(DIPP-7) 스펙으로 넘어감 |
 | K7 | 결합 호출, `handoff(to:"ralplan")`, ralplan ↔ deep-interview 왕복은 기존 ralplan `run_id`를 다시 쓴다(옛 run 폴더, 반복 예산, `stage_n`이 이어짐). `handoff(to:"ralplan")`으로 넘겨받은 run은 옛 `task`를 지킨다 | `startRunTx`의 `run_id`(`src/ralplan-runtime/store.ts:925`), 인계의 필드 유지 병합(`src/skill-state/handoff.ts:230-240`); PQ-23 A, PQ-2 A; T5 | 새 run 폴더가 필요하면 첫 `ralplan write`에 새 `run_id` |
 | K8 | 라운드 필드는 모델이 쓴다. 모양은 검사하지만 내용은 검사하지 않는다 | `roundRecordErrors`(`manifest.ts:266-288`), deep-interview 편차 36; RT13 | 기록만 |
-| K9 | doctor의 낡은 행 안내는 `deep-interview clear`인데, 상태가 이미 `complete`인 낡은 행은 `clear(force: true)`가 필요하다 | doctor 안내(`src/skill-state/doctor.ts:166-167`), 낡음 판정(`store.ts:754-774`); spec E3 | `clear(force: true)` |
-| K10 | `spec(path)`: 경로 오타는 스펙 본문으로 저장된다. 디렉터리 경로도 그렇다. 프로젝트 밖 파일도 호스트 권한 확인 없이 읽는다 (gjc와 같음) | `resolveSpecContent`(`store.ts:436-447`); PQ-6 A; T4 | 되도록 `content`로 넘기고, `path`를 쓰면 결과 파일을 확인 |
-| K11 | 결합 호출의 뒤 단계가 실패하면 앞 단계의 결과가 남는다 | `specHandoffTx`(`store.ts:545-558`); PQ-18 A, DR-29; T5 | `status`로 확인하고 `deep-interview handoff(to:"ralplan")` |
+| K9 | doctor의 낡은 행 안내는 `deep-interview clear`인데, 상태가 이미 `complete`인 낡은 행은 `clear(force: true)`가 필요하다 | doctor 안내(`src/skill-state/doctor.ts:166-167`), 낡음 판정(`store.ts:757-777`); spec E3 | `clear(force: true)` |
+| K10 | `spec(path)`: 경로 오타는 스펙 본문으로 저장된다. 디렉터리 경로도 그렇다. 프로젝트 밖 파일도 호스트 권한 확인 없이 읽는다 (gjc와 같음) | `resolveSpecContent`(`store.ts:439-450`); PQ-6 A; T4 | 되도록 `content`로 넘기고, `path`를 쓰면 결과 파일을 확인 |
+| K11 | 결합 호출의 뒤 단계가 실패하면 앞 단계의 결과가 남는다 | `specHandoffTx`(`store.ts:548-561`); PQ-18 A, DR-29; T5 | `status`로 확인하고 `deep-interview handoff(to:"ralplan")` |
 | K12 | 결합 호출은 `ralplan start`의 ultragoal 거부를 거치지 않는다. ultragoal이 활성이면 ultragoal이 계속 보이는 주 skill이라 `skill ralplan`이 체인 가드에 막히고, `ultragoal handoff(to:"ralplan")`가 `handoff_from`을 바꾼다 | 시드가 `startRunTx`를 직접 부름(`src/tools.ts:61-62`), 순위(`rows.ts:51-55`); PQ-18 A | 기록만 (gjc와 같음) |
-| K13 | `write`는 `spec_*`를 바꿀 수 있고 `state`는 거부한다. 값이 실제 스펙과 어긋나면 넘기기가 거부된다 | 정리기가 `spec_*`를 지우지 않음(`envelope.ts:222-236`), `statePatchFieldError`(`manifest.ts:164-178`), `verifySpecTx`(`store.ts:569-589`); PQ-14 A; T6 | 다시 `spec` |
+| K13 | `write`는 `spec_*`를 바꿀 수 있고 `state`는 거부한다. 값이 실제 스펙과 어긋나면 넘기기가 거부된다 | 정리기가 `spec_*`를 지우지 않음(`envelope.ts:222-236`), `statePatchFieldError`(`manifest.ts:164-178`), `verifySpecTx`(`store.ts:572-592`); PQ-14 A; T6 | 다시 `spec` |
 | K14 | (해결) `ralplan start`가 활성 run을 거부하므로 게이트 넘기기 뒤 다시 시드되지 않는다. 옛 `task`는 남는다(K7) | `ralplanRunActiveRefusal`(`src/ralplan-runtime/tool.ts:73-78,197-198`); 관리자 답 K14 C, DR-39; RP3, RP4 | 없음 |
 | K15 | 같은 execution에서 로드한, 유효한 스펙을 가진 끝난 인터뷰는 이미 활성인 ralplan·ultragoal에도 연결되어 그것을 시작 phase(`planner`/`goal-planning`)로 되돌린다. ultragoal은 `create`까지 제품 편집을 거부하고, `create`는 `goals.json`을 덮어쓰며, 열린 goal은 계속 재촉한다 | `gateTx` release 분기(`src/deep-interview-runtime/hooks.ts:147-162`), 인계의 시작 phase(`handoff.ts:230-239`); PQ-36 C; H3 | 받아들인 결과(PQ-36 C). 피하려면 다음 skill을 새 execution에서 로드 |
 | K16 | 설정 최상위 key 검사에는 자동 테스트가 없다 | `src/config.ts:86`; PQ-39 A | 기록만 |
-| K17 | `write(reset)`은 빈 기준에서 다시 만들어 기준치·`spec_*`·`handoff_*`를 지운다. reset 입력에 `threshold`·`threshold_source`가 없으면 HUD와 압축 문맥에서 기준치가 사라진다 | `writeTx`의 `reset`(`store.ts:377`); PQ-13 A; T3 | reset 입력의 `state`에 기준치 두 필드를 넣음 |
+| K17 | `write(reset)`은 빈 기준에서 다시 만들어 기준치·`spec_*`·`handoff_*`를 지운다. reset 입력에 `threshold`·`threshold_source`가 없으면 HUD와 압축 문맥에서 기준치가 사라진다 | `writeTx`의 `reset`(`store.ts:380`); PQ-13 A; T3 | reset 입력의 `state`에 기준치 두 필드를 넣음 |
+| K18 | 열린 goal이 있으면 인터뷰 취소 직후 goal continuation이 턴을 맡는다 (gjc와 같음) | 취소된 인터뷰는 deep-interview 판단이 `none`이라 goal 경로가 돎(`src/hooks.ts:558-585`); ultragoal에서 넘겨받은 인터뷰는 goal을 활성으로 남김(D-HL8); 관리자 결정(2026-10-03); H9 | Esc는 다음 프롬프트까지 멈추고, `goal drop`은 goal을 끝냄 |
+| K19 | 스펙 뒤(phase `handoff`, Phase 5·"더 다듬기")의 취소는 재개할 수 없다. SKILL은 이때 `deep-interview clear`("여기서 마치기"와 같음)를 부르고 스펙 파일은 남는다 | 재개는 비활성 `interviewing`만 받음(`store.ts:200-215`); 비활성 `handoff`는 넘겨준 인터뷰와 구별되지 않음(인계가 옛 `handoff_to`를 남김); 관리자 결정(2026-10-03); T12 | 스펙으로 ralplan·ultragoal에 가려면 Phase 5에서 고름. 취소 뒤에는 새 `start` |
 
 ## 항목별 설명
 
@@ -125,10 +127,22 @@
 - 입력에 기준치가 없으면 HUD `ambiguity` 칩에서 기준치가 빠지고(현재 값도 없으면 칩 자체가 없음), 압축 문맥은 `ambiguity: unknown (threshold unknown)`처럼 적습니다.
 - SKILL Step 2e는 reset 입력의 `state`에 `threshold`·`threshold_source`를 넣으라고 합니다. 스펙을 이미 썼다면 `reset` 뒤 다시 `spec`해야 넘길 수 있습니다.
 
+### K18. 취소 뒤의 goal continuation
+
+- ultragoal → deep-interview 인계는 goal을 그대로 둡니다(D-HL8). 인터뷰가 `interviewing`이나 `handoff`에 활성인 동안에는 deep-interview 판단이 goal 경로를 막습니다(deep-interview 편차 16).
+- 사용자가 "그만"이라고 하고 모델이 `state(patch={"active": false})`로 취소하면 deep-interview 판단이 `none`이 되어, 그 턴이 끝날 때 `<goal-continuation>`이 들어옵니다. gjc도 deep-interview가 해당 없으면 goal 경로를 돌립니다(`session/agent-session.ts:21137-21211`).
+- 관리자가 gjc와 같게 두기로 했습니다(2026-10-03). 사용자가 다 멈추려면 Esc(다음 진짜 프롬프트까지 continuation 없음), 실행을 끝내려면 `open-gajae`에서 `goal drop`입니다. `goal pause`는 blocker 분류와 critic 판정이 있어야 해서 이 용도로 쓸 수 없습니다.
+
+### K19. 스펙 뒤의 취소
+
+- 재개는 비활성 `interviewing`만 받습니다. 스펙을 쓴 뒤의 비활성 `handoff`는 ralplan·ultragoal로 넘겨준 인터뷰와 같은 모양이라(인계가 옛 `handoff_to`를 남기므로 그 필드로 구별할 수 없음) 재개하지 않습니다.
+- 그래서 SKILL은 스펙 뒤의 hard cancel을 `deep-interview clear`로 처리합니다. Phase 5 "여기서 마치기"와 같고, 스펙 파일과 index는 남습니다(관리자 결정, 2026-10-03).
+- 같은 execution에서 `skill ralplan`·`skill ultragoal`을 로드하면 로드 게이트가 끝난 인터뷰의 유효한 스펙을 연결합니다(K15). 다음 execution부터는 새 `start`가 필요합니다.
+
 ## 그 밖의 한계
 
 ### 기준치 gate는 SKILL의 판단
 
 - SKILL은 모호도가 기준치 이하이고 closure·restate gate를 지난 뒤에만 스펙을 쓰라고 합니다(DIPP-9, Phase 4). 조기 종료(3라운드부터 경고와 함께)와 100라운드 상한도 SKILL의 규칙입니다.
 - gjc에서 물려받은 고정 종료 문장 둘("All dimensions at 0.9+: Skip to spec generation", 해석 표의 "0.0 - 0.1 … Proceed immediately")은 이 규칙과 충돌해 지웠습니다(deep-interview 편차 39). 두 공식의 가중치 합이 1.0이라 모든 점수가 0.9면 모호도가 10%로, 기본 기준치 5%보다 큽니다.
-- `spec`(`store.ts:468-531`)은 활성 상태만 요구하고 `current_ambiguity`와 `threshold`를 비교하지 않습니다. 넘기기도 phase와 스펙 sha256만 봅니다. gjc에도 코드 gate가 없습니다.
+- `spec`(`store.ts:471-534`)은 활성 상태만 요구하고 `current_ambiguity`와 `threshold`를 비교하지 않습니다. 넘기기도 phase와 스펙 sha256만 봅니다. gjc에도 코드 gate가 없습니다.

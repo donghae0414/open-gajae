@@ -413,6 +413,7 @@ test("the deep-interview skill follows the gjc skill with its deviations marked"
     // Deviation 30 (review of 2026-10-03): cancel and resume.
     'call `deep-interview state(patch={"active": false})`, which keeps the rounds for a later resume',
     'To resume, call `deep-interview state(patch={"active": true})`',
+    "after the spec (phase `handoff`), call `deep-interview clear`, as Finish here does",
     // Deviation 39: the threshold and the gates are the only exit.
     "**Ambiguity at or below the resolved threshold**: Go to the Phase 4 closure and restate gates",
   ])

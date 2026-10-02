@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { createDeepInterviewHooks } from "../src/deep-interview-runtime/hooks";
 import {
+  alreadyCancelledRefusal,
   inactiveStateRefusal,
   noStateRefusal,
   handedOffToRalplan,
@@ -668,5 +669,43 @@ test("T11: state {active:false} cancels and keeps the rounds; state {active:true
     await call({ op: "spec", content: "# s", slug: "t11" });
     expect(await call({ op: "handoff", to: "ultragoal" })).toStartWith("Handed off to ultragoal");
     expect(await call({ op: "state", patch: { active: true } })).toBe(`Error: ${inactiveStateRefusal("state", "handoff")}`);
+  });
+});
+
+test("T12: cancel/resume edges: a refused resume writes nothing; ultragoal refuses it; snapshot; extra fields; a second cancel; after the spec clear ends it", async () => {
+  await fixture(async ({ call, run, json, tree }) => {
+    await call({ op: "start", idea: "i" });
+    await writeRounds(call, scored(1));
+    await call({ op: "state", patch: { active: false } });
+    const skills = async () =>
+      ((await json("state", "skill-active-state.json")).active_skills as { skill: string }[]).map((entry) => entry.skill);
+    expect(await skills()).not.toContain("deep-interview");
+    // A second cancel is refused as already cancelled.
+    expect(await call({ op: "state", patch: { active: false } })).toBe(`Error: ${alreadyCancelledRefusal()}`);
+    // A refused resume (ultragoal is the visible primary) leaves every file and the audit log as they were.
+    await run((tx) => row(tx, { skill: "ultragoal", active: true, phase: "active" }));
+    const before = await tree();
+    expect(await call({ op: "state", patch: { active: true } })).toBe(`Error: ${resumeRefusal("ultragoal", "active")}`);
+    expect(await tree()).toEqual(before);
+    await run((tx) => tx.remove(tx.paths.activeRow("ultragoal")));
+    // Resume merges the other fields of the same patch and rebuilds the snapshot.
+    expect(ok(await call({ op: "state", patch: { active: true, note: "back" } }))).toMatchObject({ active: true, current_phase: "interviewing" });
+    expect(await json("state", DI)).toMatchObject({ active: true, note: "back", state: { rounds: [scored(1)] } });
+    expect(await skills()).toContain("deep-interview");
+  });
+  // A phase in the same resume patch follows the transition table, as on an active interview.
+  await fixture(async ({ call }) => {
+    await call({ op: "start", idea: "i" });
+    await call({ op: "state", patch: { active: false } });
+    expect(ok(await call({ op: "state", patch: { active: true, current_phase: "complete" } }))).toMatchObject({ active: true, current_phase: "complete" });
+  });
+  // After the spec the skill's hard cancellation is clear: the spec stays and nothing resumes.
+  await fixture(async ({ call, exists }) => {
+    await call({ op: "start", idea: "i" });
+    await writeRounds(call, scored(1));
+    await call({ op: "spec", content: "# s", slug: "t12" });
+    expect(ok(await call({ op: "clear" }))).toMatchObject({ active: false, current_phase: "complete" });
+    expect(await exists("specs", "deep-interview-t12.md")).toBe(true);
+    expect(await call({ op: "state", patch: { active: true } })).toBe(`Error: ${inactiveStateRefusal("state", "complete")}`);
   });
 });

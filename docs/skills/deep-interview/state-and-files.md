@@ -142,7 +142,7 @@ gjc 시드에서 `resolution`, `intent_contract_required`, trace, 언어 필드�
 - `id`가 없는 사실은 붙이고, JSON이 완전히 같은 것은 건너뜁니다.
 - 델타는 사실을 지우지 못합니다. 반박은 `disputed: true`, 대체는 `superseded_by`로 합니다(SKILL Step 2c).
 
-`write`는 봉투 병합에서 입력의 `established_facts`로 목록을 바꾼 뒤, 기준 상태의 사실 목록과 이 함수로 다시 병합합니다(`store.ts:395-400`). 그래서 사실 하나만 보내도 다른 사실이 남습니다. `reset`에서는 기준이 비어 있어 다시 병합하지 않습니다.
+`write`는 봉투 병합에서 입력의 `established_facts`로 목록을 바꾼 뒤, 기준 상태의 사실 목록과 이 함수로 다시 병합합니다(`store.ts:398-403`). 그래서 사실 하나만 보내도 다른 사실이 남습니다. `reset`에서는 기준이 비어 있어 다시 병합하지 않습니다.
 
 ### 봉투 (`mergeDeepInterviewEnvelope`, `envelope.ts:141-171`)
 
@@ -281,7 +281,7 @@ floor = 0.10 × (해결되지 않은 반박 사실 수) + 0.05 × (확정 topolo
   ```
   {"slug":"demo","stage":"final","path":"<session>/specs/deep-interview-demo.md","created_at":"2026-10-02T10:06:02.189Z","sha256":"c3d6…925d"}
   ```
-- **확인** (`verifySpecTx`, `store.ts:569-589`): 넘기기 전에 `spec_path`가 루트 세션 `specs/` 안에 있고, 읽히고, 내용의 sha256이 `spec_sha256`과 같은지 봅니다. 파일을 고치거나 지우면 넘기기가 거부됩니다. 다시 `spec`하면 됩니다.
+- **확인** (`verifySpecTx`, `store.ts:572-592`): 넘기기 전에 `spec_path`가 루트 세션 `specs/` 안에 있고, 읽히고, 내용의 sha256이 `spec_sha256`과 같은지 봅니다. 파일을 고치거나 지우면 넘기기가 거부됩니다. 다시 `spec`하면 됩니다.
 - **지우지 않음**: `start`, `clear`, `reset`, 인계 모두 스펙 파일과 index를 지우지 않습니다.
 
 ## 12. 활성 행, 스냅숏, 순위
