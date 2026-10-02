@@ -21,6 +21,7 @@ import {
   type Settings,
   type SkillInfo,
 } from "../src/config";
+import { ROUND_RECORD_REQUIRED } from "../src/deep-interview-runtime/manifest";
 import { StateStore } from "../src/state";
 import { ULTRAGOAL_RED_TEAM_FRAGMENT } from "../src/ultragoal-runtime/messages";
 import { createTools } from "../src/tools";
@@ -357,20 +358,96 @@ test("the catalog is twelve direct tools with visibility permissions", async () 
       expect("jsonSchema" in tool.input["~standard"]).toBe(true);
     }
   }));
-// Deep-interview revision plan S3a: the gjc text with the host substitution
-// table T; the deviation edits and their contract tests follow in S3b.
-test("the deep-interview skill is the gjc text with the host substitutions", async () => {
+// Deep-interview revision plan S3b (§3.6): the gjc skill with the host
+// substitutions and the marked deviations; runtime-contract literals.
+test("the deep-interview skill follows the gjc skill with its deviations marked", async () => {
   const skill = await readFile(
     new URL("../skills/deep-interview/SKILL.md", import.meta.url),
     "utf8",
   );
-  const lines = skill.split("\n");
-  expect(lines).toContain("## Source and host substitutions");
-  expect(skill).toContain("5c5231418930673e42cc5d08ebe4376e03187533");
-  for (const op of ["`deep-interview status`", "`deep-interview write", "`deep-interview spec("])
-    expect(`${op}: ${skill.includes(op)}`).toBe(`${op}: true`);
-  for (const gone of [".gjc/_session-", "/skill:", "gjc deep-interview read", "gjc deep-interview write"])
-    expect(`${gone}: ${skill.includes(gone)}`).toBe(`${gone}: false`);
+  const heading = "\n## Source and host substitutions\n";
+  expect(skill).toContain(heading);
+  const body = skill.slice(0, skill.indexOf(heading));
+  const source = skill.slice(skill.indexOf(heading));
+  // Frontmatter (A2-5): no trace or resolution flags, host paths, the gjc pin.
+  const frontmatter = skill.slice(0, skill.indexOf("\n---\n", 4));
+  expect(frontmatter).toContain('argument-hint: "<idea or vague description>"');
+  expect(frontmatter).not.toContain("--trace");
+  expect(frontmatter).toContain("\nhandoff: .open-gajae/_session-<created>-<id>/specs/deep-interview-<slug>.md\n");
+  expect(frontmatter).toMatch(/\nsource: .*5c5231418930673e42cc5d08ebe4376e03187533/);
+  for (const required of [
+    "`question`",
+    "`deep-interview write",
+    "deep-interview handoff(to",
+    '"lifecycle": "scored"',
+    "round_key",
+    '"round_key": "round-<n>"',
+    "**A direct contradiction**",
+    "**B internal inconsistency**",
+    "**C low-quality/evasive**",
+    "**D scope expansion**",
+    "established_facts",
+    "**4a. Closure / Acceptance Guard.**",
+    "**4b. Restate gate.**",
+    "`code_context`",
+    "`web_context`",
+    "`ambiguity_contrarian`",
+    "`answer_simplifier`",
+    "`architecture_implications`",
+    "subagent(open-gajae-lateral-reviewer)",
+    "lateral-review-panel.md",
+    "**Refine with ralplan consensus (Recommended",
+    "**Execute with ultragoal",
+    "**Refine further**",
+    "**Finish here**",
+    // I-23: hand off first; a same-execution load hands off by itself.
+    "first call `deep-interview handoff(to: \"ralplan\")` or `deep-interview handoff(to: \"ultragoal\")`, then load",
+    "If this skill was loaded in the same execution, loading the chosen skill performs the handoff itself.",
+    // K11: the combined call's later step failing leaves the earlier ones.
+    "a failure in a later step leaves the earlier steps' results in place",
+    "**Hard cap at 100 rounds**",
+    // D-RS6: a clarification answer is re-asked, not recorded.
+    "then call `question` again with the exact original question and options",
+    // Phase 0 (A-10).
+    "Never `start` over an active state",
+  ])
+    expect(`${required}: ${body.includes(required)}`).toBe(`${required}: true`);
+  // PQ-22 D (C4-16): the Required line is the runtime's list.
+  const requiredLine = body.split("\n").find((line) => line.startsWith("Required: "));
+  expect(requiredLine?.slice("Required: ".length).split(", ").sort()).toEqual([...ROUND_RECORD_REQUIRED].sort());
+  for (const forbidden of [
+    "auto-answer",
+    "intent_contract",
+    "Ask about these choices",
+    "rhythm guard",
+    "Round 10",
+    ".gjc",
+    "gjc deep-interview",
+    "the `ask` tool",
+    "{{",
+    "subagent(open-gajae-architect)",
+    "autoresearch",
+    "--trace",
+    "trace_summary",
+    "Phase 0.75",
+    "Refine Free-Text",
+    "2b″",
+    "Native Plugin Invocation Guard",
+  ])
+    expect(`${forbidden}: ${body.includes(forbidden)}`).toBe(`${forbidden}: false`);
+  expect(source).toContain("5c5231418930673e42cc5d08ebe4376e03187533");
+  expect(source).toContain('"Deviations from GJC (deep-interview)"');
+  const fragment = await readFile(
+    new URL("../skills/deep-interview/lateral-review-panel.md", import.meta.url),
+    "utf8",
+  );
+  expect(fragment).toStartWith("# Deep Interview Lateral Review Panel");
+  expect(fragment).toContain("5c5231418930673e42cc5d08ebe4376e03187533");
+  // The text the personas follow (before the source note) is gjc's with host
+  // paths and no added output-contract line (PQ-7 N).
+  const persona = fragment.slice(0, fragment.indexOf("<!-- Source:"));
+  expect(persona).not.toContain(".gjc");
+  expect(persona).not.toContain("output contract");
 });
 
 test("the three skills register with frontmatter id, name and description", async () => {

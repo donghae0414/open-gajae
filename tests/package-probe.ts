@@ -59,7 +59,7 @@ await runProbe("open-gajae-package-probe", async (report, scratch) => {
   report.check("tarball has no dist/", !files.some((f) => f.startsWith("dist/")), files.filter((f) => f.startsWith("dist/")));
   report.check(
     "tarball carries the TS entry, sources, skills and prompts",
-    ["index.ts", "src/index.ts", "src/ultragoal-runtime/tool.ts", "src/goal/tool.ts", "src/deep-interview-runtime/tool.ts", "skills/ralplan/SKILL.md", "skills/deep-interview/SKILL.md", "skills/ultragoal/SKILL.md", "prompts/open-gajae.md", "prompts/open-gajae-executor.md", "prompts/open-gajae-cleaner.md", "prompts/open-gajae-lateral-reviewer.md", "package.json"].every((f) =>
+    ["index.ts", "src/index.ts", "src/ultragoal-runtime/tool.ts", "src/goal/tool.ts", "src/deep-interview-runtime/tool.ts", "skills/ralplan/SKILL.md", "skills/deep-interview/SKILL.md", "skills/deep-interview/lateral-review-panel.md", "skills/ultragoal/SKILL.md", "prompts/open-gajae.md", "prompts/open-gajae-executor.md", "prompts/open-gajae-cleaner.md", "prompts/open-gajae-lateral-reviewer.md", "package.json"].every((f) =>
       files.includes(f),
     ),
     files,
