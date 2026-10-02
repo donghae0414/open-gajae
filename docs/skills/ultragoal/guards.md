@@ -162,7 +162,7 @@ Ultragoal goal-planning phase boundary: finish goal planning and record goals th
 ### 이 가드가 막지 않는 것
 
 - `shell`로 하는 변경(ralplan 편차 11). SKILL과 프롬프트의 글로만 금지됩니다.
-- 파일 도구가 아닌 호출(`read`, 상태 도구, `subagent` 등).
+- 파일 도구가 아닌 호출(`read`, workflow 도구, `subagent` 등).
 - `goal-planning`이 아닌 단계. `pending`부터는 편집이 자유롭고, 순서(`next` 뒤에 구현)는 SKILL이 지시합니다.
 
 ## 도구 숨김

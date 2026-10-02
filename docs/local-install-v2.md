@@ -237,7 +237,7 @@ deep-interview gjc 개정(브랜치 `feat/deep-interview-gjc-revision`)의 실�
 
 | 5.3 항목 | 결과 | 메모 |
 |---|---|---|
-| 1. 설정 로드 | 통과 (플러그인 설정 로더) | 2026-10-02, 구현 중 확인. 로컬 `~/.open-gajae/open-gajae.jsonc`는 `ambiguityThreshold: 0.05`, 출처 `~/.open-gajae/open-gajae.jsonc`로 로드됩니다. 없앤 라운드 상한 key를 넣은 임시 파일은 `unknown setting`으로 실패했습니다. 호스트를 재시작한 확인은 아직 하지 않았습니다. |
+| 1. 설정 로드 | 부분 (플러그인 설정 로더만) | 2026-10-02, 구현 중 확인. 로컬 `~/.open-gajae/open-gajae.jsonc`는 `ambiguityThreshold: 0.05`, 출처 `~/.open-gajae/open-gajae.jsonc`로 로드됩니다. 없앤 라운드 상한 key를 넣은 임시 파일은 `unknown setting`으로 실패했습니다. 호스트를 재시작한 확인은 아직 하지 않았습니다. |
 | 2. 진입 | 미확인 | |
 | 3. Phase 0과 `start` | 미확인 | |
 | 4. 라운드 기록 | 미확인 | |

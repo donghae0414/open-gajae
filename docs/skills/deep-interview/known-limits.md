@@ -11,11 +11,11 @@
 
 | K | 한계 | 근거 | 할 일 |
 |---|---|---|---|
-| K1 | 이전 execution에서 로드한 deep-interview에는 로드 게이트가 없다. 다음 skill을 시작하면 deep-interview 행만 지워지고 상태는 활성으로 남는다 (gjc와 같음) | 턴 표식은 execution 끝에 지워짐(`src/hooks.ts:1261`), 활성 행 쓰기가 위쪽 행을 지움(`src/skill-state/rows.ts:149-162`); H3, T8 | `deep-interview clear`로 정리(`force` 불필요) |
+| K1 | 이전 execution에서 로드한 deep-interview에는 로드 게이트가 없다. 다음 skill을 시작하면 deep-interview 행만 지워지고 상태는 활성으로 남는다 (gjc와 같음) | 턴 표식은 execution 끝에 지워짐(`src/hooks.ts:1264`), 활성 행 쓰기가 위쪽 행을 지움(`src/skill-state/rows.ts:149-162`); H3, T8 | `deep-interview clear`로 정리(`force` 불필요) |
 | K2 | 스펙 뒤 "더 다듬기"는 phase `handoff`에 머문다. continuation은 없고(`interviewing` 전용), 편집 가드와 goal continuation 건너뛰기는 유지된다 | `decideContinuation`(`src/deep-interview-runtime/hooks.ts:106-117`), 가드 phase(`manifest.ts:64`); spec E1; H1, H2 | 기록만. 다듬은 뒤 다시 `spec` |
 | K3 | 라운드 기록은 모델이 쓴다. 실제 `question` 주고받기와 같은지 검사하지 않는다 | 기록기 없음(deep-interview 편차 3), spec D-RS1 | 기록만 |
 | K4 | 활성 행과 HUD 칩은 계산해 기록만 하고 그리지 않는다 | TUI 플러그인 없음(deep-interview 편차 23, R-OD17); spec D-HL1 | 기록만. 진행은 `deep-interview status`로 봄 |
-| K5 | deep-interview 동안에도 goal 문맥 주입은 계속된다 (gjc와 같음) | `context` 훅(`src/hooks.ts:1143-1177`)은 deep-interview를 보지 않음 | 기록만 |
+| K5 | deep-interview 동안에도 goal 문맥 주입은 계속된다 (gjc와 같음) | `context` 훅(`src/hooks.ts:1146-1180`)은 deep-interview를 보지 않음 | 기록만 |
 | K6 | 1 MiB / 깊이 10 / 최상위 키 100 한도. 아주 긴 인터뷰의 `write`가 실패하고 파일은 그대로 남는다 | `assertStatePayload`(`src/state.ts:163-166`)를 쓰기 전에 부름(계획 DR-31), deep-interview 편차 34 | 요약해서 줄이거나(DIPP-7) 스펙으로 넘어감 |
 | K7 | 결합 호출, `handoff(to:"ralplan")`, ralplan ↔ deep-interview 왕복은 기존 ralplan `run_id`를 다시 쓴다(옛 run 폴더, 반복 예산, `stage_n`이 이어짐). `handoff(to:"ralplan")`으로 넘겨받은 run은 옛 `task`를 지킨다 | `startRunTx`의 `run_id`(`src/ralplan-runtime/store.ts:925`), 인계의 필드 유지 병합(`src/skill-state/handoff.ts:230-240`); PQ-23 A, PQ-2 A; T5 | 새 run 폴더가 필요하면 첫 `ralplan write`에 새 `run_id` |
 | K8 | 라운드 필드는 모델이 쓴다. 모양은 검사하지만 내용은 검사하지 않는다 | `roundRecordErrors`(`manifest.ts:266-288`), deep-interview 편차 36; RT13 | 기록만 |

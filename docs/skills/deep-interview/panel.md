@@ -83,7 +83,7 @@ gjc의 persona는 부모 문맥을 물려받는(fork-context) subagent이고, �
 - 규칙: `finding`은 비어 있지 않고 확정된 제약과 어긋나지 않음, `rationale` 1~3개, `suggested_options` 1~3개, `confidence`는 셋 중 하나(`:41-45`)
 - 문맥이 모자라면: `confidence` `low`, `finding`에 가장 중요한 빠진 문맥, `suggested_options`에 가장 안전한 확인 질문 하나(`:47-49`)
 
-호스트 치환(`:51`): "inherited context" → "the context passed in this prompt"(OpenCode `subagent`는 새 문맥, deep-interview 편차 18), `.gjc/` → `.open-gajae/`, agent가 대신 답하기 전 패널을 여는 부분 삭제(deep-interview 편차 6). 출력 계약 문장을 더하지 않았습니다(계획 DR-33 철회). `tests/integration.test.ts:440-451`이 조각의 머리, 출처, `.gjc`·"output contract"가 없음을 확인합니다.
+호스트 치환(`:51`): "inherited context" → "the context passed in this prompt"(OpenCode `subagent`는 새 문맥, deep-interview 편차 18), `.gjc/` → `.open-gajae/`, "read-only architect panel" → "read-only review panel"(persona는 architect 역할이 아니라 패널 역할로 돎, deep-interview 편차 37), agent가 대신 답하기 전 패널을 여는 부분 삭제(deep-interview 편차 6). 출력 계약 문장을 더하지 않았습니다(계획 DR-33 철회). `tests/integration.test.ts:440-451`이 조각의 머리, 출처, `.gjc`·"output contract"가 없음을 확인합니다.
 
 ### 전달 방식
 

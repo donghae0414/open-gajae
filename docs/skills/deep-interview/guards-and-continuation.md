@@ -19,7 +19,7 @@
 
 ## `execute.before`의 순서와 차단 방식
 
-`src/hooks.ts:1003-1094`의 `executeBefore`가 차례로 봅니다.
+`src/hooks.ts:1004-1097`의 `executeBefore`가 차례로 봅니다.
 
 ```
 A  산출물 가드 (guardSessionArtifacts)          걸리면 막고 끝 (실패하면 막음)
@@ -28,7 +28,7 @@ C  tool == "subagent" → ultragoal red-team 조각, 끝
 D  tool == "skill"   → ultragoal 게이트 / 체인 가드 / deep-interview 로드 게이트, 턴 표식
 ```
 
-막는 방식은 예외가 아니라 입력을 비우는 것입니다. `blocked`에 문구를 적고 `event.input = {}`로 바꾸면 호스트의 입력 해석이 실패하고, `execute.after`(`src/hooks.ts:1102-1119`)가 그 호출의 오류를 적어 둔 문구로 바꿉니다. 모델은 도구 오류로 그 문구를 봅니다(Promise 훅의 예외는 호스트에서 결함이 되기 때문, `src/hooks.ts:1004-1009` 주석).
+막는 방식은 예외가 아니라 입력을 비우는 것입니다. `blocked`에 문구를 적고 `event.input = {}`로 바꾸면 호스트의 입력 해석이 실패하고, `execute.after`(`src/hooks.ts:1105-1122`)가 그 호출의 오류를 적어 둔 문구로 바꿉니다. 모델은 도구 오류로 그 문구를 봅니다(Promise 훅의 예외는 호스트에서 결함이 되기 때문, `src/hooks.ts:1005-1010` 주석).
 
 ## 항상 차단: 스펙 경로와 state 트리
 
@@ -69,7 +69,7 @@ Use: `ralplan` for ralplan state and plans, `ultragoal` for ultragoal state, `go
 | `.open-gajae/_session-X/specs/notes.md` | 막지 않음 (테스트 H7). 다른 `specs/` 문서는 대상이 아님 |
 | `.open-gajae/_session-X/state/deep-interview-state.json`, `state/active/deep-interview.json`, `state/skill-active-state.json`, `state/audit.jsonl`, `state/transactions/…` | 3 (정규식에서 이끌어 냄) |
 
-모든 agent와 모든 세션에 늘 적용됩니다. 다른 세션의 스펙도 막습니다. 판단 중 예외가 나면, 경로가 하나라도 있는 호출은 막습니다(`src/hooks.ts:1021-1028`).
+모든 agent와 모든 세션에 늘 적용됩니다. 다른 세션의 스펙도 막습니다. 판단 중 예외가 나면, 경로가 하나라도 있는 호출은 막습니다(`src/hooks.ts:1022-1029`).
 
 ### 막지 않는 것
 
@@ -125,7 +125,7 @@ If this deep-interview is stale or was started by mistake, end it with `deep-int
 
 ### 트리거
 
-`src/hooks.ts:1240-1289`의 `onEvent`가 `session.execution.succeeded`를 받고, 이 플러그인 위치의 세션이며 부모가 없을 때(계보 루트) `continueSession`(`src/hooks.ts:536-597`)을 부릅니다. `failed`는 이어 가지 않습니다.
+`src/hooks.ts:1243-1292`의 `onEvent`가 `session.execution.succeeded`를 받고, 이 플러그인 위치의 세션이며 부모가 없을 때(계보 루트) `continueSession`(`src/hooks.ts:536-597`)을 부릅니다. `failed`는 이어 가지 않습니다.
 
 ### 순서
 
@@ -157,7 +157,7 @@ deep-interview가 goal보다 먼저입니다. "활성 goal은 goal 경로만 탄
 
 ### 횟수 초기화
 
-계보 루트 세션에 실제 사용자 프롬프트가 들어오면 `resetContinuation`(`:120-122`)이 0으로 돌립니다(`src/hooks.ts:891-893`). 역할 subagent 세션, 주입 표식이 든 프롬프트, 루트가 아닌 세션은 돌리지 않습니다. agent는 보지 않습니다.
+계보 루트 세션에 실제 사용자 프롬프트가 들어오면 `resetContinuation`(`:120-122`)이 0으로 돌립니다(`src/hooks.ts:892-894`). 역할 subagent 세션, 주입 표식이 든 프롬프트, 루트가 아닌 세션은 돌리지 않습니다. agent는 보지 않습니다.
 
 ### 주입 문구
 
@@ -196,7 +196,7 @@ Only stop after crystallizing the spec, recording a handoff, or explicitly cance
 - **agent를 보지 않습니다.** 세션의 agent를 다른 것으로 바꿔도 `interviewing`이면 continuation이 들어갑니다(goal continuation과 같음). 그 agent에게는 `deep-interview` 도구가 숨겨져 있어 `write`할 수 없습니다.
 - **패널을 background로 돌리지 말 것**: 자식 execution이 도는 동안은 continuation이 없으므로, SKILL Phase 3은 패널을 background로 돌리지 말라고 합니다([panel.md](panel.md)).
 - **`handoff`에서는 continuation이 없습니다** (K2). Phase 5에서 사용자 선택을 기다리는 동안 다시 밀지 않기 위함이고, "더 다듬기" 동안에도 마찬가지입니다.
-- **goal 문맥 주입은 계속됩니다** (K5). `context` 훅의 goal 문맥(`src/hooks.ts:1143-1177`)은 deep-interview를 보지 않습니다. hold가 멈추는 것은 goal **continuation**뿐입니다.
+- **goal 문맥 주입은 계속됩니다** (K5). `context` 훅의 goal 문맥(`src/hooks.ts:1146-1180`)은 deep-interview를 보지 않습니다. hold가 멈추는 것은 goal **continuation**뿐입니다.
 
 ## 압축 문맥
 
@@ -204,10 +204,10 @@ Only stop after crystallizing the spec, recording a handoff, or explicitly cance
 
 ### 순서
 
-`src/hooks.ts:1191-1238`의 `compaction` 훅이 셋을 차례로 넣습니다. 앞의 것이 실패해도 뒤의 것은 돕니다.
+`src/hooks.ts:1194-1241`의 `compaction` 훅이 셋을 차례로 넣습니다. 앞의 것이 실패해도 뒤의 것은 돕니다.
 
 1. ultragoal 복구 문맥 (루트 세션일 때)
-2. deep-interview 문맥 (루트 세션일 때, `:1200-1207`)
+2. deep-interview 문맥 (루트 세션일 때, `:1203-1210`)
 3. ralplan 복구 계약
 
 ### 조건과 내용 (`compactionText`, `src/deep-interview-runtime/hooks.ts:172-188`)
@@ -240,7 +240,7 @@ Read the full state with `deep-interview status`; ask the next question with `qu
 
 ### 도구 숨김
 
-`src/hooks.ts:288-298`의 `TOOL_OWNERS`에서 `deep-interview`의 주인은 `open-gajae` 하나입니다(계획 DR-23, deep-interview 편차 24). `hideTools`(`src/hooks.ts:1126-1132`)는 요청의 agent가 주인이 아니면(agent가 없어도) 요청의 `tools`에서 그 도구를 지웁니다. `context`, `compaction`, `generate` 세 세션 훅에 걸려 있습니다(`src/index.ts:74-76`).
+`src/hooks.ts:288-298`의 `TOOL_OWNERS`에서 `deep-interview`의 주인은 `open-gajae` 하나입니다(계획 DR-23, deep-interview 편차 24). `hideTools`(`src/hooks.ts:1129-1135`)는 요청의 agent가 주인이 아니면(agent가 없어도) 요청의 `tools`에서 그 도구를 지웁니다. `context`, `compaction`, `generate` 세 세션 훅에 걸려 있습니다(`src/index.ts:74-76`).
 
 | 요청의 agent | 남는 workflow 도구 |
 |---|---|

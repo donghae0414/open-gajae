@@ -402,7 +402,7 @@ test("the deep-interview skill follows the gjc skill with its deviations marked"
     "**Finish here**",
     // I-23: hand off first; a same-execution load hands off by itself.
     "first call `deep-interview handoff(to: \"ralplan\")` or `deep-interview handoff(to: \"ultragoal\")`, then load",
-    "If this skill was loaded in the same execution, loading the chosen skill performs the handoff itself.",
+    "If this skill was loaded in the same execution, loading the chosen skill performs the handoff itself (deviation 31).",
     // K11: the combined call's later step failing leaves the earlier ones.
     "a failure in a later step leaves the earlier steps' results in place",
     "**Hard cap at 100 rounds**",
@@ -448,6 +448,34 @@ test("the deep-interview skill follows the gjc skill with its deviations marked"
   const persona = fragment.slice(0, fragment.indexOf("<!-- Source:"));
   expect(persona).not.toContain(".gjc");
   expect(persona).not.toContain("output contract");
+});
+
+test("every deviation the deep-interview skill and fragment cite has a row in both README tables (P-AC9)", async () => {
+  const cited = new Set<number>();
+  for (const file of ["SKILL.md", "lateral-review-panel.md"]) {
+    const text = await readFile(new URL(`../skills/deep-interview/${file}`, import.meta.url), "utf8");
+    // "ralplan deviation N" and "ultragoal deviation N" point at other tables.
+    for (const match of text.matchAll(/(ralplan |ultragoal )?deviations? (\d+(?:(?:, | and )\d+)*)/gi))
+      if (!match[1]) for (const n of match[2].match(/\d+/g) ?? []) cited.add(Number(n));
+  }
+  expect(cited.size).toBeGreaterThan(0);
+  for (const [file, heading] of [
+    ["README.md", "## Deviations from GJC (deep-interview)"],
+    ["README.ko.md", "## GJC로부터의 deviation (deep-interview)"],
+  ] as const) {
+    const lines = (await readFile(new URL(`../${file}`, import.meta.url), "utf8")).split("\n");
+    const start = lines.indexOf(heading);
+    expect(start).toBeGreaterThan(-1);
+    const end = lines.findIndex((line, index) => index > start && line.startsWith("## "));
+    const rows = new Set(
+      lines
+        .slice(start + 1, end)
+        .map((line) => /^\| (\d+) \|/.exec(line)?.[1])
+        .filter((n): n is string => n !== undefined)
+        .map(Number),
+    );
+    expect(`${file}: ${[...cited].filter((n) => !rows.has(n)).sort((a, b) => a - b)}`).toBe(`${file}: `);
+  }
 });
 
 test("the three skills register with frontmatter id, name and description", async () => {

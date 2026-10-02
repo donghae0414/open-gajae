@@ -466,7 +466,7 @@ SKILL은 "do not call `ultragoal` ops"라고 적어 두었을 뿐 **코드는 �
 
 ## 공통 저널 인계 (`handoffWorkflowTx`)
 
-gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(`handleHandoffUnlocked`), `gjc-runtime/state-writer.ts:1009-1068`(감사용 `invalid_transition_detected`), `skill-state/initial-phase.ts:13-19`, `skill-state/active-state.ts:969-1015`(`applyHandoffToActiveState`), 저널은 `gjc-runtime/state-writer.ts:82-92,1590-1640`. 편차: ultragoal 33·39, ralplan 17(봉투 영수증·체크섬·`state_revision` 없음), 영수증에 gjc의 state별 영수증 대신 `mutation_id`. "`--force`가 없어 깨진 state는 거부"는 `src/skill-state/handoff.ts` 헤더가 ralplan 17 아래에 함께 적은 것이고, 루트 README의 ralplan 17 행에는 없습니다.
+gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(`handleHandoffUnlocked`), `gjc-runtime/state-writer.ts:1009-1068`(감사용 `invalid_transition_detected`), `skill-state/initial-phase.ts:13-19`, `skill-state/active-state.ts:969-1015`(`applyHandoffToActiveState`), 저널은 `gjc-runtime/state-writer.ts:82-92,1590-1640`. 편차: ultragoal 39, ralplan 17(봉투 영수증·체크섬·`state_revision` 없음), 영수증에 gjc의 state별 영수증 대신 `mutation_id`. "`--force`가 없어 깨진 state는 거부"는 `src/skill-state/handoff.ts` 헤더가 ralplan 17 아래에 함께 적은 것이고, 루트 README의 ralplan 17 행에는 없습니다.
 
 `src/skill-state/handoff.ts`의 `handoffWorkflowTx`는 모든 인계 입구가 함께 쓰는 인계 하나입니다: `ralplan handoff` op, `skill ultragoal` 진입 게이트, `ultragoal handoff` op, 그리고 deep-interview 개정에서 더한 `deep-interview handoff` op, 결합 호출 `deep-interview spec(…, handoff: "ralplan")`, deep-interview 로드 게이트(`skill ralplan`·`skill ultragoal`). 호출하는 쪽이 제 검사를 먼저 합니다(ralplan: T 단계와 `active`, deep-interview: phase와 spec 검증). 이 함수는 goal state를 건드리지 않습니다(D-HE2). 받는 `tx`는 `StateStore.workflowTransaction` 하나의 것이고, 그 트랜잭션은 세션의 쓰기 큐 하나를 잡고 있는 동안 파일을 **바로** 씁니다. 되돌리기(rollback)는 없습니다.
 

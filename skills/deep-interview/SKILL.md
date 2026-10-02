@@ -95,7 +95,7 @@ Complete this phase before Phase 1, before brownfield exploration, before state 
 
 1. **Prefer an active interview's state**:
    - First inspect the deep-interview state with `deep-interview status`.
-   - If the state is **active** (`active: true`, including one handed over to you with `handoff_from`) and contains a finite numeric `threshold` and a non-empty `threshold_source` (at the top level or in `state`), use those values, set `<resolvedThreshold>`, `<resolvedThresholdPercent>`, and `<resolvedThresholdSource>`, and continue that interview. Never `start` over an active state: an active interview, including a handed-over one, is continued with `deep-interview write`, and only a new, unrelated request goes through the Phase 0.5 choice. An inactive state's values are not used.
+   - If the state is **active** (`active: true`, including one handed over to you with `handoff_from`) and contains a finite numeric `threshold` and a non-empty `threshold_source` (at the top level or in `state`), use those values, set `<resolvedThreshold>`, `<resolvedThresholdPercent>`, and `<resolvedThresholdSource>`, and continue that interview. Never `start` over an active state: an active interview, including a handed-over one, is continued with `deep-interview write`, and only a new, unrelated request goes through the Phase 0.5 choice (deviation 13: only `start` seeds, and it replaces the state). An inactive state's values are not used (deviation 20).
 2. **Otherwise, a threshold the user stated explicitly** for this interview wins: use it with the source `start(threshold)`, and pass it as `deep-interview start(idea, threshold)` in Phase 1.
 3. **Otherwise, use the resolved setting**: the `<open-gajae-runtime-settings>` block in your system prompt carries `deepInterview.ambiguityThreshold` and its `source` — `./.open-gajae/open-gajae.jsonc` (the project file, which beats the user file), `~/.open-gajae/open-gajae.jsonc` (the user file), or `default` (`0.05`). Do not read the settings files yourself (deviation 20).
    - Set these run variables exactly: `<resolvedThreshold>`, `<resolvedThresholdPercent>`, and `<resolvedThresholdSource>`.
@@ -129,7 +129,7 @@ If the user request appended after this skill as the final `User:` line is alrea
    - State the direct implementation path the normal coding agent should take.
    - If the user explicitly insists on deep-interview anyway, continue to Phase 1.
 
-When an active interview exists and the new request is an unrelated idea, ask the user once whether to continue that interview or start a new one; a new interview is `deep-interview start`, which replaces the old state (the spec files stay).
+When an active interview exists and the new request is an unrelated idea, ask the user once whether to continue that interview or start a new one; a new interview is `deep-interview start`, which replaces the old state (the spec files stay; deviation 13).
 
 This gate exists to prevent deep-interview from making easy problems harder. A small verification need does not make a request interview-worthy.
 
@@ -351,7 +351,7 @@ Use **mechanism A** for every ambiguity rise: a trigger LOWERS the affected comp
 - `+0.05` per active topology component whose goal/constraints/criteria clarity is still unscored (gap pressure — persist `topology.components[].clarity_scores` every round or the floor blocks convergence)
 
 Cooperate with the floor rather than fight it:
-- When an answer retracts or pivots from an already-scored decision, mark the established facts it contradicts as disputed; ambiguity then rises mechanically. Treat a floor-driven rise as trigger evidence and score the affected dimensions accordingly.
+- When an answer retracts or pivots from an already-scored decision, mark the established facts it contradicts as disputed in the same `write` (deviation 3: no recorder does this for you); ambiguity then rises mechanically. Treat a floor-driven rise as trigger evidence and score the affected dimensions accordingly.
 - A disputed fact keeps the floor at or above `0.10` — above the default threshold — so convergence is blocked until the dispute is resolved: either the user re-confirms the original fact (set `disputed: false`) or the superseding decision is recorded as a new established fact and the old fact gets `superseded_by: <new fact id>`. Never delete the contradicted fact.
 - When the effective score was clamped upward, the persisted round carries `reported_ambiguity` (your raw score) and `ambiguity_floor`; report the floor and its dominant cause in the Step 2d table instead of pretending the raw score held.
 
@@ -549,7 +549,7 @@ Legitimate terminal conditions — the ONLY places the interview may stop or ask
    - **Hard cancellation**: "stop", "cancel", "abort", or equivalent stops immediately at any round and saves state for resume. Never turn a hard cancellation into a clarifying question.
    - **Early proceed**: "enough", "let's go", "build it", or equivalent stops with the early-exit warning from round 3+ when ambiguity > threshold. Before round 3, ask one targeted clarifying question about what the user wants changed instead; do not treat that early-proceed intent as a hard cancellation.
 3. **Invocation/resume suitability ambiguity only**: the Phase 0.5 continue/cancel/clear choice exists solely at the invocation boundary when existing state already contains rounds, topology, spec, or handoff metadata. It is never re-asked inside an active interview.
-4. **Bounded continuation safety recovery**: the 100-round hard cap ("Maximum interview rounds reached (100). Proceeding with current clarity level ({score}%).") or the plugin's continuation budget being exhausted (it resumes a stopped interview at most twice per user prompt, deviation 16). These are safety stops, not consent prompts.
+4. **Bounded continuation safety recovery**: the 100-round hard cap ("Maximum interview rounds reached. Proceeding with current clarity level ({score}%).") or the plugin's continuation budget being exhausted (it resumes a stopped interview at most twice per user prompt, deviation 16). These are safety stops, not consent prompts.
 
 The user always keeps passive exit control: any answer, option, or free-text reply can carry an exit intent. Hard cancellations are honored immediately; early-proceed intents follow their round-3 safety rule above. Depth control comes from answering the questions themselves or exiting explicitly — not from per-round continue? interruptions.
 
@@ -751,7 +751,7 @@ After the spec is written, mark it `pending approval` and present the options vi
 
 Before invoking `skill` `ralplan` or `skill` `ultragoal`, the final spec must already be persisted with `deep-interview spec`, which moves the workflow to the `handoff` phase. Verify readiness with `deep-interview status` (`current_phase` `handoff`, `spec_path`).
 
-After the user chooses ralplan or ultragoal, first call `deep-interview handoff(to: "ralplan")` or `deep-interview handoff(to: "ultragoal")`, then load `skill` `ralplan` or `skill` `ultragoal`; follow the next step the handoff result names. If this skill was loaded in the same execution, loading the chosen skill performs the handoff itself. The handoff checks that the spec file still matches its recorded sha256; an edited or missing spec must be persisted again first.
+After the user chooses ralplan or ultragoal, first call `deep-interview handoff(to: "ralplan")` or `deep-interview handoff(to: "ultragoal")`, then load `skill` `ralplan` or `skill` `ultragoal`; follow the next step the handoff result names. If this skill was loaded in the same execution, loading the chosen skill performs the handoff itself (deviation 31). The handoff checks that the spec file still matches its recorded sha256; an edited or missing spec must be persisted again first.
 
 For a preselected deliberate ralplan path, prefer the single combined call instead:
 
@@ -970,7 +970,8 @@ Source: Gajae Code `packages/coding-agent/src/defaults/gjc/skills/deep-interview
 | `language.instruction` from the seed's language detection | "the language of the user's request and answers" | Deviation 8 |
 | `--trace`, Phase 0.75 trace pre-step, `trace_summary` | Removed | Deviation 8 |
 | `--quick`/`--standard`/`--deep` resolution thresholds | Removed; `start(threshold)` sets an explicit value | Deviations 8, 20 |
-| Phase 0 settings-file reads (`config.yml` precedence, canonical path) | Active state, then the user's explicit value, then the `<open-gajae-runtime-settings>` block with `~/…`, `./…` or `default`; never `start` over an active state | Deviation 20 |
+| Phase 0 settings-file reads (`config.yml` precedence, canonical path) | Active state, then the user's explicit value, then the `<open-gajae-runtime-settings>` block with `~/…`, `./…` or `default` | Deviation 20 |
+| (none: the native hook seeds the state before the skill loads) | Never `start` over an active state, a handed-over one included; Phase 0.5 asks once before `start` replaces an active interview for an unrelated request | Deviation 13 |
 | Native Plugin Invocation Guard (issue #3030) | Removed: the host loads a skill one way, and Phase 0 resolves the threshold | Deviation 20 |
 | `/skill:<name>` | `` `skill` `<name>` `` | Host tool |
 | `.gjc/_session-{sessionid}`, `.gjc/config.yml` | `.open-gajae/_session-<created>-<id>`, `.open-gajae/open-gajae.jsonc` | Host paths |
@@ -982,6 +983,7 @@ Source: Gajae Code `packages/coding-agent/src/defaults/gjc/skills/deep-interview
 | Panel personas as fork-context subagents through the `skill-fragment` loader | `subagent(open-gajae-lateral-reviewer)` in parallel; the fragment file's text passed in each prompt | Deviations 18, 27, 37 |
 | Advisory lanes as fork-context subagents | Parallel `subagent` calls with the needed context in the prompt; no fixed role | Deviation 18 |
 | Structured adapter context (`confused_terms`, `references`) riding `ask` metadata | Removed with the metadata | Deviation 3 |
+| "Replacing an already-scored answer for the same round … automatically marks that round's established facts as disputed" (the recorder's `disputeFactsFromRetractedRound`) | The model marks the contradicted facts disputed in the same `write`; the runtime floor then counts them | Deviation 3 |
 | Plain-text question detection (hook) | None; the plain-question rule stays in the text | Deviation 22 |
 | The runtime's continuation budget | Two continuations per user prompt by the plugin | Deviation 16 |
 | Top-level transcript fields hoisted into `state` | Refused | Deviation 25 |

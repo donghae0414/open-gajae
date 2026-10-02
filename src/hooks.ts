@@ -801,6 +801,7 @@ export function createHooks(
         const gate = await deepInterview.gateTx(tx, root, "ultragoal");
         if (gate.kind === "refuse") return gate.message;
         if (gate.kind === "handed-off") return undefined;
+        if (gate.reason) log(`finished deep-interview not linked to ultragoal: ${gate.reason}`);
       }
       if (marker === RALPLAN_SKILL_NAME) {
         const ralplan = await tx.readState().catch(() => undefined);
@@ -1086,6 +1087,8 @@ export function createHooks(
           event.input = {};
           return;
         }
+        if (gate.kind === "pass" && gate.reason)
+          log(`finished deep-interview not linked to ralplan: ${gate.reason}`);
       }
       markTurn(event.sessionID, event.id, skill);
     } catch (error) {

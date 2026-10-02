@@ -70,7 +70,7 @@ export type DeepInterviewContinuation =
  * when the load moved deep-interview to the callee (the caller must not seed
  * it again), or `pass`.
  */
-export type DeepInterviewGate = { kind: "refuse"; message: string } | { kind: "handed-off" } | { kind: "pass" };
+export type DeepInterviewGate = { kind: "refuse"; message: string } | { kind: "handed-off" } | { kind: "pass"; reason?: string };
 
 /** Plan I-11: deep-interview is the visible primary, active, on a guard phase. */
 async function guardedPhaseTx(tx: WorkflowTx): Promise<{ phase: string; state: Record<string, unknown> } | undefined> {
@@ -155,9 +155,9 @@ export function createDeepInterviewHooks(store: StateStore) {
           reason: `skill ${callee} loaded after a finished deep-interview`,
         });
         return { kind: "handed-off" };
-      } catch {
-        // PQ-11 E: no valid spec, or the handoff failed — the load passes.
-        return { kind: "pass" };
+      } catch (error) {
+        // PQ-11 E: no valid spec, or the handoff failed — the load passes; the caller logs why (DR-21).
+        return { kind: "pass", reason: error instanceof Error ? error.message : String(error) };
       }
     }
     // U-1 A: `interviewing`, active or not, and any phase the manifest and

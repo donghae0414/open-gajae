@@ -19,19 +19,19 @@ op 하나하나의 검사와 결과는 [ops.md](ops.md), 파일 모양은 [state
 
 ## 키워드와 멘션 안내
 
-`src/hooks.ts:859-1001`의 `prompt` 훅(v2 `prompt` 세션 훅)이 맡습니다.
+`src/hooks.ts:860-1002`의 `prompt` 훅(v2 `prompt` 세션 훅)이 맡습니다.
 
 ### 검사 순서
 
 1. **G1 역할 subagent**: 세션의 agent가 `ROLE_SUBAGENTS`(`src/hooks.ts:266-273`: planner, architect, critic, executor, cleaner, `open-gajae-lateral-reviewer`)면 아무것도 하지 않습니다. agent 조회가 실패하면 모르는 agent로 보고 계속합니다.
 2. **G2 주입 표식**: 프롬프트에 플러그인 주입 표식(`INJECTION_MARKERS`, `src/injection.ts:17`)이 있으면 무시합니다. 플러그인이 넣은 안내나 continuation이 다시 들어온 경우입니다.
-3. 실제 사용자 프롬프트로 보고 Esc 표식을 풉니다. 세션이 계보 루트면 deep-interview continuation 횟수를 0으로 돌리고(`src/hooks.ts:893`), goal 보류를 풉니다([guards-and-continuation.md](guards-and-continuation.md)).
+3. 실제 사용자 프롬프트로 보고 Esc 표식을 풉니다. 세션이 계보 루트면 deep-interview continuation 횟수를 0으로 돌리고(`src/hooks.ts:894`), goal 보류를 풉니다([guards-and-continuation.md](guards-and-continuation.md)).
 4. agent가 `open-gajae`가 아닌 문자열이면 여기서 끝납니다. 안내는 `open-gajae`(그리고 agent가 없거나 조회에 실패한 세션)에만 갑니다.
-5. 감지(`src/hooks.ts:907-920`):
+5. 감지(`src/hooks.ts:908-921`):
    - 멘션: `event.prompt.skills`에 id `deep-interview`가 있음
    - 키워드: `detectDeepInterviewKeyword`(`src/ralplan.ts:772-778`). OMC 정규식 `/\b(deep[\s-]interview|ouroboros)\b|(딥인터뷰)|(ディープインタビュー)/i`(`src/ralplan.ts:32-33`)에 OMC의 일반 가드(질문, 인용, 코드, 표, 블록 인용 같은 정보성 문맥은 제외)를 씁니다. ralplan과 달리 "실행해 달라"는 문맥은 요구하지 않습니다. 정리한 텍스트가 `ouroboros`·`ooo` CLI 꼴(`/^\s*\/?(?:ouroboros|ooo)\b/i`)로 시작하면 감지하지 않습니다.
 6. ralplan이나 deep-interview를 감지했으면 보이는 주 skill이 ultragoal인지 봅니다. 행을 읽을 수 없으면 아니라고 봅니다.
-7. 안내 고르기(`src/hooks.ts:979-994`):
+7. 안내 고르기(`src/hooks.ts:980-995`):
    - ultragoal이 주 skill이면 ultragoal 인계 안내만 냅니다. 턴 표식은 세우지 않습니다.
      ```
      [ULTRAGOAL ACTIVE] deep-interview was not started because an ultragoal run is active. To switch, call ultragoal handoff(to="deep-interview", reason); the goals and progress are kept and can be resumed later.
@@ -62,18 +62,18 @@ IMPORTANT: Start the deep-interview workflow immediately. If the `@deep-intervie
 
 `src/hooks.ts:383-389`의 `turnSkill`(세션 id → skill 이름)입니다(ultragoal 계획 C-10, gjc `session/agent-session.ts:7448,8038-8046`).
 
-- **세움**: guard를 지난 `skill` 호출(`markTurn`, `src/hooks.ts:820-824`)과 `@<skill>` 멘션.
-- **되돌림**: 그 `skill` 호출이 실패하면 `execute.after`가 이전 값으로 돌립니다(`src/hooks.ts:1102-1119`).
-- **지움**: execution이 끝날 때마다(`succeeded`, `failed`, `interrupted`) 지웁니다(`src/hooks.ts:1261`). 그래서 표식은 "이번 execution에서 로드한 skill"입니다.
+- **세움**: guard를 지난 `skill` 호출(`markTurn`, `src/hooks.ts:821-825`)과 `@<skill>` 멘션.
+- **되돌림**: 그 `skill` 호출이 실패하면 `execute.after`가 이전 값으로 돌립니다(`src/hooks.ts:1105-1122`).
+- **지움**: execution이 끝날 때마다(`succeeded`, `failed`, `interrupted`) 지웁니다(`src/hooks.ts:1264`). 그래서 표식은 "이번 execution에서 로드한 skill"입니다.
 - 표식은 호출한 세션 id 기준이고, 게이트의 판단은 그 세션의 계보 루트 상태로 합니다.
 
 ## `skill deep-interview` 로드
 
-`src/hooks.ts:1003-1094`의 `execute.before`에서 `skill` 호출(입력 `{id}`)을 봅니다.
+`src/hooks.ts:1004-1097`의 `execute.before`에서 `skill` 호출(입력 `{id}`)을 봅니다.
 
 1. 산출물 가드와 편집 가드는 `skill`과 상관이 없습니다(경로가 없음).
 2. id가 workflow skill(`ralplan`, `ultragoal`, `deep-interview`)이 아니면 끝.
-3. `deep-interview`는 ultragoal 분기가 아니므로 **체인 가드**(`src/hooks.ts:1058-1072`)로 갑니다. 보이는 주 skill이 ultragoal이면 거부합니다(행을 읽을 수 없으면 통과).
+3. `deep-interview`는 ultragoal 분기가 아니므로 **체인 가드**(`src/hooks.ts:1059-1073`)로 갑니다. 보이는 주 skill이 ultragoal이면 거부합니다(행을 읽을 수 없으면 통과).
    ```
    open-gajae: refusing to chain from "ultragoal" (phase=<phase>) into "deep-interview". Run ultragoal handoff(to: "deep-interview", reason) directly, or finish or clear the ultragoal run first.
    ```
@@ -157,8 +157,8 @@ deep-interview 자신이 활성이어도 `start`는 거부하지 않고 덮어�
 
 **배선** (`src/hooks.ts`):
 
-- `skill ralplan`: `execute.before`의 ⑤(`:1073-1089`). agent가 `open-gajae`이고 턴 표식이 `deep-interview`일 때만, ultragoal 체인 가드를 **지난 뒤** 루트의 트랜잭션 하나에서 `gateTx(tx, root, "ralplan")`를 부릅니다. 거부면 입력을 비워 막고, 아니면 턴 표식을 `ralplan`으로 세웁니다.
-- `skill ultragoal`: `ultragoalGate`(`:796-817`)의 맨 앞(`:800-804`). `skill ultragoal`은 agent가 `open-gajae`일 때만 게이트를 돕니다(`:1046`). 턴 표식이 `deep-interview`면 같은 트랜잭션에서 `gateTx(tx, root, "ultragoal")`를 부릅니다. 거부면 막고, 넘겼으면 ultragoal을 따로 시드하지 않고 끝내며, 통과면 기존 ultragoal 게이트로 갑니다. 표식이 `deep-interview`이므로 ralplan 분기는 건너뛰고 `seedUltragoalTx`가 `goal-planning`을 시드합니다(이미 활성인 ultragoal은 phase를 지킴).
+- `skill ralplan`: `execute.before`의 ⑤(`:1074-1092`). agent가 `open-gajae`이고 턴 표식이 `deep-interview`일 때만, ultragoal 체인 가드를 **지난 뒤** 루트의 트랜잭션 하나에서 `gateTx(tx, root, "ralplan")`를 부릅니다. 거부면 입력을 비워 막고, 아니면 턴 표식을 `ralplan`으로 세웁니다.
+- `skill ultragoal`: `ultragoalGate`(`:796-818`)의 맨 앞(`:800-805`). `skill ultragoal`은 agent가 `open-gajae`일 때만 게이트를 돕니다(`:1047`). 턴 표식이 `deep-interview`면 같은 트랜잭션에서 `gateTx(tx, root, "ultragoal")`를 부릅니다. 거부면 막고, 넘겼으면 ultragoal을 따로 시드하지 않고 끝내며, 통과면 기존 ultragoal 게이트로 갑니다. 표식이 `deep-interview`이므로 ralplan 분기는 건너뛰고 `seedUltragoalTx`가 `goal-planning`을 시드합니다(이미 활성인 ultragoal은 phase를 지킴).
 
 **판단** (`gateTx`, `src/deep-interview-runtime/hooks.ts:132-166`). phase는 `current_phase`를 trim하고 소문자로 바꾼 값이고, 없으면 `running`입니다(gjc `getActiveSkillPhase` → `(phase ?? "running").trim().toLowerCase()`).
 
@@ -171,7 +171,7 @@ deep-interview 자신이 활성이어도 `start`는 거부하지 않고 덮어�
 | `current_phase` 없음 | 거부, `phase=running` | 거부 | 거부 |
 | 활성 `handoff` | `deepInterviewHandoffTx`로 넘김. 그 검사(활성, phase, 스펙 확인)나 인계가 실패하면 `open-gajae: <오류>`로 거부 | 넘긴 뒤 로드: ralplan 활성 `planner` | 넘긴 뒤 로드: ultragoal 활성 `goal-planning` |
 | 비활성 `handoff` (이미 넘김) | 통과, 다시 넘기지 않음 | 로드됨 | 로드됨, 시드 경로 |
-| release phase(`complete`, `completed`, `failed`, `cancelled`, `canceled`, `inactive`), 활성이든 비활성이든 | 스펙 확인(`verifySpecTx`) 뒤 `handoffWorkflowTx`로 **연결**. 스펙이 없거나 확인·인계가 실패하면 통과 | 연결됐으면 ralplan `planner` + `handoff_from`, 아니면 그냥 로드 | 연결됐으면 `goal-planning` + `handoff_from`, 아니면 시드 경로 |
+| release phase(`complete`, `completed`, `failed`, `cancelled`, `canceled`, `inactive`), 활성이든 비활성이든 | 스펙 확인(`verifySpecTx`) 뒤 `handoffWorkflowTx`로 **연결**. 스펙이 없거나 확인·인계가 실패하면 통과하고, 이유를 `[open-gajae:hooks] finished deep-interview not linked to <skill>: <오류>`로 로그에 남김(계획 DR-21) | 연결됐으면 ralplan `planner` + `handoff_from`, 아니면 그냥 로드 | 연결됐으면 `goal-planning` + `handoff_from`, 아니면 시드 경로 |
 
 거부 문구(`chainRefusal`, `messages.ts:35-37`):
 
@@ -187,7 +187,7 @@ open-gajae: refusing to chain from "deep-interview" (phase=interviewing) into "r
 - **활성 callee도 되돌립니다** (PQ-36 C, K15). 공통 인계가 callee를 시작 phase로 씁니다. 진행 중인 ralplan(예: `architect`)은 `planner`로, 진행 중인 ultragoal은 `goal-planning`으로 돌아갑니다. 단계 파일과 `goals.json`은 남습니다. callee 쪽 감사에는 `invalid_transition_detected`가 먼저 남습니다. ultragoal이 보이는 주 skill인 동안에는 `skill deep-interview` 로드가 체인 가드에 막히고 `@deep-interview` 멘션은 ultragoal 인계 안내만 받으므로(턴 표식 없음), ultragoal 쪽 경우는 ultragoal 행이 없어진 상태에서만 일어납니다.
 - **결과 줄이 없습니다** (PQ-35 A). 게이트는 로드를 통과시킬 뿐 모델에게 넘기기를 알리지 않습니다. 그래서 ralplan SKILL(`skills/ralplan/SKILL.md:17`)과 ultragoal SKILL(`skills/ultragoal/SKILL.md:403`)은 상태에 `handoff_from: "deep-interview"`가 있고 결과 줄을 못 봤으면 `deep-interview status`의 `spec_path`를 읽으라고 합니다.
 - **게이트가 돌지 않는 경우**: 이전 execution에서 로드한 deep-interview(턴 표식이 지워짐, K1), `open-gajae`가 아닌 agent의 로드(테스트 H3), ultragoal이 주 skill이라 체인 가드가 먼저 막은 `skill ralplan`.
-- **예외**: `gateTx`는 넘기기 안의 실패(스펙 확인, callee 손상, 행 파일 손상 등)를 모두 잡아 위 표대로 거부나 통과로 바꿉니다. 그 밖에서 예외가 나면(예: 계보 조회 실패, 세션 폴더를 정할 수 없음, `skill ultragoal`의 이어지는 시드가 실패) `execute.before`가 로그만 남기고 호출을 통과시킵니다(`src/hooks.ts:1091-1093`). 이때 턴 표식은 세우지 않습니다.
+- **예외**: `gateTx`는 넘기기 안의 실패(스펙 확인, callee 손상, 행 파일 손상 등)를 모두 잡아 위 표대로 거부나 통과로 바꿉니다. 그 밖에서 예외가 나면(예: 계보 조회 실패, 세션 폴더를 정할 수 없음, `skill ultragoal`의 이어지는 시드가 실패) `execute.before`가 로그만 남기고 호출을 통과시킵니다(`src/hooks.ts:1094-1096`). 이때 턴 표식은 세우지 않습니다.
 - **감사 owner**: 게이트가 쓰는 행은 모두 `open-gajae-hook`, writer는 `deep_interview_hook`입니다.
 
 ### `ralplan handoff(to:"deep-interview")`

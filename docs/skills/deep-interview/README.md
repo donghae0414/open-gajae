@@ -2,7 +2,7 @@
 
 이 폴더는 open-gajae `deep-interview`가 **지금 코드에서 어떻게 동작하는지**를 단계별로 적은 문서입니다.
 
-- **기준 코드**: 브랜치 `feat/deep-interview-gjc-revision` (S3c). 코드 위치는 이 기준 코드의 `path:line`으로 적습니다.
+- **기준 코드**: 브랜치 `feat/deep-interview-gjc-revision`(S3c, 그리고 S4 뒤 Architect 리뷰를 반영한 커밋). 코드 위치는 이 기준 코드의 `path:line`으로 적습니다.
 - **참조한 gajae-code(gjc)**: `5c5231418930673e42cc5d08ebe4376e03187533`. gjc 줄 번호는 각 open-gajae 파일의 머리말 주석이 적은 값을 옮긴 것이고, 이 문서를 쓰며 gjc 소스로 다시 확인하지는 않았습니다.
 
 다른 문서와는 이렇게 나뉩니다.

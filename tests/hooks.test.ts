@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
 import { promises as fs } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -2011,7 +2011,16 @@ test("(H3) the load gate in the deep-interview execution: refuse, hand off, link
     await writeFile(join(await store.resolveSessionDir(m), "specs", "deep-interview-s.md"), "edited\n");
     const before = await stateOf(store, m, DEEP_INTERVIEW_MODE);
     await load(hooks, m, "deep-interview");
-    expect((await load(hooks, m, "ralplan")).input).toEqual({ id: "ralplan" });
+    // DR-21: the failed link is logged, not refused.
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect((await load(hooks, m, "ralplan")).input).toEqual({ id: "ralplan" });
+      expect(warn.mock.calls.map((call) => String(call[0]))).toContainEqual(
+        expect.stringContaining("finished deep-interview not linked to ralplan: "),
+      );
+    } finally {
+      warn.mockRestore();
+    }
     expect(await stateOf(store, m, "ralplan")).toBeUndefined();
     expect(await stateOf(store, m, DEEP_INTERVIEW_MODE)).toEqual(before);
     expect((await load(hooks, m, "ultragoal")).input).toEqual({ id: "ultragoal" });
