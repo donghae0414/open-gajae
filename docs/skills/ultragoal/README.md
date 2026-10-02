@@ -1,6 +1,6 @@
 # ultragoal 동작 문서
 
-이 폴더는 open-gajae `ultragoal`이 **지금 코드에서 어떻게 동작하는지**를 단계별로 적은 문서입니다. 기준은 브랜치 `feat/ultragoal-gjc-revision`의 커밋 `9b5d4f9`이고, 참조한 gajae-code(gjc)는 `5c5231418930673e42cc5d08ebe4376e03187533`입니다. open-gajae 코드 위치는 파일과 함수·상수 이름으로 가리키고 줄 번호는 적지 않습니다. gjc와 OpenCode 호스트 코드는 고정 커밋 기준 줄 번호로 가리킬 때가 있습니다.
+이 폴더는 open-gajae `ultragoal`이 **지금 코드에서 어떻게 동작하는지**를 단계별로 적은 문서입니다. 기준은 브랜치 `feat/ultragoal-gjc-revision`의 커밋 `9b5d4f9`이고, 참조한 gajae-code(gjc)는 `5c5231418930673e42cc5d08ebe4376e03187533`입니다. 2026-10-02 deep-interview gjc 개정(브랜치 `feat/deep-interview-gjc-revision`)이 바꾼 곳(deep-interview와의 인계, 진입 게이트, 상태 도구 삭제, 이어가기 순서, `ralplan start` 거부)은 그 브랜치 기준으로 고쳤습니다. open-gajae 코드 위치는 파일과 함수·상수 이름으로 가리키고 줄 번호는 적지 않습니다. gjc와 OpenCode 호스트 코드는 고정 커밋 기준 줄 번호로 가리킬 때가 있습니다.
 
 다른 문서와는 이렇게 나뉩니다.
 

@@ -321,10 +321,11 @@ v2 호스트에는 `session.idle`이 없습니다. 루프는 `ctx.event.subscrib
 1. 같은 세션에 continuation이 진행 중(`inFlight`)이면 건너뜀. 같은 `succeeded`가 겹쳐도 하나만 들어갑니다.
 2. Esc 표지(`interrupted`)가 있으면 건너뜀. 파일에 아무것도 쓰지 않으므로 도구 없는 턴도 세지 않습니다.
 3. 실행 중인 자식(`running`)이 있으면 건너뜀. 자식이 끝나면 호스트가 부모를 다시 돌리고, 그 `succeeded`를 새로 판단합니다(코드 주석, OMC `persistent-mode`).
-4. `goal.decideContinuation(sessionID, toolCallsOf(sessionID))`. 예외가 나면 로그(`goal continuation failed`)만 남기고 **ralplan 경로도 돌지 않습니다**.
-5. 결과가 `message`면 `inject(sessionID, text, description, resume)`하고 끝.
-6. 결과가 `held`면 아무것도 넣지 않고 끝. ralplan도 돌지 않습니다(I-6).
-7. 결과가 `inactive`면 `decideRalplan`. ralplan이 보이는 주 skill(active 행 순위로 정해지는 skill)일 때만 ralplan continuation(`<ralplan-continuation>`)이나 breaker 알림을 넣습니다(PQ-7 B).
+4. deep-interview가 먼저 판단합니다(`src/deep-interview-runtime/hooks.ts`의 `decideContinuation`, deep-interview 편차 16). deep-interview가 보이는 주 skill이고 `interviewing`에 활성이면 진짜 사용자 프롬프트마다 두 번까지 이어가기를 넣고 끝(`open-gajae: deep-interview continuation N/2`). 두 번을 다 썼거나 `handoff`에 활성이면 아무것도 넣지 않고 끝(goal도 ralplan도 돌지 않음). 그 밖이거나 판단이 예외로 실패하면 다음 단계로 갑니다.
+5. `goal.decideContinuation(sessionID, toolCallsOf(sessionID))`. 예외가 나면 로그(`goal continuation failed`)만 남기고 **ralplan 경로도 돌지 않습니다**.
+6. 결과가 `message`면 `inject(sessionID, text, description, resume)`하고 끝.
+7. 결과가 `held`면 아무것도 넣지 않고 끝. ralplan도 돌지 않습니다(I-6).
+8. 결과가 `inactive`면 `decideRalplan`. ralplan이 보이는 주 skill(active 행 순위로 정해지는 skill)일 때만 ralplan continuation(`<ralplan-continuation>`)이나 breaker 알림을 넣습니다(PQ-7 B).
 
 `inject`는 `session.synthetic`이 실패해도 던지지 않고 로그(`continuation synthetic failed`)만 남기며, 다시 시도하지 않습니다. `goal-continuation.json`은 `decideContinuation` 안에서 이미 쓰였으므로:
 
@@ -392,9 +393,10 @@ If every outstanding deliverable is genuinely blocked on human input or action o
 
 TUI 줄: `open-gajae: goal continuation`. `resume: true`이므로 호스트가 새 execution을 시작합니다.
 
-### ralplan continuation과의 순서
+### deep-interview·ralplan continuation과의 순서
 
-- goal이 `active`면 goal 경로만 턴을 맡습니다. 보류 중이어도 마찬가지입니다(D-TL6).
+- deep-interview가 보이는 주 skill이고 `interviewing`이나 `handoff`에 활성이면 deep-interview가 턴을 맡고 goal 경로는 건너뜁니다. D-TL6의 예외입니다(deep-interview 편차 16). 예: `ultragoal handoff(to: "deep-interview")` 뒤에는 goal이 `active`여도 인터뷰가 끝나거나 넘겨질 때까지 goal continuation이 들어오지 않습니다.
+- 그 밖에 goal이 `active`면 goal 경로만 턴을 맡습니다. 보류 중이어도 마찬가지입니다(D-TL6).
 - goal이 `active`가 아닐 때만 ralplan continuation을 판단하고, 그것도 ralplan이 보이는 주 skill일 때만입니다(PQ-7 B).
 - 예: `ultragoal handoff(to: "ralplan")` 뒤에도 goal은 그대로 `active`이므로 ralplan 계획 중에도 goal continuation이 계속 들어오고, ralplan continuation은 돌지 않습니다([entry-and-handoff.md](entry-and-handoff.md)).
 - 테스트 (A): goal이 `paused`, `complete`, `dropped`, 손상이면 ralplan continuation(`REINFORCEMENT n/30`)이 들어갑니다.

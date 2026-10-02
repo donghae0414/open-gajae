@@ -882,7 +882,7 @@ ultragoal을 ralplan이나 deep-interview로 넘깁니다. `handoffTx`가 맡고
   6. 저널 완료
 
   goal은 건드리지 않습니다. reconcile도 하지 않습니다.
-- **결과**: 한 줄 JSON입니다. `phases.to`는 ralplan이면 `planner`, deep-interview면 `deep-interview`입니다.
+- **결과**: 한 줄 JSON입니다. `phases.to`는 ralplan이면 `planner`, deep-interview면 `interviewing`입니다.
   ```json
   {"ok":true,"from":"ultragoal","to":"<to>","handoff_at":"<at>","mutation_id":"ultragoal:handoff:<to>:<at>","phases":{"from":"handoff","to":"<callee 첫 단계>"},"paths":{"from":"<ultragoal-state.json>","to":"<callee state 파일>","active_state":"<skill-active-state.json>"}}
   ```

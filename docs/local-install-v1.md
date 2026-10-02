@@ -5,6 +5,7 @@ OpenCode v2로 넘어가면서 로컬 OpenCode 설정에서 뺀 open-gajae 항�
 - 기록 시점: 2026-09-23
 - 호스트: OpenCode v1 1.18.31 (`~/.opencode/bin/opencode`, 공식 설치 스크립트)
 - 플러그인: open-gajae `main` e47b4c1, v1 플러그인 API `@opencode-ai/plugin` 1.18.30
+- 갱신: 2026-10-02, deep-interview gjc 개정(브랜치 `feat/deep-interview-gjc-revision`)에서 지금 플러그인에 없는 설정 key 두 줄(라운드 상한, 회사 맥락)을 2절 표에서 지우고, 3절 도구 목록의 상태 도구 이름을 "옛 상태 도구 3개(`state_*`)"로 바꿨습니다. 나머지는 기록 시점 그대로입니다.
 
 현재 open-gajae는 v1 플러그인입니다. v2 호스트는 v1 플러그인을 로드하지 않습니다(`Plugin must export a default definition with an id and an effect or setup function.`). 아래 항목은 **v1 호스트에서만** 다시 넣을 수 있습니다. v2 전환 뒤의 설치 방법은 v2 이식이 끝난 뒤 따로 정합니다.
 
@@ -56,9 +57,7 @@ OpenCode v2로 넘어가면서 로컬 OpenCode 설정에서 뺀 open-gajae 항�
 | 키 | 기본값 | 내용 |
 |---|---|---|
 | `deepInterview.ambiguityThreshold` | `0.2` | spec을 저장할 모호도 임계값 |
-| `deepInterview.maxRounds` | `20` | 최대 인터뷰 라운드 |
 | `agents.<이름>` | 없음 | 역할별 `model`/`variant`. 로컬에서는 primary·explore에 `openai/gpt-5.6-luna`, planner·architect·critic에 `openai/gpt-5.6-terra`를 씁니다. |
-| `companyContext` | `{ "onError": "warn" }` | 회사 맥락 MCP. `tool`을 생략하면 호출하지 않습니다. |
 
 로컬 파일에 있는 `open-gajae-executor`, `open-gajae-qa-tester` 항목은 ultragoal WIP용입니다.
 
@@ -73,7 +72,7 @@ OpenCode v2로 넘어가면서 로컬 OpenCode 설정에서 뺀 open-gajae 항�
 - **스킬 경로**: 패키지의 `skills/`를 `skills.paths`에 추가합니다.
 - **`subagent_depth`**: 최소 2로 올립니다. 사용자가 더 큰 값을 넣었으면 그대로 둡니다.
 - **권한**: 전역이나 primary에 `question` 권한 설정이 없으면 primary에 `question: allow`를 넣습니다.
-- **도구 8개**: `state_read`, `state_write`, `state_clear`, `ast_grep_search`, `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`.
+- **도구 8개**: 옛 상태 도구 3개(`state_*`), `ast_grep_search`, `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`.
 - **훅**: `event`, `chat.message`, `tool.execute.before`, `command.execute.before`.
 
 작업 산출물은 `<worktree>/.open-gajae/_session-<생성 시각>-<세션 ID>/` 아래에 저장됩니다.

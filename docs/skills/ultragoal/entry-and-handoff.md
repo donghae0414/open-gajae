@@ -9,7 +9,7 @@
 | 용어 | 뜻 | 코드 |
 |---|---|---|
 | 계보 루트 (lineage root) | subagent는 자식 세션에서 돕니다. 부모를 끝까지 따라 올라간 첫 세션이 계보 루트입니다. workflow 파일은 모두 계보 루트의 세션 폴더(`.open-gajae/_session-<created>-<id>/`)에 있습니다. 조회가 실패하면 예외를 던집니다(fail closed). | `src/hooks.ts`의 `rootSession` |
-| 보이는 주 skill (visible primary skill) | 활성 행(`state/active/<skill>.json`) 중 순위가 가장 높은 것. 순위는 `deep-interview → ralplan → ultragoal` 순으로 아래쪽이 이깁니다. `src/hooks.ts`에서 이 값을 읽는 곳은 셋입니다: `goal-planning`·ralplan 계획 가드(`guardPlanning`), ralplan continuation(`decideRalplan`), `visiblePrimary`(프롬프트의 handoff 안내 판정과 체인 가드). 인계 함수(`handoffWorkflowTx`, `ralplanHandoffTx`, `handoffTx`), 진입 게이트(`ultragoalGate`: 턴 표식과 ralplan state로 판단), goal continuation(`decideContinuation`)은 읽지 않습니다. 계산 방법은 [state-and-files.md](state-and-files.md)의 "보이는 주 스킬" 절에 있습니다. | `src/skill-state/rows.ts`의 `readVisiblePrimaryTx` |
+| 보이는 주 skill (visible primary skill) | 활성 행(`state/active/<skill>.json`) 중 순위가 가장 높은 것. 순위는 `deep-interview → ralplan → ultragoal` 순으로 아래쪽이 이깁니다. `src/hooks.ts`에서 이 값을 읽는 곳은 셋입니다: `goal-planning`·ralplan·deep-interview 계획 가드(`guardPlanning`), ralplan continuation(`decideRalplan`), `visiblePrimary`(프롬프트의 handoff 안내 판정과 체인 가드). deep-interview 쪽에서는 이어가기 판단(`src/deep-interview-runtime/hooks.ts`)과 `deep-interview start`의 거부 판단(`src/deep-interview-runtime/store.ts`)이 읽습니다. 인계 함수(`handoffWorkflowTx`, `ralplanHandoffTx`, `handoffTx`), 진입 게이트(`ultragoalGate`: 턴 표식과 ralplan state로 판단), goal continuation(`decideContinuation`)은 읽지 않습니다. 계산 방법은 [state-and-files.md](state-and-files.md)의 "보이는 주 스킬" 절에 있습니다. | `src/skill-state/rows.ts`의 `readVisiblePrimaryTx` |
 | execution | 호스트가 한 번 모델을 돌리는 단위. `session.execution.started`로 시작해 `succeeded`·`failed`·`interrupted` 중 하나로 끝납니다. | `src/hooks.ts`의 `onEvent` |
 | 턴 표식 (turn marker) | 지금 execution에서 불러온 workflow skill 이름. 아래 [턴 표식](#턴-표식) 절을 보세요. | `src/hooks.ts`의 `turnSkill` |
 | T | ralplan의 "끝난 단계" 집합: `final, handoff, complete, completed, failed, cancelled, canceled, inactive`. | `src/ralplan-runtime/manifest.ts`의 `TERMINAL_PHASES` |
@@ -168,6 +168,11 @@ D  skill 처리          tool이 "skill"이고 입력의 id가 workflow skill인
 `src/hooks.ts`의 `ultragoalGate`. 계보 루트의 `workflowTransaction` 하나 안에서 돕니다. 턴 표식은 **호출한 세션**의 값을 봅니다.
 
 ```
+표식 == "deep-interview" ?
+ ├ 예 → deep-interview 로드 게이트 gateTx(tx, root, "ultragoal")
+ │       거부(interviewing, 모르는 phase, 활성 handoff의 인계 실패) → 로드 거부
+ │       인계함(활성 handoff, 또는 끝난 인터뷰 + 유효 spec) → 로드 진행(시드는 하지 않음)
+ │       통과(state 없음·읽기 실패, 비활성 handoff, 유효 spec 없는 끝난 인터뷰) → 아래로
 표식 == "ralplan" ?
  ├ 예 → ralplan state 읽기(읽기 실패는 "없음"으로)
  │       active == true 이고 phase가 알려진 단계(isKnownPhase)인가?
@@ -178,6 +183,10 @@ D  skill 처리          tool이 "skill"이고 입력의 id가 workflow skill인
  │       그 밖(비활성, 없음, 읽기 실패, 모르는 phase) → 아래 시드로
  └ 아니오 → seedUltragoalTx(tx, root, HOOK_OWNER) → 로드 진행
 ```
+
+deep-interview 로드 게이트는 deep-interview 개정에서 더했습니다(`src/deep-interview-runtime/hooks.ts`의 `gateTx`, 그 개정 계획의 DR-21, PQ-11 E/B, PQ-36 C, U-1 A). 거부 문구는 `open-gajae: refusing to chain from "deep-interview" (phase=<phase>) into "ultragoal". …`입니다. 자세한 내용은 [deep-interview 문서](../deep-interview/entry-and-handoff.md)에 있습니다.
+
+**활성 run이 `goal-planning`으로 돌아가는 예외**(ultragoal SKILL `:10`, PQ-36 C): 같은 execution에서 `skill deep-interview`를 불렀고 그 인터뷰가 유효 spec과 함께 끝나 있으면, 게이트가 deep-interview → ultragoal 인계를 합니다. 이 인계는 callee를 언제나 초기 단계로 쓰므로, ultragoal이 이미 실행 중(`pending`, `active` 등)이어도 `goal-planning`으로 돌아갑니다. 그러면 `create` 전까지 제품 `write`/`edit`/`patch`가 거부되고, `create`가 `goals.json`을 덮어씁니다(ledger와 `progress.txt`는 남음). goal은 그대로라 goal 루프는 계속 돕니다. 아래 시드의 "실행 중이면 phase 유지"는 이 경로에는 적용되지 않습니다. 알려진 한계는 [deep-interview known-limits](../deep-interview/known-limits.md) K15입니다.
 
 거부 문구(`src/ralplan-runtime/store.ts`의 `RALPLAN_RUNNING_REFUSAL`):
 
@@ -368,7 +377,7 @@ Handed off to ultragoal: ralplan is inactive (phase handoff) and ultragoal is ac
 
 ## `ultragoal handoff(to, reason)`
 
-gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(인계), `skill-state/active-state.ts:969-1015`(행). 편차: ultragoal 33(deep-interview callee의 단계와 행 없음), 39(원장 `workflow_handoff`), 1(`progress.txt`의 `HANDOFF` 메모). gjc의 `gjc state ultragoal handoff` 동사가 `ultragoal` 도구의 op가 된 것은 `src/ultragoal-runtime/tool.ts` 헤더가 편차 25로 묶지만, 루트 README의 편차 25 행은 `doctor`, `state`, `clear`만 적습니다.
+gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(인계), `skill-state/active-state.ts:969-1015`(행). 편차: ultragoal 39(원장 `workflow_handoff`), 1(`progress.txt`의 `HANDOFF` 메모). deep-interview callee의 단계와 행을 다르게 쓰던 ultragoal 편차 33은 deep-interview 개정에서 철회되었습니다. gjc의 `gjc state ultragoal handoff` 동사가 `ultragoal` 도구의 op가 된 것은 `src/ultragoal-runtime/tool.ts` 헤더가 편차 25로 묶지만, 루트 README의 편차 25 행은 `doctor`, `state`, `clear`만 적습니다.
 
 ### 입력
 
@@ -399,10 +408,10 @@ gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(인계), `skill-state/activ
 
 | 대상 | `to: "ralplan"` | `to: "deep-interview"` |
 |---|---|---|
-| callee state | `state/ralplan-state.json`: 기존 필드 유지(`run_id` 등) + `active: true`, `current_phase: "planner"`, `handoff_from: "ultragoal"`, `handoff_at` | `state/deep-interview-state.json`: 기존 필드 유지 + `active: true`, `current_phase: "deep-interview"`, `handoff_from: "ultragoal"`, `handoff_at` |
+| callee state | `state/ralplan-state.json`: 기존 필드 유지(`run_id` 등) + `active: true`, `current_phase: "planner"`, `handoff_from: "ultragoal"`, `handoff_at` | `state/deep-interview-state.json`: 기존 필드 유지(`rounds`, `spec_*` 등) + `active: true`, `current_phase: "interviewing"`, `handoff_from: "ultragoal"`, `handoff_at` |
 | ultragoal state | 기존 필드 유지 + `active: false`, `current_phase: "handoff"`, `handoff_to`, `handoff_at` | 같음 |
-| 활성 행 | ultragoal 비활성 `handoff_to` 행, ralplan 활성 `planner` 행 | ultragoal 비활성 `handoff_to` 행만. deep-interview 행은 쓰지 않음 |
-| 보이는 주 skill | ralplan | 없음(스냅숏 `active: false`, `skill: ""`) |
+| 활성 행 | ultragoal 비활성 `handoff_to` 행, ralplan 활성 `planner` 행 | ultragoal 비활성 `handoff_to` 행, deep-interview 활성 `interviewing` 행 |
+| 보이는 주 skill | ralplan | deep-interview |
 | 원장 `ultragoal/ledger.jsonl` | `{"event":"workflow_handoff","to":"ralplan","reason":…}` 한 줄(`eventId`, `timestamp` 포함) | `to: "deep-interview"`로 같음 |
 | `ultragoal/progress.txt` | `HANDOFF` 메모 추가 | 같음 |
 | `ultragoal/goals.json` | 그대로 | 그대로 |
@@ -433,23 +442,23 @@ gjc 쓰기 영수증 형식의 한 줄 JSON입니다(`renderWriteReceipt`, 값�
 
 ### 인계 뒤
 
-**goal은 그대로입니다.** 그래서 활성 goal이 있으면 인계 뒤에도 goal continuation이 평소 규칙대로 들어옵니다. 평소 규칙이란, 계보 루트 세션의 `session.execution.succeeded`에서만 판단하고, Esc 뒤(다음 사용자 프롬프트까지), 자식 execution이 돌고 있는 동안, 보류 중에는 건너뛰는 것입니다. goal이 활성인 동안은 goal 경로만 돌고 ralplan continuation은 판단하지 않습니다(D-TL6). 자세한 조건은 [goal-loop.md](goal-loop.md)에 있습니다. SKILL도 "goal continuation keeps prompting while you plan"이라고 적습니다.
+**goal은 그대로입니다.** 그래서 활성 goal이 있으면 인계 뒤에도 goal continuation이 평소 규칙대로 들어옵니다. 평소 규칙이란, 계보 루트 세션의 `session.execution.succeeded`에서만 판단하고, Esc 뒤(다음 사용자 프롬프트까지), 자식 execution이 돌고 있는 동안, 보류 중에는 건너뛰는 것입니다. goal이 활성인 동안은 goal 경로만 돌고 ralplan continuation은 판단하지 않습니다(D-TL6). 예외는 deep-interview로 넘긴 경우입니다: deep-interview가 `interviewing`이나 `handoff`에 활성인 동안은 deep-interview가 턴을 맡고 goal 경로는 건너뜁니다(deep-interview 편차 16). 자세한 조건은 [goal-loop.md](goal-loop.md)에 있습니다. SKILL도 "goal continuation keeps prompting while you plan in ralplan; while deep-interview is active, the interview's own continuation takes the turn instead"라고 적습니다.
 
 ralplan으로 넘긴 뒤:
 
 - 체인 가드가 풀려 `skill ralplan`을 불러올 수 있습니다(주 skill이 ralplan).
-- 넘겨받은 ralplan run은 `planner`에서 활성이고 `run_id`를 그대로 가집니다. SKILL은 `ralplan start`를 부르지 말고 `ralplan write`로 이어 쓰라고 합니다. **코드는 `start`를 막지 않습니다.** `ralplan start`의 거부는 ultragoal state가 `active: true`일 때뿐인데 인계로 비활성이 됐기 때문입니다. 부르면 인계 메타가 사라집니다([known-limits.md](known-limits.md) U13).
+- 넘겨받은 ralplan run은 `planner`에서 활성이고 `run_id`를 그대로 가집니다. SKILL은 `ralplan start`를 부르지 말고 `ralplan write`로 이어 쓰라고 합니다. 코드도 `start`를 거부합니다: `ralplan start`는 ralplan state가 `active: true`이면 run과 인계 메타를 그대로 두고 거부합니다(ralplan 편차 39, [known-limits.md](known-limits.md) U13).
 - 계획이 끝나면 `ralplan handoff(to="ultragoal")`(또는 `skill ralplan`을 부른 같은 execution의 `skill ultragoal`)로 돌아옵니다. ultragoal은 `goal-planning`으로 돌아가고, `create`가 `goals.json`을 새로 씁니다.
 
 deep-interview로 넘긴 뒤:
 
-- 보이는 주 skill이 없으므로 체인 가드, `goal-planning` 가드, ralplan continuation이 모두 걸리지 않습니다.
-- deep-interview에는 ultragoal로 돌려주는 인계 op가 없습니다. deep-interview state를 끄는 것은 deep-interview 쪽 도구(`state_write`/`state_clear`)의 몫이고, ultragoal 코드는 건드리지 않습니다. deep-interview SKILL은 **Finish with this specification**과 **Refine with ralplan consensus**에서 `active: false`, `current_phase: "completed"`로 저장하라고 지시합니다. 행 설계는 [known-limits.md](known-limits.md) U34입니다.
-- ultragoal SKILL의 "Handoff back to planning"은 돌아오는 길로 `ralplan handoff(to="ultragoal")`만 적고, ralplan이나 deep-interview를 진행하는 동안 `ultragoal` op를 부르지 말라고 합니다. deep-interview에서 ultragoal로 곧바로 돌아오는 단계는 어느 SKILL에도 없습니다. SKILL을 따르는 경로는 deep-interview의 **Refine with ralplan consensus** → `skill ralplan`(주 skill이 없어 체인 가드가 통과) → `ralplan start`(ultragoal이 비활성이라 허용) → `final` → `ralplan handoff(to="ultragoal")`입니다. 코드상으로는 이 밖에 `skill ultragoal` 로드(비활성 state를 `goal-planning`으로 올림)와 아래의 reconcile op로도 돌아올 수 있습니다.
+- 보이는 주 skill은 deep-interview입니다. deep-interview 편집 가드와 deep-interview 이어가기가 걸리고, 이어가기는 goal 루프보다 먼저 판단합니다: deep-interview가 `interviewing`이나 `handoff`에 활성인 동안 goal 루프는 건너뜁니다(deep-interview 편차 16). `goal-planning` 가드, ultragoal 체인 가드, ralplan continuation은 걸리지 않습니다.
+- 넘겨받은 인터뷰는 `deep-interview start` 없이 `deep-interview write`로 이어 씁니다. 라운드와 spec 필드는 병합으로 남습니다. deep-interview state는 `deep-interview` 도구만 바꿉니다.
+- 돌아오는 길은 `deep-interview handoff(to: "ultragoal")`(spec을 `deep-interview spec`으로 저장한 뒤), 또는 Phase 5의 **Refine with ralplan consensus** → `deep-interview handoff(to: "ralplan")` → `ralplan write`로 이어 쓰기 → `final` → `ralplan handoff(to="ultragoal")`입니다. ultragoal SKILL의 "Handoff back to planning"도 두 길을 적고, ralplan이나 deep-interview를 진행하는 동안 `ultragoal` op를 부르지 말라고 합니다. 코드상으로는 이 밖에 같은 execution의 `skill ultragoal` 로드(위 진입 게이트)와 아래의 reconcile op로도 돌아올 수 있습니다.
 
 두 경우 모두, 넘긴 뒤 `ultragoal` op를 부르면 조심해야 합니다. reconcile을 하는 op(`status` 포함)의 결과는 `goals.json`에 달려 있습니다(`reconcileUltragoalTx`: `active = file !== undefined && status !== "complete"`).
 
-- `goals.json`이 있고 완료가 아니면: ultragoal이 그 계획의 단계로 다시 활성이 되고, `syncActiveRowTx`가 활성 행을 쓰면서 윗단계 행(ralplan, 있으면 deep-interview)을 지웁니다. ralplan state는 활성으로 남습니다. deep-interview로 넘긴 경우에는 지울 deep-interview 행이 원래 없습니다.
+- `goals.json`이 있고 완료가 아니면: ultragoal이 그 계획의 단계로 다시 활성이 되고, `syncActiveRowTx`가 활성 행을 쓰면서 윗단계 행(ralplan, deep-interview)을 지웁니다. ralplan state나 deep-interview state는 활성으로 남습니다.
 - `goals.json`이 없으면(`status`, `classify_blocker`만 여기까지 옴): `missing`, `active: false`가 되고 ultragoal 자신의 행만 지웁니다. 다른 행은 그대로입니다.
 - 계획이 완료면: `complete`, `active: false`로 ultragoal 행만 지웁니다.
 
@@ -459,7 +468,7 @@ SKILL은 "do not call `ultragoal` ops"라고 적어 두었을 뿐 **코드는 �
 
 gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(`handleHandoffUnlocked`), `gjc-runtime/state-writer.ts:1009-1068`(감사용 `invalid_transition_detected`), `skill-state/initial-phase.ts:13-19`, `skill-state/active-state.ts:969-1015`(`applyHandoffToActiveState`), 저널은 `gjc-runtime/state-writer.ts:82-92,1590-1640`. 편차: ultragoal 33·39, ralplan 17(봉투 영수증·체크섬·`state_revision` 없음), 영수증에 gjc의 state별 영수증 대신 `mutation_id`. "`--force`가 없어 깨진 state는 거부"는 `src/skill-state/handoff.ts` 헤더가 ralplan 17 아래에 함께 적은 것이고, 루트 README의 ralplan 17 행에는 없습니다.
 
-`src/skill-state/handoff.ts`의 `handoffWorkflowTx`는 세 입구가 함께 쓰는 인계 하나입니다: `ralplan handoff` op, `skill ultragoal` 진입 게이트, `ultragoal handoff` op. 호출하는 쪽이 제 검사를 먼저 합니다(ralplan: T 단계와 `active`). 이 함수는 goal state를 건드리지 않습니다(D-HE2). 받는 `tx`는 `StateStore.workflowTransaction` 하나의 것이고, 그 트랜잭션은 세션의 쓰기 큐 하나를 잡고 있는 동안 파일을 **바로** 씁니다. 되돌리기(rollback)는 없습니다.
+`src/skill-state/handoff.ts`의 `handoffWorkflowTx`는 모든 인계 입구가 함께 쓰는 인계 하나입니다: `ralplan handoff` op, `skill ultragoal` 진입 게이트, `ultragoal handoff` op, 그리고 deep-interview 개정에서 더한 `deep-interview handoff` op, 결합 호출 `deep-interview spec(…, handoff: "ralplan")`, deep-interview 로드 게이트(`skill ralplan`·`skill ultragoal`). 호출하는 쪽이 제 검사를 먼저 합니다(ralplan: T 단계와 `active`, deep-interview: phase와 spec 검증). 이 함수는 goal state를 건드리지 않습니다(D-HE2). 받는 `tx`는 `StateStore.workflowTransaction` 하나의 것이고, 그 트랜잭션은 세션의 쓰기 큐 하나를 잡고 있는 동안 파일을 **바로** 씁니다. 되돌리기(rollback)는 없습니다.
 
 ### 단계
 
@@ -474,7 +483,7 @@ gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(`handleHandoffUnlocked`), `
    저널 steps ["callee-mode-state"]                       감사 write-transaction-journal
 ④ caller state 쓰기                                     감사 handoff
    저널 steps [… "caller-mode-state"]                     감사 write-transaction-journal
-⑤ 활성 행: caller 비활성 행, callee 활성 행(deep-interview 제외), 스냅숏
+⑤ 활성 행: caller 비활성 행, callee 활성 행, 스냅숏
                                                          감사 write-active-entry ×1~2, rebuild-active-snapshot
    저널 steps [… "active-state"]                          감사 write-transaction-journal
 ⑥ recordCaller (ultragoal caller만): 원장 workflow_handoff, progress HANDOFF
@@ -494,7 +503,7 @@ gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(`handleHandoffUnlocked`), `
 | `skill` | callee 이름 | caller 이름 |
 | `version` | `2` | `2` |
 | `active` | `true` | `false` |
-| `current_phase` | 초기 단계: ralplan `planner`, ultragoal `goal-planning`, deep-interview `deep-interview` | `handoff` |
+| `current_phase` | 초기 단계: ralplan `planner`, ultragoal `goal-planning`, deep-interview `interviewing` | `handoff` |
 | `handoff_from` | caller 이름 | (건드리지 않음) |
 | `handoff_to` | (건드리지 않음) | callee 이름 |
 | `handoff_at`, `updated_at` | `at` | `at` |
@@ -502,7 +511,7 @@ gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(`handleHandoffUnlocked`), `
 | 그 밖 | 모두 유지 | 모두 유지 |
 | `_meta.updatedBy` | caller의 쓰는 주체 | 같음 |
 
-`_meta.updatedBy`는 caller와 owner로 정합니다(`WRITERS`): ralplan caller는 `ralplan_tool`/`ralplan_hook`, ultragoal caller는 `ultragoal_tool`/`ultragoal_hook`.
+`_meta.updatedBy`는 caller와 owner로 정합니다(`WRITERS`): ralplan caller는 `ralplan_tool`/`ralplan_hook`, ultragoal caller는 `ultragoal_tool`/`ultragoal_hook`, deep-interview caller는 `deep_interview_tool`/`deep_interview_hook`.
 
 지우는 필드가 없으므로 왕복하면 이전 인계 필드가 남습니다. 예: ultragoal → ralplan → ultragoal을 거치면 ultragoal state에 옛 `handoff_to: "ralplan"`과 새 `handoff_from: "ralplan"`이 함께 있습니다.
 
@@ -511,19 +520,21 @@ gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(`handleHandoffUnlocked`), `
 callee state를 쓸 때 조건이 모두 맞으면, `handoff` 감사 행보다 먼저 `invalid_transition_detected` 행을 하나 남깁니다. 실패해도 무시합니다(best-effort). 쓰기는 그대로 진행됩니다.
 
 - 새 state가 `active: true`이고(callee는 항상 참, caller는 항상 거짓),
-- 전이 표가 있는 skill이고(ralplan만. ultragoal·deep-interview는 없음),
+- 전이 표가 있는 skill이고(ralplan과 deep-interview. ultragoal은 없음),
 - 이전 단계가 있고, 새 단계와 다르고, 그 skill의 단계이고,
 - 전이 표에 그 줄이 없을 때.
 
 ultragoal → ralplan 인계에서 이 행이 남는 것은 저장된 ralplan 단계가 `RALPLAN_STATES`(아홉 stage와 `handoff`)에 들고 `planner`가 아닐 때입니다. `RALPLAN_TRANSITIONS`에는 `planner`로 들어가는 줄이 없으므로 이 경우는 항상 남습니다. 예: `final`, `handoff`, `architect`. 반대로 ralplan state가 없거나, `planner`이거나, `RALPLAN_STATES` 밖의 해제 단계(`ralplan clear` 뒤의 `complete` 등)이면 남지 않습니다. (임시 폴더 확인: `complete`에서 0행, `architect`에서 1행.)
+
+deep-interview가 callee일 때도 같습니다. `DEEP_INTERVIEW_TRANSITIONS`에는 `interviewing`으로 들어가는 줄이 없으므로, 저장된 deep-interview phase가 `handoff`나 `complete`이면 이 행이 남고, state가 없거나 `interviewing`이면 남지 않습니다.
 
 ### 활성 행 쓰기 (`writeHandoffRowsTx`)
 
 `src/skill-state/rows.ts`의 `writeHandoffRowsTx`. 두 행 모두 `activated_at`과 `updated_at`이 `at`입니다.
 
 - caller 행: `{skill, phase: "handoff", active: false, activated_at, updated_at, session_id, handoff_to, handoff_at, hud}`. 이전 caller 행에 `handoff_from`이 있었으면 그 값을 이어 받습니다. 비활성이지만 파일로 남습니다.
-- callee 행(ralplan·ultragoal만): `{skill, phase: <초기 단계>, active: true, …, handoff_from, handoff_at, hud}`.
-- HUD는 병합된 state로 계산합니다(ralplan `buildRalplanHudFromState`, ultragoal `buildUltragoalHudFromState`).
+- callee 행: `{skill, phase: <초기 단계>, active: true, …, handoff_from, handoff_at, hud}`.
+- HUD는 병합된 state로 계산합니다(ralplan `buildRalplanHudFromState`, ultragoal `buildUltragoalHudFromState`, deep-interview `buildDeepInterviewHudFromState`).
 - 윗단계 행을 지우지 않습니다. 이 점이 `syncActiveRowTx`와 다릅니다.
 - 끝에 스냅숏을 다시 만듭니다. 행·스냅숏의 형식과 순위는 [state-and-files.md](state-and-files.md)에 있습니다.
 
@@ -568,8 +579,12 @@ gjc 출처: `tools/skill.ts:205-209`(체인 거부 문구). 편차: ultragoal 22
 ```
 계보 루트의 보이는 주 skill 읽기 (읽기 실패 → 기록만 하고 통과)
 주 skill == "ultragoal" → 차단, 문구 ultragoalChainRefusal(<행의 phase 또는 "unknown">, <skill>)
+id == "ralplan", agent == "open-gajae", 턴 표식 == "deep-interview"
+                        → deep-interview 로드 게이트 gateTx(tx, root, "ralplan"): 거부면 차단
 그 밖                   → 턴 표식을 <skill>로 세우고 로드 진행
 ```
+
+deep-interview 로드 게이트는 [진입 게이트 분기](#진입-게이트-분기)의 것과 같은 함수입니다(callee만 `ralplan`).
 
 거부 문구(`src/ultragoal-runtime/messages.ts`의 `ultragoalChainRefusal`). gjc의 "현재 skill을 먼저 마무리" 경로(`gjc state ultragoal write current_phase=handoff`)는 "끝내거나 clear"로 바뀌었습니다(DR-23).
 
@@ -584,6 +599,7 @@ open-gajae: refusing to chain from "ultragoal" (phase=goal-planning) into "ralpl
 | 거부 | 어디서 | 조건 | 문구 |
 |---|---|---|---|
 | `ralplan start` | `src/ralplan-runtime/tool.ts`의 `start` | ultragoal **state**가 `active: true`(행이 아님). 읽기 실패는 "활성 아님" | `ralplan cannot be started while ultragoal is active; call ultragoal handoff(to="ralplan", reason) instead, which makes ralplan active in its planner phase.` |
+| `ralplan start`(활성 run) | 같음, ultragoal 검사 다음 | ralplan **state**가 `active: true`(넘겨받은 run 포함, ralplan 편차 39) | `ralplan run <run_id> is already active (phase <phase>[, handed over from <skill>]); continue it with ralplan write. To plan anew, stop it first with ralplan state {"active": false} or ralplan clear.` |
 | `skill ultragoal`(ralplan 계획 중) | 진입 게이트 | 같은 execution에서 ralplan을 불렀고 ralplan이 T 밖에서 활성 | `RALPLAN_RUNNING_REFUSAL`(위) |
 
 막지 않는 것: `skill ultragoal` 로드 자체에는 체인 가드가 없습니다. ultragoal이 주 skill일 때 다시 불러오면 시드가 `"kept"`로 끝납니다. `ralplan write`도 ultragoal 실행 중에 막지 않습니다([known-limits.md](known-limits.md) U22).

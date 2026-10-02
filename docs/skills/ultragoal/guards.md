@@ -11,9 +11,9 @@
 | 산출물 가드 | `.open-gajae/` 아래 ultragoal 파일, `state/**`, `plans/ralplan/**`, 남의 세션 plans·drafts에 `write`/`edit`/`patch` | 모든 agent, 모든 세션 | `execute.before` A | 막음 (fail closed) |
 | `goal-planning` 편집 가드 | ultragoal이 `goal-planning`인 동안 OS 임시 경로 밖 `write`/`edit`/`patch` | 계보 전체의 모든 agent | `execute.before` B | 통과 (fail open) |
 | 체인 가드 | ultragoal이 주 skill인 동안 `skill ralplan`·`skill deep-interview` | 모든 agent | `execute.before` D | 통과 |
-| 도구 숨김 | `ultragoal`·`goal`·`ralplan` 도구를 주인 아닌 agent의 요청에서 지움 | 주인 아닌 모든 agent | `context`·`compaction`·`generate` | — |
+| 도구 숨김 | `ultragoal`·`goal`·`ralplan`·`deep-interview` 도구를 주인 아닌 agent의 요청에서 지움 | 주인 아닌 모든 agent | `context`·`compaction`·`generate` | — |
 | 도구의 호출자 검사 | 주인 아닌 agent의 호출 거부 | 같음 | 각 도구의 `execute` | 막음 |
-| 역할 권한 규칙 | 역할마다 `edit`, `subagent`, `question`, 상태 도구, workflow 도구 거부 | 역할 subagent 일곱 | 호스트 권한(`roleRules`) | — |
+| 역할 권한 규칙 | 역할마다 `edit`, `subagent`, `question`, workflow 도구(`deep-interview` 포함) 거부 | 역할 subagent 여덟 | 호스트 권한(`roleRules`) | — |
 | red-team 조각 | (막는 장치가 아니라 붙이는 장치) 표식 있는 executor 과제에 조각 추가 | `open-gajae-executor` 과제 | `execute.before` C | — |
 
 체인 가드는 [entry-and-handoff.md](entry-and-handoff.md)에 있습니다. 여기서는 순서만 표시합니다.
@@ -70,7 +70,7 @@ gjc 출처: `skill-state/workflow-mutation-guard.ts:1683-1690`(`.gjc/**` 대상 
 
 ```
 .open-gajae workflow state and ralplan artifacts are runtime-owned. Agent mutation tools cannot edit `.open-gajae/_session-*/state/**` or `.open-gajae/_session-*/plans/ralplan/**`; use the sanctioned tool instead.
-Use: `ralplan` for ralplan state and plans, `ultragoal` for ultragoal state, `goal` for the goal, `state_write`/`state_clear` for deep-interview state.
+Use: `ralplan` for ralplan state and plans, `ultragoal` for ultragoal state, `goal` for the goal, `deep-interview` for deep-interview state and specs.
 ```
 
 `<접두>`는 `projectPrefix(locationDir, projectDir)`입니다. 호스트 위치에서 프로젝트 디렉터리까지의 상대 경로에 `/`를 붙인 값이고, 둘이 같으면 빈 문자열입니다.
@@ -178,15 +178,16 @@ Ultragoal goal-planning phase boundary: finish goal planning and record goals th
 | `ultragoal` | `open-gajae` |
 | `goal` | `open-gajae` |
 | `ralplan` | `open-gajae`, `open-gajae-planner`, `open-gajae-architect`, `open-gajae-critic` |
+| `deep-interview` | `open-gajae` |
 
 ### 규칙
 
 `hideTools(event)`:
 
 - `event.tools`가 객체가 아니면 아무것도 하지 않습니다.
-- 위 세 도구마다, `event.agent`가 문자열이 아니거나 주인 목록에 없으면 `delete tools[도구]`.
+- 위 네 도구마다, `event.agent`가 문자열이 아니거나 주인 목록에 없으면 `delete tools[도구]`.
 - 표에 없는 도구는 건드리지 않습니다.
-- agent가 없는 요청은 아무것도 갖지 않은 것으로 봅니다. 세 도구가 모두 지워집니다.
+- agent가 없는 요청은 아무것도 갖지 않은 것으로 봅니다. 네 도구가 모두 지워집니다.
 
 지운 도구는 호스트가 모델에게 내놓지도 않고, 호출이 와도 실행하지 않습니다(`TOOL_OWNERS` 주석이 가리키는 호스트 `core/src/session/model-request.ts:225-255`, `core/src/tool.ts:272-275`; 호스트 소스로 확인하지는 않음). 호스트 자신의 patch 플러그인이 자기 도구를 지우는 방식과 같습니다.
 
@@ -207,9 +208,9 @@ ctx.session.hook("compaction", hooks.compaction)  // 압축 복구 문맥
 
 | 요청의 agent | 남는 workflow 도구 |
 |---|---|
-| `open-gajae` | `goal`, `ralplan`, `ultragoal` |
+| `open-gajae` | `deep-interview`, `goal`, `ralplan`, `ultragoal` |
 | `open-gajae-planner`, `-architect`, `-critic` | `ralplan` |
-| `open-gajae-executor`, `-cleaner`, `build`, `general`, `plan`, 사용자 정의 agent, agent 없음 | 없음 |
+| `open-gajae-executor`, `-cleaner`, `-lateral-reviewer`, `build`, `general`, `plan`, 사용자 정의 agent, agent 없음 | 없음 |
 
 ### 두 번째 층: 도구의 호출자 검사
 
@@ -221,8 +222,9 @@ ctx.session.hook("compaction", hooks.compaction)  // 압축 복구 문맥
 | `goal` | 같음 | `the goal tool is not available to <agent>` |
 | `ralplan` | 주인이 아님 | `the ralplan tool is not available to <agent>` |
 | `ralplan` | 역할(planner·architect·critic)이 `write`·`status`·`state` 밖의 op | `<agent> may only use write, status and state` |
+| `deep-interview` | agent가 `open-gajae`가 아님 | `the deep-interview tool is not available to <agent>` |
 
-상태 도구 `state_read`·`state_write`·`state_clear`는 `mode`로 `deep-interview`만 받습니다(`src/tools.ts`의 `modeArg`). ultragoal state는 `ultragoal` 도구로만 바뀝니다.
+ultragoal state는 `ultragoal` 도구로만 바뀝니다. deep-interview state는 `deep-interview` 도구로만 바뀝니다(옛 상태 도구 3개(`state_*`)는 deep-interview 개정에서 삭제).
 
 ## 역할 권한 규칙
 
@@ -235,15 +237,15 @@ ctx.session.hook("compaction", hooks.compaction)  // 압축 복구 문맥
 - `shell` 규칙은 없습니다(R5/R6). 모든 역할이 `shell`을 가집니다.
 - `edit` 권한 이름은 호스트의 `write`, `edit`, `patch` 도구가 함께 씁니다(로컬 `opencode/` `v2.0.15` 체크아웃의 `packages/core/src/tool/plugin/{write,edit,patch}.ts`가 모두 `permission: "edit"`).
 
-공통 묶음 `readonlyDenies`: `question`, `state_write`, `state_clear`, `opencode_session_move`, `opencode_session_rename` 거부. `state_read`는 거부하지 않습니다.
+공통 묶음 `readonlyDenies`: `question`, `deep-interview`, `opencode_session_move`, `opencode_session_rename` 거부.
 
 | agent | 거부 | 허용(거부 뒤에 붙음) | workflow 도구 |
 |---|---|---|---|
-| `open-gajae` | 없음(`[]`) | — | 셋 다 사용 |
+| `open-gajae` | 없음(`[]`) | — | 넷 다 사용 |
 | `open-gajae-architect`, `open-gajae-critic` | `edit`, `subagent`, `readonlyDenies`, `ultragoal`, `goal` | — | `ralplan` 유지(lane 쓰기용) |
 | `open-gajae-executor` | `subagent`, `readonlyDenies`, `ultragoal`, `goal`, `ralplan` | `subagent` → `open-gajae-explore`, `open-gajae-architect` | 없음 |
 | `open-gajae-planner` | `edit`, `subagent`, `readonlyDenies`, `ultragoal`, `goal` | `subagent` → `open-gajae-explore`, `open-gajae-document-specialist` | `ralplan` 유지 |
-| `open-gajae-explore`, `open-gajae-document-specialist`, `open-gajae-cleaner` | `edit`, `subagent`, `readonlyDenies`, `ultragoal`, `goal`, `ralplan` | — | 없음 |
+| `open-gajae-explore`, `open-gajae-document-specialist`, `open-gajae-cleaner`, `open-gajae-lateral-reviewer` | `edit`, `subagent`, `readonlyDenies`, `ultragoal`, `goal`, `ralplan` | — | 없음 |
 
 executor만 `edit`이 거부되지 않습니다. 제품 코드를 고치는 유일한 역할입니다. 그래도 산출물 가드와 `goal-planning` 가드는 executor에게도 똑같이 걸립니다.
 

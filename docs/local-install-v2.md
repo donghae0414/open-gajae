@@ -6,7 +6,8 @@
 - 호스트: OpenCode v2 `2.0.15` (`~/.opencode/bin/opencode`)
 - 플러그인: open-gajae `feat/opencode-v2-port` 커밋 `f4df6e6`, v2 플러그인 API `@opencode/plugin` 2.0.15
 - 갱신: 2026-09-29, GJC 기반 `ralplan`(도구 `ralplan`; TUI 사이드바는 보류, README "필수 후속 개발" 6번) — 브랜치 `feat/ralplan-gjc-stage-trail`
-- 갱신: 2026-09-30, GJC 기반 `ultragoal`과 `goal` 도구(`ultragoal.hardMaxIterations` 설정 삭제, 도구 14개, workflow 도구 숨김) — 브랜치 `feat/ultragoal-gjc-revision`
+- 갱신: 2026-09-30, GJC 기반 `ultragoal`과 `goal` 도구(옛 ultragoal 반복 상한 설정 삭제, 도구 14개, workflow 도구 숨김) — 브랜치 `feat/ultragoal-gjc-revision`
+- 갱신: 2026-10-02, GJC 기반 `deep-interview`(도구 `deep-interview`, 옛 상태 도구 3개(`state_*`) 삭제, 패널 역할 `open-gajae-lateral-reviewer`, 도구 12개·역할 9개, 기준치 기본값 0.05와 출처 표기, 없앤 라운드 상한 key 삭제) — 브랜치 `feat/deep-interview-gjc-revision`
 
 ## 0. 저장소 준비
 
@@ -50,14 +51,14 @@ bun test ./tests
 
 ## 2. open-gajae 자체 설정
 
-`~/.open-gajae/open-gajae.jsonc`(사용자)와 `<worktree>/.open-gajae/open-gajae.jsonc`(프로젝트)는 host가 아니라 플러그인이 직접 읽는 설정입니다. field는 project → user → defaults 순으로 병합되며, 알 수 없는 key·잘못된 JSONC·잘못된 값은 오류로 설정 로드를 막습니다(v1과 같은 엄격한 검증). `companyContext` key는 v2에서 완전히 제거되었습니다 — 넣으면 `unknown setting`으로 실패합니다.
+`~/.open-gajae/open-gajae.jsonc`(사용자)와 `<worktree>/.open-gajae/open-gajae.jsonc`(프로젝트)는 host가 아니라 플러그인이 직접 읽는 설정입니다. field는 project → user → defaults 순으로 병합되며, 알 수 없는 key·잘못된 JSONC·잘못된 값은 오류로 설정 로드를 막습니다(v1과 같은 엄격한 검증).
 
 수동 테스트 체크리스트(아래 5절)에서 쓰는 예시로, 모든 역할에 `openai/gpt-6-luna`를 variant로 구분해 씁니다:
 
 ```jsonc
 // ~/.open-gajae/open-gajae.jsonc
 {
-  "deepInterview": { "ambiguityThreshold": 0.2, "maxRounds": 20 },
+  "deepInterview": { "ambiguityThreshold": 0.05 },
   "ralplan": { "maxIterations": 5, "maxReviewPassesPerLane": 1, "autoHandoff": "off" },
   "agents": {
     "open-gajae": { "model": "openai/gpt-6-luna", "variant": "none" },
@@ -67,35 +68,35 @@ bun test ./tests
     "open-gajae-architect": { "model": "openai/gpt-6-luna", "variant": "high" },
     "open-gajae-critic": { "model": "openai/gpt-6-luna", "variant": "high" },
     "open-gajae-executor": { "model": "openai/gpt-6-luna", "variant": "medium" },
-    "open-gajae-cleaner": { "model": "openai/gpt-6-luna", "variant": "medium" }
+    "open-gajae-cleaner": { "model": "openai/gpt-6-luna", "variant": "medium" },
+    "open-gajae-lateral-reviewer": { "model": "openai/gpt-6-luna", "variant": "medium" }
   }
 }
 ```
 
 | 키 | 기본값 | 내용 |
 |---|---|---|
-| `deepInterview.ambiguityThreshold` | `0.2` | spec을 저장할 모호도 임계값 |
-| `deepInterview.maxRounds` | `20` | 최대 인터뷰 라운드 |
+| `deepInterview.ambiguityThreshold` | `0.05` | 인터뷰의 모호도 기준치, `(0, 1]`. 주 에이전트는 값과 출처(`~/.open-gajae/open-gajae.jsonc`, `./.open-gajae/open-gajae.jsonc`, `default`)를 `<open-gajae-runtime-settings>` 블록으로 받습니다. `deep-interview start(threshold)`가 인터뷰 하나에 대해 덮습니다 |
 | `ralplan.maxIterations` | `5` | 한 ralplan run이 열 수 있는 planner·revision 회차. `1..20` 정수, 넘으면 `PLANNING-STUCK` |
 | `ralplan.maxReviewPassesPerLane` | `1` | 열린 회차당 architect 또는 critic 기록 수. `1..10` 정수, 넘으면 `PLANNING-STUCK` |
 | `ralplan.autoHandoff` | `"off"` | `"ultragoal"`이면 막히지 않은 `final`을 승인 질문 없이 ultragoal에 인계 |
 | `agents.<이름>` | 없음 | 역할별 `model`/`variant`. `variant`는 같은(병합된) entry에 `model`이 있어야 하며, 없으면 해당 agent 이름과 함께 오류로 거부됩니다. |
 
-`ultragoal` key는 없습니다. 예전의 `ultragoal.hardMaxIterations`(continuation 반복 상한)는 goal 루프로 바뀌면서 삭제되었고, 설정 파일에 `ultragoal` key가 남아 있으면 `<파일>.ultragoal: unknown setting` 오류로 설정 로드가 실패합니다. 기존 파일에서 그 블록을 지우세요. goal 루프에는 반복 상한이 없습니다(README "Ultragoal" 절).
+`ultragoal` key는 없습니다. 예전의 ultragoal 반복 상한 설정은 goal 루프로 바뀌면서 삭제되었고, 설정 파일에 `ultragoal` key가 남아 있으면 `<파일>.ultragoal: unknown setting` 오류로 설정 로드가 실패합니다. 기존 파일에서 그 블록을 지우세요. goal 루프에는 반복 상한이 없습니다(README "Ultragoal" 절). deep-interview의 라운드 상한 key도 삭제되었습니다: `deepInterview`에 그 key가 남아 있으면 unknown setting으로 로드가 실패하므로 지우세요. 인터뷰의 고정 상한 100라운드는 skill 문구로만 있습니다.
 
-`open-gajae-executor`와 `open-gajae-cleaner`는 이제 이 8개 agent 이름에 포함되어 있으므로 위 예시처럼 `agents`에 넣을 수 있습니다. 이 두 이름을 뺀 `open-gajae-qa-tester` 같은 다른 ultragoal WIP용 key는 여전히 agent 이름에 없으므로 넣으면 설정 로드가 거부됩니다. 프로젝트 설정에서는 필요한 역할만 덮어쓰면 됩니다. `ralplan` key는 플러그인 setup 때 한 번만 읽으므로 바꾼 뒤에는 OpenCode를 재시작합니다.
+`open-gajae-executor`, `open-gajae-cleaner`, `open-gajae-lateral-reviewer`는 이 9개 agent 이름에 포함되어 있으므로 위 예시처럼 `agents`에 넣을 수 있습니다. 패널 역할에는 기본 모델이 없어 넣지 않으면 호스트가 정합니다. `open-gajae-qa-tester` 같은 옛 ultragoal WIP용 key는 여전히 agent 이름에 없으므로 넣으면 설정 로드가 거부됩니다. 프로젝트 설정에서는 필요한 역할만 덮어쓰면 됩니다. `ralplan` key는 플러그인 setup 때 한 번만 읽으므로 바꾼 뒤에는 OpenCode를 재시작합니다.
 
 ## 3. 플러그인이 로드되면 등록하는 것
 
 파일을 고치지 않고, 첫 프롬프트에서 `setup`이 실행될 때 host의 메모리 상태에 등록합니다(v1의 `config` 훅과 달리 v2는 `ctx.agent`/`ctx.skill`/`ctx.tool.transform`과 hook 등록입니다). 사용자가 host 설정의 `agents.<id>`로 같은 이름을 override하면 플러그인보다 우선합니다.
 
-- **에이전트 8개**: `open-gajae`(primary), `open-gajae-explore`, `open-gajae-document-specialist`, `open-gajae-planner`, `open-gajae-architect`, `open-gajae-critic`, `open-gajae-executor`, `open-gajae-cleaner`. 프롬프트는 `prompts/<이름>.md`입니다.
-- **skill 3개**: `deep-interview`, `ralplan`, `ultragoal` (`skills/<이름>/SKILL.md`에서 읽음). **명령은 없습니다** — v1의 `/ralplan`, `/deep-interview` 명령 등록은 v2에서 완전히 제거되었고, 진입은 `@<이름>` mention, 키워드, 또는 모델의 native `skill` 호출입니다. `ultragoal`은 키워드와 mention이 안내만 하고, `skill` 호출이 목표 계획(`goal-planning`)을 시작합니다.
-- **도구 14개**: `state_read`, `state_write`, `state_clear`, `ralplan`, `ultragoal`, `goal`, `ast_grep_search`, `lsp_goto_definition`, `lsp_hover`, `lsp_diagnostics`, `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`. `ultragoal`·`goal`은 `open-gajae` 전용이고, `ralplan`은 `open-gajae`와 planner·architect·critic 전용입니다. 소유하지 않은 agent(호스트 `build`·`general`, 사용자 정의 agent 포함)의 요청에서는 플러그인이 이 세 도구를 지웁니다.
-- **hook**: `session.hook("prompt")`(키워드/mention 감지와 안내 주입, 턴 표식, goal 보류 해제), `session.hook("context")`(workflow 도구 숨김, goal 문맥 주입), `session.hook("compaction")`(workflow 도구 숨김, ultragoal·ralplan 압축 복구 문맥), `session.hook("generate")`(workflow 도구 숨김), `tool.hook("execute.before"|"execute.after")`(artifact guard, ralplan 계획 가드, ultragoal goal-planning 가드, `skill` 턴 게이트와 체인 가드, `[ultragoal-red-team]` 조각 덧붙이기), `event.subscribe()`(durable execution 이벤트로 goal 루프와 ralplan continuation). v1의 `event`/`chat.message`/`command.execute.before` 훅은 모두 사라졌습니다.
+- **에이전트 9개**: `open-gajae`(primary), `open-gajae-explore`, `open-gajae-document-specialist`, `open-gajae-planner`, `open-gajae-architect`, `open-gajae-critic`, `open-gajae-executor`, `open-gajae-cleaner`, `open-gajae-lateral-reviewer`. 프롬프트는 `prompts/<이름>.md`입니다.
+- **skill 3개**: `deep-interview`, `ralplan`, `ultragoal` (`skills/<이름>/SKILL.md`에서 읽음). **명령은 없습니다** — v1의 `/ralplan`, `/deep-interview` 명령 등록은 v2에서 완전히 제거되었고, 진입은 `@<이름>` mention, 키워드, 또는 모델의 native `skill` 호출입니다. `ultragoal`은 키워드와 mention이 안내만 하고, `skill` 호출이 목표 계획(`goal-planning`)을 시작합니다. `deep-interview`는 키워드·mention·`skill` 호출 모두 상태를 만들지 않고, 주 에이전트의 `deep-interview start`가 인터뷰를 시작합니다.
+- **도구 12개**: `deep-interview`, `ralplan`, `ultragoal`, `goal`, `ast_grep_search`, `lsp_goto_definition`, `lsp_hover`, `lsp_diagnostics`, `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`. `deep-interview`·`ultragoal`·`goal`은 `open-gajae` 전용이고, `ralplan`은 `open-gajae`와 planner·architect·critic 전용입니다. 소유하지 않은 agent(호스트 `build`·`general`, 사용자 정의 agent 포함)의 요청에서는 플러그인이 이 네 도구를 지웁니다.
+- **hook**: `session.hook("prompt")`(키워드/mention 감지와 안내 주입, 턴 표식, goal 보류 해제), `session.hook("context")`(workflow 도구 숨김, goal 문맥 주입), `session.hook("compaction")`(workflow 도구 숨김, ultragoal·deep-interview·ralplan 압축 복구 문맥), `session.hook("generate")`(workflow 도구 숨김), `tool.hook("execute.before"|"execute.after")`(artifact guard, ralplan 계획 가드, ultragoal goal-planning 가드, deep-interview 편집 가드, `skill` 턴 게이트와 체인 가드와 deep-interview 로드 게이트, `[ultragoal-red-team]` 조각 덧붙이기), `event.subscribe()`(durable execution 이벤트로 deep-interview 이어가기, goal 루프, ralplan continuation 순서). v1의 `event`/`chat.message`/`command.execute.before` 훅은 모두 사라졌습니다.
 - **권한**: 역할별 rule을 각 agent의 `permissions`에 host 기본값 뒤로 추가합니다. `subagent_depth`는 올리지 않습니다(1절 참고) — v1과 다른 부분입니다.
 
-작업 산출물은 v1과 같은 위치, `<worktree>/.open-gajae/_session-<생성 시각>-<세션 ID>/` 아래에 저장됩니다. ralplan 산출물은 그 아래 `plans/ralplan/<run-id>/`(`stage-NN-<stage>.md`, `index.jsonl`, `pending-approval.md`)에 `ralplan` 도구만 기록하며, run ID 기본값은 루트 세션의 native ID(`ses_…`)입니다. ultragoal 산출물은 `ultragoal/`(`goals.json`, `ledger.jsonl`, `progress.txt`)에 `ultragoal` 도구만 기록하고, goal은 `state/goal-state.json`, goal 루프 카운터는 `state/goal-continuation.json`, 인계 저널은 진행 중에만 `state/transactions/`에 있습니다(README "Ultragoal" 절의 저장 구성).
+작업 산출물은 v1과 같은 위치, `<worktree>/.open-gajae/_session-<생성 시각>-<세션 ID>/` 아래에 저장됩니다. ralplan 산출물은 그 아래 `plans/ralplan/<run-id>/`(`stage-NN-<stage>.md`, `index.jsonl`, `pending-approval.md`)에 `ralplan` 도구만 기록하며, run ID 기본값은 루트 세션의 native ID(`ses_…`)입니다. ultragoal 산출물은 `ultragoal/`(`goals.json`, `ledger.jsonl`, `progress.txt`)에 `ultragoal` 도구만 기록하고, goal은 `state/goal-state.json`, goal 루프 카운터는 `state/goal-continuation.json`, 인계 저널은 진행 중에만 `state/transactions/`에 있습니다(README "Ultragoal" 절의 저장 구성). deep-interview는 `state/deep-interview-state.json`과 `state/active/deep-interview.json`, 그리고 `specs/deep-interview-<slug>.md`·`specs/deep-interview-index.jsonl`을 `deep-interview` 도구만 씁니다(README "Deep interview" 절).
 
 ## 4. 설치 순서와 확인
 
@@ -113,6 +114,7 @@ opencode debug agent open-gajae-document-specialist
 opencode debug agent open-gajae-planner
 opencode debug agent open-gajae-architect
 opencode debug agent open-gajae-critic
+opencode debug agent open-gajae-lateral-reviewer
 ```
 
 `GET /api/plugin`도 확인에 씁니다. `{"id":"open-gajae","source":{"type":"local","path":"…/open-gajae/index.ts"}, "state":{"status":"active"}}` 형태로 응답하면 디렉터리 plugin이 `index.ts` 소스에서 로드된 것입니다. `opencode debug` 서브커맨드가 로컬 빌드에 없다면 `GET /api/plugin`, `GET /api/skill`, `GET /api/agent`로 대체할 수 있습니다.
@@ -123,8 +125,8 @@ opencode debug agent open-gajae-critic
 
 ### 5.1 deep-interview와 ralplan
 
-1. `@deep-interview <아이디어>`를 mention으로 보냅니다. magic notice가 보이는지 확인하고, `question` 라운드를 진행해 `_session-*/specs/`에 spec이 저장되는지 확인합니다. "Refine with ralplan consensus"를 선택하면 `ralplan` skill 호출이 첫 시도에서 (input 오류로 인한 재시도 없이) 성공하고, 끝나면 `plans/ralplan/<run-id>/pending-approval.md`가 저장되는지 확인합니다.
-2. 두 skill 모두 키워드로 진입합니다(mention 없이 일반 텍스트로 `deep interview …`, `ralplan …`). 안내가 보이는지 확인합니다. ralplan 키워드는 state를 만들지 않으며, 모델이 `ralplan start`를 호출한 뒤에야 `state/ralplan-state.json`이 생기는지 확인합니다.
+1. deep-interview 확인은 5.3절입니다(2026-10-02 개정). 여기서는 "Refine with ralplan consensus"를 고른 뒤 `deep-interview handoff(to: "ralplan")`(또는 한 번에 처리하는 `deep-interview spec(…, handoff: "ralplan")`)과 `skill` `ralplan`으로 이어지고, 넘겨받은 ralplan이 `start` 없이 `ralplan write`로 이어 써서 `plans/ralplan/<run-id>/pending-approval.md`가 저장되는지만 확인합니다.
+2. 두 skill 모두 키워드로 진입합니다(mention 없이 일반 텍스트로 `deep interview …`, `ralplan …`). 안내가 보이는지 확인합니다. 두 키워드 모두 state를 만들지 않으며, 모델이 `deep-interview start`나 `ralplan start`를 호출한 뒤에야 `state/deep-interview-state.json`이나 `state/ralplan-state.json`이 생기는지 확인합니다.
 3. ralplan 루프 도중 Esc로 중단합니다. 이후 continuation이 재개되지 않는지 확인합니다 — background subagent가 그동안 완료되어도 마찬가지입니다. 다음 실제 프롬프트를 보내면 continuation이 다시 동작하는지 확인합니다.
 4. planner 위임: GJC 기반 planner 프롬프트에는 위임 지시가 없으므로 위임 여부는 모델이 정합니다(권한은 `open-gajae-explore`/`open-gajae-document-specialist`로 유지). `experimental.subagent_depth: 2`가 설정된 상태에서 planner가 위임하면 호출이 성공하는지, 이 설정 없이 위임을 시도하면 host가 거부하고 planner가 직접 `read`/`grep`/`glob`로 조사해 `ralplan write`로 plan을 기록하는지 확인합니다. 위임하지 않았다면 그 사실만 기록합니다.
 5. ralplan 1회 실행: `@ralplan <작업>`을 보냅니다.
@@ -153,6 +155,20 @@ opencode debug agent open-gajae-critic
 13. **수정 목표(가능하면).** cohort에 blocker가 있을 때 `record_review_blockers`가 `Recorded review blockers. blocker-goal-id=<id>`를 돌려주고, 원 목표가 `review_blocked`, 수정 목표의 기준이 `<objective> is resolved and re-verified` 하나인지, 수정 목표가 첫 checkpoint부터 final gate를 요구받고 완료되면 원 목표가 `superseded`가 되어 실행이 완료되는지 확인합니다.
 14. **정리.** `ultragoal doctor`가 텍스트 결과를 내는지, `ultragoal clear`가 한 줄 JSON 영수증과, goal이 열려 있으면 `The goal is still <status>; run goal drop to end it.`를 돌려주는지, `goal drop` 뒤 `goal get`이 `No active goal.`인지 확인합니다.
 15. 결과(통과·실패·관찰)를 날짜와 함께 아래 6절에 기록합니다.
+
+### 5.3 deep-interview (2026-10-02 개정)
+
+작은 연습용 저장소에서 `open-gajae` 세션 하나로 진행합니다. 파일 경로는 5.2절처럼 루트 세션 폴더 `.open-gajae/_session-<created>-<id>/` 기준이고, 결과 문구는 README "Deep interview" 절의 op 표와 같아야 합니다.
+
+1. **설정 로드.** 사용자 설정의 `deepInterview`에 `ambiguityThreshold: 0.05`만 있을 때 정상 로드되는지 확인합니다. 없앤 라운드 상한 key를 잠깐 넣으면 `unknown setting`으로 로드가 실패하는지 확인하고, key를 지웁니다.
+2. **진입.** `@deep-interview <작은 아이디어>`를 보냅니다. magic 안내가 하나 보이고, 이 시점에는 `state/deep-interview-state.json`이 없는지 확인합니다.
+3. **Phase 0과 `start`.** 응답 첫 줄이 `Deep Interview threshold: 5% (source: ~/.open-gajae/open-gajae.jsonc)`인지, 적합성 게이트를 지나는지 확인합니다. 모델이 `deep-interview start`를 부르면 `state/deep-interview-state.json`이 `"version": 2` 봉투이고, `state/active/deep-interview.json`의 phase가 `interviewing`이며, `threshold_source`가 첫 줄의 출처와 같은지 확인합니다.
+4. **라운드 기록.** Round 0 뒤 `deep-interview write`에 `round-0`, `answered`, `topology`가 들어가는지 확인합니다. 그 뒤 라운드마다 `question` 한 문항과 `deep-interview write` 한 번이 이어지는지 보고, 결과의 `current_ambiguity`와 `ambiguity_floor`를 기록합니다. 형식이 틀린 `write`가 거절되면 그 문구와 모델의 재시도를 기록합니다.
+5. **리뷰 패널.** 구간이 바뀔 때 한 메시지에서 `subagent(open-gajae-lateral-reviewer)`가 3개 이상 병렬로 도는지, 각 프롬프트에 조각 `lateral-review-panel.md` 전문이 들어가는지 확인합니다. 페르소나 응답이 JSON인지, 그 결과가 다음 질문에 녹는지, state의 `lateral_reviews`에 기록되는지, 패널 역할에 `edit`과 workflow 도구가 없는지 확인합니다.
+6. **이어가기와 편집 가드.** 라운드 사이에 "계속할까요?" 같은 확인 질문이 없는지 확인합니다. 제품 파일 수정을 요청하면 `write`가 `Deep-interview phase boundary: …`로 거부되는지 확인합니다.
+7. **spec.** closure와 restate 게이트를 지난 뒤 `deep-interview spec`이 `specs/deep-interview-<slug>.md`와 `specs/deep-interview-index.jsonl`을 쓰고, phase가 `handoff`가 되며, 활성 행의 HUD에 `spec` 칩이 붙는지 확인합니다.
+8. **Phase 5.** 선택지가 넷(ralplan으로 다듬기, ultragoal로 실행, 더 다듬기, 여기서 마치기)인지 확인합니다. "여기서 마치기"를 고르면 `deep-interview clear`로 `state/active/deep-interview.json`이 지워지고 spec 파일은 남는지 확인합니다. ralplan으로 이어지는 경로는 5.1절 1번입니다.
+9. 날짜, 호스트, 커밋, 모델과 variant, 세션 id와 함께 결과를 아래 7절에 기록합니다.
 
 이 체크리스트는 실제 LLM 동작을 사람이 보고 판단하는 것으로, `bun test`/`bun run typecheck`나 host probe(`tests/host-probe.ts`, `tests/host-session-probe.ts`, `tests/planner-permission-probe.ts`, `tests/package-probe.ts`, `tests/ralplan-trail-probe.ts`)가 자동으로 대신하지 않습니다. 두 검증은 서로 다른 층을 다루며, README의 "검증 근거와 한계"를 참고하세요.
 
@@ -214,3 +230,18 @@ ultragoal gjc 개정의 실제 호스트 실행 기록입니다(spec AC37). 이 
 - **lane 충돌**: 1차에서 cleaner와 QA lane이 동시에 e2e를 돌려 Playwright 산출물이 충돌했고, 이것이 가짜 blocker가 됐습니다(U37).
 - **감사 로그**: 두 실행 모두 ralplan 감사 로그에 `invalid_transition_detected`가 4~5행 남았습니다. gjc 전이 표와 SKILL 흐름이 원래 어긋나서 생기는 것이고, 기록만 남습니다(U38).
 - **서브에이전트 사용**: ralplan에서 `open-gajae-explore`는 쓰이지 않았고, ultragoal 구현은 leader가 직접 했습니다. SKILL 기본값("Direct inline implementation by the leader is the default")과 작은 앱 규모에 맞는 결과입니다.
+
+## 7. deep-interview 수동 실행 결과 (Manual run result, AC34)
+
+deep-interview gjc 개정(브랜치 `feat/deep-interview-gjc-revision`)의 실제 호스트 실행 기록입니다. 이 절의 결과는 자동 테스트나 호스트 probe가 대신하지 않습니다. main 병합은 이 실행 뒤에 관리자가 정합니다.
+
+| 5.3 항목 | 결과 | 메모 |
+|---|---|---|
+| 1. 설정 로드 | 통과 (플러그인 설정 로더) | 2026-10-02, 구현 중 확인. 로컬 `~/.open-gajae/open-gajae.jsonc`는 `ambiguityThreshold: 0.05`, 출처 `~/.open-gajae/open-gajae.jsonc`로 로드됩니다. 없앤 라운드 상한 key를 넣은 임시 파일은 `unknown setting`으로 실패했습니다. 호스트를 재시작한 확인은 아직 하지 않았습니다. |
+| 2. 진입 | 미확인 | |
+| 3. Phase 0과 `start` | 미확인 | |
+| 4. 라운드 기록 | 미확인 | |
+| 5. 리뷰 패널 | 미확인 | |
+| 6. 이어가기와 편집 가드 | 미확인 | |
+| 7. spec | 미확인 | |
+| 8. Phase 5 | 미확인 | |

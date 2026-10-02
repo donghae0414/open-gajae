@@ -14,16 +14,6 @@
 
 ## 필수 후속 (루트 README "Mandatory follow-up development")
 
-### U34. deep-interview 활성 행 설계 (README 1·7)
-
-- **현재 동작**:
-  - 활성 행 `state/active/<skill>.json`과 스냅숏 `state/skill-active-state.json`은 ralplan과 ultragoal만 씁니다.
-  - `ultragoal handoff(to: "deep-interview")`의 callee 쪽은 deep-interview state만 병합합니다. phase는 `"deep-interview"`이고, `handoff_from`·`handoff_at`을 더하며 기존 필드는 유지합니다. deep-interview 행은 쓰지 않습니다(PQ-5 (1) B, (2) A, spec 「E5」). caller 쪽인 ultragoal state와 그 비활성 행은 다른 인계와 같이 씁니다.
-- **증상**: deep-interview로 넘긴 뒤에는 보이는 주 skill이 없습니다. 스냅숏과 HUD 칩에도 deep-interview가 나타나지 않습니다(ralplan 편차 14, ultragoal 편차 33).
-- **해야 할 일**:
-  - 다음 deep-interview 개정(gjc 비교)에서 callee 행과 행 수명을 함께 정합니다. GJC는 callee 행을 쓰고, 초기 phase는 `interviewing`입니다.
-  - 그때 새로 만드는 deep-interview 도구도 소유하지 않은 agent에게서 숨깁니다(spec D-HE8, README 7).
-
 ### U5. TUI 진행 표시 (README 6)
 
 - **현재 동작**: ultragoal HUD 칩은 활성 행에 계산해 기록만 하고 그리지 않습니다([state-and-files.md](state-and-files.md)).
@@ -52,14 +42,12 @@
   ```
 - **영향**: 거부 문구가 ultragoal로 가라고 하므로 흐름은 멈추지 않습니다. ralplan SKILL도 ultragoal을 불러오기 전에 `ralplan handoff`를 먼저 부르라고 안내합니다.
 
-### U13. 넘겨받은 ralplan에서 `ralplan start`를 부르면 인계 메타가 사라짐 (PQ-4 A)
+### U13. 넘겨받은 ralplan은 옛 run을 이어 씀 (PQ-4 A)
 
-루트 README 알려진 동작의 "넘겨받은 ralplan은 옛 run을 이어 씁니다" 행이 U13을 가리킵니다. 하지만 그 행은 옛 승인, 예산, `stage_n`이 이어진다는 내용입니다. 아래의 메타 소실은 README에 없고 이 문서에만 있습니다.
+루트 README 알려진 동작의 "넘겨받은 ralplan은 옛 run을 이어 씁니다" 행이 U13을 가리킵니다. 그 행의 내용(옛 승인, 예산, `stage_n`이 이어짐)은 그대로 기록된 동작입니다.
 
-
-- **정상 경로**: ultragoal에서 넘겨받은 ralplan run은 `start` 없이 `ralplan write`로 이어 씁니다.
-- **메타가 사라지는 경우**: SKILL 안내를 따르지 않고 `ralplan start`를 부르면 새 seed로 다시 쓰면서 `handoff_from`·`handoff_at`이 사라집니다(`src/ralplan-runtime/store.ts`의 `startRunTx`).
-- **영향**: 이 값을 읽는 곳이 status 표시뿐이라 작습니다.
+- **정상 경로**: ultragoal이나 deep-interview에서 넘겨받은 ralplan run은 `start` 없이 `ralplan write`로 이어 씁니다.
+- **해결된 부분(2026-10-02)**: 예전에는 SKILL 안내를 따르지 않고 `ralplan start`를 부르면 새 seed로 다시 쓰면서 `handoff_from`·`handoff_at`이 사라졌습니다. 이제 `ralplan start`는 ralplan state가 활성이면 run과 인계 메타를 그대로 두고 거부합니다(ralplan 편차 39, `src/ralplan-runtime/tool.ts`). 단 deep-interview 결합 호출 `spec(…, handoff: "ralplan")`은 gjc처럼 시드를 다시 씁니다.
 
 ### U22. ultragoal 실행 중 ralplan write의 영향 (README 수용 차이 "One-mode rule partly lifted")
 
@@ -261,9 +249,7 @@
   - 그래서 `clear` 뒤나 두 번째 호출도 성공합니다.
   - 이미 활성인 callee도 되돌립니다. 예: ralplan `architect` → `planner`, 이때 `invalid_transition_detected` 감사 행이 남습니다.
   - `ralplan handoff`는 비활성 ralplan을 거부하므로(R-OD18) 두 방향이 다릅니다. 이 차이를 적은 README 행이 없습니다([entry-and-handoff.md](entry-and-handoff.md)).
-- **인계 뒤 SKILL만 막는 호출**: 코드는 둘 다 허용합니다.
-  - `ralplan start`
-  - 아직 끝나지 않은 `goals.json`이 있을 때의 ultragoal op. 이 op가 ultragoal을 다시 활성으로 만듭니다.
+- **인계 뒤 SKILL만 막는 호출**: 아직 끝나지 않은 `goals.json`이 있을 때의 ultragoal op는 코드가 허용합니다. 이 op가 ultragoal을 다시 활성으로 만듭니다. (넘겨받은 ralplan에서의 `ralplan start`는 2026-10-02부터 코드가 거부합니다, ralplan 편차 39.)
 
 ### U41. 오류 처리와 복구
 
@@ -279,7 +265,6 @@
   - 한 번 왕복하면 ultragoal state에 `handoff_to: "ralplan"`과 `handoff_from: "ralplan"`이 함께 남습니다.
   - 다시 진입하면 시드가 옛 `status`·`goals`·`counts`를 두므로, `goal-planning` 행의 HUD가 `status=complete`로 보일 수 있습니다.
 - **인계 이유**: ralplan 쪽 인계 이유(`ralplan handoff`, 같은 execution의 `skill ultragoal`)는 어디에도 저장되지 않습니다.
-- **deep-interview에서 돌아오는 길**: ultragoal SKILL의 "Handoff back to planning"은 돌아올 때 `ralplan handoff(to="ultragoal")`을 쓰라고만 합니다. deep-interview에서 곧장 ultragoal로 돌아오는 단계는 없고, deep-interview SKILL의 Refine → ralplan → `ralplan handoff(to="ultragoal")`을 거쳐야 합니다(U34와 관련).
 
 ## 옛 번호 대응표
 
@@ -297,7 +282,7 @@
 | U10 | 오래된 `pending-approval.md` | 열림 | 위 |
 | U11 | 출처 기록과 낡은 문구 | 해결 | SKILL 출처 표, 소스 머리 주석 |
 | U12 | handoff 필드 | 해결 | [entry-and-handoff.md](entry-and-handoff.md) |
-| U13 | `ralplan start`의 메타 소실 | 기록 | 위 |
+| U13 | `ralplan start`의 메타 소실 | 해결(ralplan 편차 39). 옛 run 이어 쓰기는 기록 | 위 |
 | U14 | PLANNING-STUCK 거부 안내 | 열림 | 위 |
 | U15 | 인계 실패 경로 | 일부 해결 | 위 |
 | U16 | 계약 자동 회귀 검사 | 일부 해결 | 위 |
@@ -318,7 +303,7 @@
 | U31 | 여러 프로세스 간 직렬화 | 열림(기록만) | 위 |
 | U32 | 재시작 안내 문구 | 해결: `start` op 없음, skill을 다시 불러와 `create` | [ops.md](ops.md) |
 | U33 | deep-interview로 인계 | 해결 | [entry-and-handoff.md](entry-and-handoff.md) |
-| U34 | deep-interview 활성 행 | 열림 | 위 |
+| U34 | deep-interview 활성 행 | 해결 | [deep-interview state-and-files](../deep-interview/state-and-files.md) |
 | U35 | 마지막 목표의 architect 횟수 | 결정 필요 | 위 |
 | U36 | blocker 기록·세대당 lane 1회 | 결정 필요 | 위 |
 | U37 | cleaner의 테스트 실행 | 결정 필요 | 위 |

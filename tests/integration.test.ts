@@ -672,17 +672,17 @@ test("neither SKILL.md carries the unsubstituted OMC arguments placeholder", asy
   }
 });
 
-test("both READMEs carry the GJC ralplan and ultragoal deviations and the mandatory follow-up sections", async () => {
+test("both READMEs carry the GJC deep-interview, ralplan and ultragoal deviations and the mandatory follow-up sections", async () => {
   // Plan S5 (D-D1, D-D2): the one doc test; exact heading lines, so a renamed
   // or demoted section fails.
   for (const [file, headings] of [
     [
       "README.md",
-      ["## Deviations from GJC (ralplan)", "## Deviations from GJC (ultragoal)", "## Mandatory follow-up development"],
+      ["## Deviations from GJC (ralplan)", "## Deviations from GJC (ultragoal)", "## Deviations from GJC (deep-interview)", "## Mandatory follow-up development"],
     ],
     [
       "README.ko.md",
-      ["## GJC로부터의 deviation (ralplan)", "## GJC로부터의 deviation (ultragoal)", "## 필수 후속 개발"],
+      ["## GJC로부터의 deviation (ralplan)", "## GJC로부터의 deviation (ultragoal)", "## GJC로부터의 deviation (deep-interview)", "## 필수 후속 개발"],
     ],
   ] as const) {
     const lines = (

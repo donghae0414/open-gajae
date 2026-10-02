@@ -27,12 +27,12 @@
 
 ### lineage root로 모이기
 
-`ultragoal`·`goal`·`ralplan` 도구와 훅은 호출한 세션이 아니라 그 lineage root의 폴더를 씁니다.
+`ultragoal`·`goal`·`ralplan`·`deep-interview` 도구와 훅은 호출한 세션이 아니라 그 lineage root의 폴더를 씁니다.
 
 - `src/hooks.ts`의 `rootSession`이 `session.get`으로 `parentID`를 따라 올라가 root를 찾고, 지나온 세션마다 결과를 캐시합니다. 조회 실패, 읽을 수 없는 응답, 순환은 모두 예외입니다(fail closed).
 - `ultragoal` 도구는 `ownerSession`에서 호출 에이전트가 `open-gajae`인지 확인한 뒤 `rootSession(context.sessionID)`를 owner로 씁니다(`src/ultragoal-runtime/tool.ts`). `goal` 도구도 같습니다(`src/goal/tool.ts`). owner를 정한 **뒤에** `store.workflowTransaction(owner, …)`에 들어갑니다.
 - 그래서 role 하위 에이전트가 무엇을 하든 ultragoal 파일은 root 폴더 하나에만 생깁니다(D-SF6).
-- 예외: `state_read`/`state_write`/`state_clear` 도구는 `deep-interview` 모드만 받고 호출 세션 ID를 그대로 씁니다(`src/tools.ts`). ultragoal mode-state는 이 도구로 읽거나 쓸 수 없습니다(`ULTRAGOAL_MODE` 주석, plan §7 decision 21).
+- 예전에는 호출 세션 ID를 그대로 쓰는 옛 상태 도구 3개(`state_*`, deep-interview 전용)가 예외였습니다. deep-interview 개정에서 이 도구들이 `deep-interview` 도구로 바뀌어 예외가 없어졌습니다.
 
 ### ultragoal 관련 트리
 
@@ -58,7 +58,7 @@
     plans/ specs/ drafts/        (ralplan·deep-interview 소관)
 ```
 
-`deep-interview.json` 활성 행은 현재 코드가 쓰지 않습니다(4장 참고).
+`state/active/deep-interview.json` 활성 행과 `state/deep-interview-state.json`은 `deep-interview` 도구와 deep-interview 훅·인계가 씁니다(4장 참고).
 
 ### 파일별 쓰는 곳과 읽는 곳
 
@@ -140,7 +140,7 @@
 - 크기 제한(`payloadError`, `_meta` 제외): JSON 객체, 최상위 키 100개 이하, 중첩 깊이 10 이하, UTF-8 1 MiB(1,048,576바이트) 이하.
 - `writeModeState`는 `_meta = {mode, sessionId, updatedAt, updatedBy}`를 매번 새로 붙입니다(`writeMerged`).
 
-`updatedBy`는 `StateWriter` 값입니다. 코드에 있는 값은 다섯 개뿐입니다.
+`updatedBy`는 `StateWriter` 값입니다. 코드에 있는 값은 여섯 개뿐입니다.
 
 | 값 | ultragoal mode-state에 쓰이는 경우 |
 |---|---|
@@ -148,7 +148,8 @@
 | `ultragoal_hook` | `skill ultragoal` 로드 seed(`seedUltragoalTx`, owner `open-gajae-hook`) |
 | `ralplan_tool` | `ralplan handoff(to="ultragoal")` op: 인계는 두 상태를 모두 호출자의 writer로 씁니다(`handoff.ts`의 `WRITERS`) |
 | `ralplan_hook` | 같은 execution에서 `skill ultragoal`을 로드해 훅이 ralplan을 인계할 때 |
-| `state_write_tool` | 쓰이지 않음(`state_write` 도구, deep-interview 전용) |
+| `deep_interview_tool` | `deep-interview handoff(to: "ultragoal")` op |
+| `deep_interview_hook` | 같은 execution에서 `skill deep-interview` 뒤 `skill ultragoal`을 로드해 deep-interview 로드 게이트가 인계할 때 |
 
 `goal_tool`이나 `goal_hook` 같은 값은 없습니다. `goal-state.json`과 `goal-continuation.json`은 mode-state가 아니라 `writeText`로 쓰는 파일이라 `_meta`가 없습니다.
 
@@ -651,9 +652,9 @@ ultragoal에서 나오는 감사 행:
 
 스냅숏의 주 행과 보이는 주 스킬이 다를 수 있는 이유는 두 가지입니다. 보이는 읽기는 행 파일이 없는 스냅숏 항목도 후보로 넣고(1단계), ralplan 단계를 치환합니다(3단계). 시각 기준도 다르지만(스냅숏은 `updated_at`, 보이는 읽기는 `handoff_at` → `updated_at` → `activated_at`), 그 차이는 파이프라인이 아닌 행끼리 비교할 때만 나타납니다. 보이는 행 중 파이프라인 스킬이 있으면 결과는 늘 그중 가장 높은 순위입니다. 그래서 ultragoal 행이 활성이면 ultragoal이 주 스킬입니다.
 
-### deep-interview는 행이 없습니다
+### deep-interview 행
 
-deep-interview는 활성 행을 쓰지 않습니다. ultragoal → deep-interview 인계에서도 피호출자 행을 쓰지 않습니다(`src/skill-state/handoff.ts`의 `HANDOFF_SKILLS["deep-interview"].row: false`, PQ-5 (2) A, 루트 README의 ultragoal 편차 33·ralplan 편차 14). 그래서 이 인계 뒤에는 ultragoal의 비활성 `handoff_to` 행만 남고, 스냅숏은 `active: false, skill: ""`, 보이는 주 스킬은 없습니다. deep-interview 행 설계는 후속 과제입니다(ultragoal spec E5, 루트 README "Mandatory follow-up development" 1번).
+deep-interview 개정(2026-10-02)부터 deep-interview도 gjc처럼 활성 행을 씁니다. ultragoal → deep-interview 인계는 피호출자 행 `state/active/deep-interview.json`을 `interviewing`으로 쓰므로, 인계 뒤 보이는 주 스킬은 deep-interview입니다(ultragoal 편차 33·ralplan 편차 14 철회, 루트 README "Mandatory follow-up development" 1번 해결). 순위상 ultragoal 행이 활성이 되면 deep-interview 행은 윗단계 행으로 지워집니다. 행의 내용과 수명은 [deep-interview 문서](../deep-interview/state-and-files.md)에 있습니다.
 
 ## 5. 단계 manifest와 reconcile
 
