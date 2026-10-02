@@ -183,7 +183,7 @@ gjc 시드에서 `resolution`, `intent_contract_required`, trace, 언어 필드�
 - **Round 0** (`round0Problems`, `manifest.ts:216-223`; PQ-33 A): `round_key`가 `"round-0"`이거나 `round`가 0인 레코드. `round_key`는 `"round-0"`, `round`가 있으면 0, `question_text`·`answer`는 비어 있지 않아야 합니다. `lifecycle`은 검사하지 않습니다(SKILL은 `"answered"`).
 - **나머지 필드**(`weakest_dimension`, `component_scores`, `triggers`, `ontology` 등)는 자유입니다.
 - **모두 한 번에** (`roundRecordErrors`, `manifest.ts:266-288`; PQ-34 A): 어긋난 라운드마다 한 줄(`round <n> (<round_key>): <필드들>`, Round 0은 `round 0 (round-0): …`)을 모아, `roundRecordRefusal`(`manifest.ts:291-297`)이 SKILL의 꼴을 가리키는 마지막 줄과 함께 냅니다. 예는 [ops.md](ops.md)의 `write`에 있습니다. 하나라도 어긋나면 `write` 전체를 거부하고 아무것도 쓰지 않습니다.
-- **SKILL과 같은 목록**: SKILL Step 2e의 `Required:` 줄과 이 상수가 같은 집합인지 `tests/integration.test.ts:416-417`이 확인합니다.
+- **SKILL과 같은 목록**: SKILL Step 2e의 `Required:` 줄과 이 상수가 같은 집합인지 `tests/integration.test.ts:425-426`이 확인합니다.
 
 ## 8. 런타임 모호도
 

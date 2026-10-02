@@ -395,7 +395,10 @@ test("the deep-interview skill follows the gjc skill with its deviations marked"
     "`answer_simplifier`",
     "`architecture_implications`",
     "subagent(open-gajae-lateral-reviewer)",
-    "lateral-review-panel.md",
+    // Spec E20: the panel fragment is the role's prompt; the leader passes
+    // only the persona and the context.
+    "is the prompt of the `open-gajae-lateral-reviewer` role; it is not a skill, and you neither read it nor pass it (deviation 27)",
+    "do not run a lane as `open-gajae-lateral-reviewer`",
     "**Refine with ralplan consensus (Recommended",
     "**Execute with ultragoal",
     "**Refine further**",
@@ -444,27 +447,45 @@ test("the deep-interview skill follows the gjc skill with its deviations marked"
     "| 0.0 - 0.1 |",
     // Deviation 30: resume is an explicit call, not a side effect.
     "saves state for resume",
+    // Spec E20: no fragment file to read or paste.
+    "fragment read",
+    "full text of",
   ])
     expect(`${forbidden}: ${body.includes(forbidden)}`).toBe(`${forbidden}: false`);
   expect(source).toContain("5c5231418930673e42cc5d08ebe4376e03187533");
   expect(source).toContain('"Deviations from GJC (deep-interview)"');
-  const fragment = await readFile(
-    new URL("../skills/deep-interview/lateral-review-panel.md", import.meta.url),
+  // Spec E20 (PQ-27 A): the panel fragment is the lateral reviewer's prompt,
+  // so the skill folder holds no fragment file to read.
+  expect(await Bun.file(new URL("../skills/deep-interview/lateral-review-panel.md", import.meta.url)).exists()).toBe(false);
+  const prompt = await readFile(
+    new URL("../prompts/open-gajae-lateral-reviewer.md", import.meta.url),
     "utf8",
   );
-  expect(fragment).toStartWith("# Deep Interview Lateral Review Panel");
-  expect(fragment).toContain("5c5231418930673e42cc5d08ebe4376e03187533");
-  // The text the personas follow (before the source note) is gjc's with host
-  // paths and no added output-contract line (PQ-7 N).
-  const persona = fragment.slice(0, fragment.indexOf("<!-- Source:"));
-  expect(persona).not.toContain(".gjc");
-  expect(persona).not.toContain("output contract");
+  expect(prompt).toStartWith("# Open-gajae Lateral Reviewer");
+  const promptHeading = "\n## Source and host substitutions\n";
+  expect(prompt).toContain(promptHeading);
+  expect(prompt).toContain("5c5231418930673e42cc5d08ebe4376e03187533");
+  // The text the personas follow is gjc's fragment with the host
+  // substitutions its source table lists.
+  const persona = prompt.slice(0, prompt.indexOf(promptHeading));
+  for (const required of [
+    "Your assigned persona is provided in the assignment as `persona`",
+    "## Persona lens",
+    "From your assigned persona's lens only, identify the single highest-leverage blind spot",
+    "Respond with only this JSON object:",
+    '"suggested_options": [',
+    "## Fallback",
+    "`shell` is for read-only inspection only. Do not ask the user questions and do not delegate.",
+  ])
+    expect(`${required}: ${persona.includes(required)}`).toBe(`${required}: true`);
+  for (const forbidden of [".gjc", "nherited context", "in this prompt", "architect panel", "agent-supplied answer"])
+    expect(`${forbidden}: ${persona.includes(forbidden)}`).toBe(`${forbidden}: false`);
 });
 
-test("every deviation the deep-interview skill and fragment cite has a row in both README tables (P-AC9)", async () => {
+test("every deviation the deep-interview skill and lateral-reviewer prompt cite has a row in both README tables (P-AC9)", async () => {
   const cited = new Set<number>();
-  for (const file of ["SKILL.md", "lateral-review-panel.md"]) {
-    const text = await readFile(new URL(`../skills/deep-interview/${file}`, import.meta.url), "utf8");
+  for (const file of ["../skills/deep-interview/SKILL.md", "../prompts/open-gajae-lateral-reviewer.md"]) {
+    const text = await readFile(new URL(file, import.meta.url), "utf8");
     // "ralplan deviation N" and "ultragoal deviation N" point at other tables.
     for (const match of text.matchAll(/(ralplan |ultragoal )?deviations? (\d+(?:(?:, | and )\d+)*)/gi))
       if (!match[1]) for (const n of match[2].match(/\d+/g) ?? []) cited.add(Number(n));

@@ -7,23 +7,25 @@
 | 무엇 | 어디서 정하나 |
 |---|---|
 | 패널 역할 `open-gajae-lateral-reviewer`의 등록, 프롬프트, 권한, 도구 숨김, 모델 설정 | 코드 (`src/config.ts`, `src/hooks.ts`, `src/tools/permissions.ts`, `prompts/open-gajae-lateral-reviewer.md`) |
-| 패널 조각의 내용(persona 렌즈, 응답 JSON 꼴) | 조각 파일 `skills/deep-interview/lateral-review-panel.md` |
+| 패널 조각의 내용(persona 렌즈, 응답 JSON 꼴) | 패널 역할의 프롬프트 `prompts/open-gajae-lateral-reviewer.md` (gjc 조각 `lateral-review-panel.md`) |
 | 언제 여는지(밴드 전이), 누구를 부르는지(persona), 결과를 어떻게 합치는지, 무엇을 기록하는지 | SKILL Phase 3(`skills/deep-interview/SKILL.md:557-594`)와 Internal_Panel_Fragment(`:75-82`) |
 
 ## 패널 역할 `open-gajae-lateral-reviewer`
 
-persona가 도는 읽기 전용 subagent 역할입니다(계획 DR-36; PQ-7 N, PQ-26 B~PQ-29 A; spec Errata E10; deep-interview 편차 37).
+persona가 도는 읽기 전용 subagent 역할입니다(계획 DR-36; PQ-7 N, PQ-26 B, PQ-27 A, PQ-28 A, PQ-29 A; spec Errata E10, E20; deep-interview 편차 27, 37).
 
 ### 왜 따로 두나
 
-gjc의 persona는 부모 문맥을 물려받는(fork-context) subagent이고, 읽기 전용 architect로 설명됩니다. OpenCode `subagent`는 새 문맥에서 시작하고, 기존 `open-gajae-architect` 역할은 자기 Markdown 출력 계약을 가지고 있어 조각의 JSON 꼴과 부딪힙니다. 그래서 출력 계약이 없는 짧은 역할을 새로 만들었습니다(`prompts/open-gajae-lateral-reviewer.md:12`).
+gjc의 persona는 부모 문맥을 물려받는(fork-context) subagent이고, 읽기 전용 architect로 설명됩니다. OpenCode `subagent`는 새 문맥에서 시작하고, 기존 `open-gajae-architect` 역할은 자기 Markdown 출력 계약을 가지고 있어 조각의 JSON 꼴과 부딪힙니다. 그래서 패널 전용 역할을 새로 만들고, gjc 조각을 그 역할의 프롬프트로 씁니다(`prompts/open-gajae-lateral-reviewer.md:53`).
+
+처음에는 짧은 공통 프롬프트에 리더가 조각 파일을 읽어 호출마다 붙였습니다(PQ-27 B). 조각 파일이 플러그인 폴더, 즉 사용자 프로젝트 밖에 있어 읽을 때마다 호스트가 권한을 물었고, 2026-10-03 test-app 수동 실행 두 번 모두 거부되어 패널이 한 번도 돌지 않았습니다. 그래서 조각을 역할 프롬프트로 옮겼습니다(PQ-27 A, spec E20).
 
 ### 등록
 
 | 항목 | 코드 |
 |---|---|
 | 이름 | `agentNames`(`src/config.ts:9-21`, `:20`) |
-| 설명 | `Read-only lateral-review persona for deep-interview panels; answers in the shape its assignment asks for.`(`src/config.ts:248-249`) |
+| 설명 | `Read-only lateral-review persona for deep-interview panels; answers with one JSON finding.`(`src/config.ts:248-249`) |
 | 모드 | `subagent`(`registerAgents`, `src/config.ts:362`) |
 | 시스템 프롬프트 | `prompts/open-gajae-lateral-reviewer.md`(`loadPrompts`, `src/config.ts:330-341`). `<open-gajae-runtime-settings>` 블록은 붙지 않음(`open-gajae`만) |
 | 권한 | `roleRules`의 기본 분기(`src/config.ts:320-327`; PQ-28 A): `edit`, `subagent`, `question`, `deep-interview`, `opencode_session_move`, `opencode_session_rename`, `ultragoal`, `goal`, `ralplan` 거부. `shell` 규칙은 없음 |
@@ -51,22 +53,9 @@ gjc의 persona는 부모 문맥을 물려받는(fork-context) subagent이고, �
 
 ### 프롬프트
 
-`prompts/open-gajae-lateral-reviewer.md:1-8` 요지:
+`prompts/open-gajae-lateral-reviewer.md`는 gjc 조각 `lateral-review-panel.md`에 호스트 치환만 한 것입니다(`:51-63` 출처와 치환 표). 플러그인이 시작할 때 다른 역할 프롬프트와 함께 읽어 등록하므로, 실행 중에 조각 파일을 읽는 쪽이 없습니다.
 
-- deep-interview 리더가 `subagent`로 부르고, 한 번에 persona 하나, 여러 개를 병렬로 부릅니다.
-- 자기 문맥에서 돌므로 다른 persona가 할 말에 기대지 않습니다.
-- 과제의 문맥은 읽기 전용 배경입니다. 코드 편집, 파일 쓰기, `.open-gajae/` 변경, 포매터, workflow 인계, 구현을 하지 않습니다. `shell`은 읽기 전용 확인에만 씁니다.
-- 사용자에게 묻지 않고 맡기지 않습니다. 문맥이 모자라면 지어내지 말고 무엇이 모자란지 말합니다.
-- 맡은 관점에서만, 과제가 요구하는 꼴 그대로 답합니다. **자기 출력 계약은 없습니다.**
-
-`shell`의 읽기 전용은 권한이 아니라 프롬프트로만 요구합니다(다른 모든 역할과 같음).
-
-## 패널 조각 `lateral-review-panel.md`
-
-`skills/deep-interview/lateral-review-panel.md`는 gjc의 같은 이름 조각에 호스트 치환만 한 것입니다(`:51` 출처 주석). skill이 아니며 `skill`로 로드하지 않습니다(SKILL `:76`).
-
-내용:
-
+- 머리(`:3-9`): 패널의 persona 하나이고, 리더가 `subagent`로 한 번에 persona 하나씩 병렬로 부릅니다. 자기 문맥에서 돌므로 다른 persona가 할 말에 기대지 않습니다. 과제의 문맥은 읽기 전용 배경이고, 코드 편집, 파일 쓰기, `.open-gajae/` 변경, 포매터, workflow 인계, 구현을 하지 않습니다. `shell`은 읽기 전용 확인에만 쓰고, 사용자에게 묻지 않고 맡기지 않습니다. 답은 질문 하나에 접을 만큼 짧게 합니다.
 - persona 넷(`researcher`, `contrarian`, `simplifier`, `architect`)의 렌즈(`:11-16`)
 - 과제: 자기 렌즈에서 다음 질문이 다뤄야 할 가장 큰 사각지대나 미결정 하나와 해결 방안(`:18-20`)
 - 응답 꼴: 이 JSON 객체 하나만(`:22-39`)
@@ -83,15 +72,18 @@ gjc의 persona는 부모 문맥을 물려받는(fork-context) subagent이고, �
 - 규칙: `finding`은 비어 있지 않고 확정된 제약과 어긋나지 않음, `rationale` 1~3개, `suggested_options` 1~3개, `confidence`는 셋 중 하나(`:41-45`)
 - 문맥이 모자라면: `confidence` `low`, `finding`에 가장 중요한 빠진 문맥, `suggested_options`에 가장 안전한 확인 질문 하나(`:47-49`)
 
-호스트 치환(`:51`): "inherited context" → "the context passed in this prompt"(OpenCode `subagent`는 새 문맥, deep-interview 편차 18), `.gjc/` → `.open-gajae/`, "read-only architect panel" → "read-only review panel"(persona는 architect 역할이 아니라 패널 역할로 돎, deep-interview 편차 37), agent가 대신 답하기 전 패널을 여는 부분 삭제(deep-interview 편차 6). 출력 계약 문장을 더하지 않았습니다(계획 DR-33 철회). `tests/integration.test.ts:440-451`이 조각의 머리, 출처, `.gjc`·"output contract"가 없음을 확인합니다.
+호스트 치환(`:55-61`): 첫 문장에 역할 이름과 부르는 방식을 넣고 "read-only architect panel" → "read-only review panel"(persona는 architect 역할이 아니라 패널 역할로 돎, deep-interview 편차 37), agent가 대신 답하기 전 패널을 여는 부분 삭제(편차 6), "inherited context"·"in the prompt" → "the context passed in the assignment"·"in the assignment"(OpenCode `subagent`는 새 문맥이고 이 글은 과제가 아니라 역할 프롬프트, 편차 18), `.gjc/` → `.open-gajae/`, 역할 권한을 밝히는 문장 하나("`shell` is for read-only inspection only. Do not ask the user questions and do not delegate.") 추가. `tests/integration.test.ts:457-482`가 스킬 폴더에 조각 파일이 없음, 프롬프트의 머리와 출처, 조각 본문의 주요 문장, 치환 전 문구(`.gjc`, "inherited context", "architect panel" 등)가 남지 않음을 확인합니다.
+
+`shell`의 읽기 전용은 권한이 아니라 프롬프트로만 요구합니다(다른 모든 역할과 같음).
 
 ### 전달 방식
 
 SKILL Internal_Panel_Fragment(`SKILL.md:75-82`, deep-interview 편차 27):
 
-- 패널을 열 때만 조각을 읽습니다.
-- persona마다 `subagent(open-gajae-lateral-reviewer)` 프롬프트에 **조각 전문**, 그 persona 이름(`persona`), 프롬프트 예산에 맞춘 인터뷰 문맥 요약을 넣습니다. persona는 새 문맥에서 시작하므로 프롬프트에 든 것만 봅니다.
-- gjc는 `skill-fragment` 로더로 fork-context subagent에 조각을 붙입니다. open-gajae에는 그런 로더가 없어 리더가 매번 넘깁니다.
+- 리더는 조각을 읽거나 넘기지 않습니다. 조각이 역할 프롬프트이기 때문입니다.
+- persona마다 `subagent(open-gajae-lateral-reviewer)` 호출에 그 persona 이름(`persona`)과 프롬프트 예산에 맞춘 인터뷰 문맥 요약만 넣습니다. persona는 새 문맥에서 시작하므로 역할 프롬프트와 호출에 든 것만 봅니다.
+- gjc는 리더가 내장 조각을 내부 주소(`embedded:gjc/skill-fragments/...`)로 읽고, 부모 문맥을 물려받는 fork-context subagent가 그것을 봅니다. 파일 시스템을 거치지 않아 권한 질문이 없습니다. open-gajae에는 fork도 내부 주소도 없어 역할 프롬프트로 옮겼습니다.
+- 이 역할은 패널 전용입니다. 조각이 패널의 JSON 꼴을 요구하므로 advisory lane은 이 역할을 쓰지 않습니다(SKILL `:594`).
 
 ## 언제 여나: 밴드 전이
 
@@ -138,7 +130,7 @@ SKILL Phase 3 "Folding findings"(`SKILL.md:572`)와 Internal_Panel_Fragment(`:79
 SKILL Phase 3 "Bookkeeping"(`SKILL.md:582`), Step 2e(`:475`), Phase 1 초기화(`:182-183`):
 
 - 연 패널마다 `state.lateral_reviews`에 라운드, 밴드 전이, 부른 persona, 접어 넣은 지적을 남깁니다.
-- 패널 실행, 조각 읽기, 응답 검증이 실패하면 조용히 평소 질문으로 돌아가고 `state.lateral_panel_failures`를 1 올립니다. 질문이 달라지지 않는 한 도구 잡음을 사용자에게 보이지 않습니다.
+- 패널 실행이나 응답 검증이 실패하면 조용히 평소 질문으로 돌아가고 `state.lateral_panel_failures`를 1 올립니다. 질문이 달라지지 않는 한 도구 잡음을 사용자에게 보이지 않습니다.
 - 스펙 메타데이터에 두 값(`Lateral Reviews`, `Lateral Panel Failures`)을 적습니다(SKILL Phase 4, `:632-633`).
 
 두 필드는 런타임에게 자유 필드입니다. `write`가 `state` 안에서 얕게 병합하므로, `lateral_reviews` 배열을 보내면 **배열 전체가 바뀝니다**. 키로 병합하는 컬렉션은 `rounds`와 `established_facts`뿐입니다(SKILL `:538`). 그래서 새 항목을 더할 때는 기존 항목을 포함한 전체 배열을 보내야 합니다. 코드는 값의 모양이나 증가 여부를 보지 않습니다.
@@ -155,7 +147,7 @@ SKILL Phase 3 "Per-question advisory fanout lanes"(`SKILL.md:584-594`). 밴드 �
 | `answer_simplifier` | 질문을 쉬운 선택지 2~3개나 짧은 초안 하나로 |
 | `architecture_implications` | 답이 소유, 인터페이스, 배포, 시스템 모양을 바꾸는지 |
 
-- **역할을 정하지 않습니다** (PQ-4 A, PQ-30 A; spec Errata E11). gjc처럼 SKILL이 lane의 역할을 적지 않고, 리더가 고릅니다. 읽기 전용 역할(`open-gajae-explore`, `open-gajae-document-specialist`, 패널 역할 등)을 쓸 수 있습니다.
+- **역할을 정하지 않습니다** (PQ-4 A, PQ-30 A; spec Errata E11). gjc처럼 SKILL이 lane의 역할을 적지 않고, 리더가 고릅니다. 읽기 전용 역할(`open-gajae-explore`, `open-gajae-document-specialist` 등)을 쓸 수 있습니다. 패널 역할 `open-gajae-lateral-reviewer`는 프롬프트가 패널의 JSON 꼴을 요구하므로 쓰지 않습니다(SKILL `:594`, spec E20).
 - **문맥은 프롬프트로**: OpenCode `subagent`는 부모 문맥을 물려받지 않으므로, 리더가 lane마다 필요한 문맥을 프롬프트에 넣습니다(deep-interview 편차 18).
 - 한 메시지의 병렬 `subagent` 호출로 돌리고, 패널처럼 background로 돌리지 않습니다(SKILL `:594`, 계획 DR-30). 자식 execution이 도는 동안에는 continuation이 멈추기 때문입니다.
 - 보조일 뿐입니다. 사용자에게 가는 질문 하나를 대신하거나 늦추지 않고, 두 번째 질문을 더하지 않으며, 사용자의 승인이나 수정 없이 만든 답을 넘기지 않습니다.
@@ -169,7 +161,8 @@ SKILL Phase 3 "Per-question advisory fanout lanes"(`SKILL.md:584-594`). 밴드 �
 | persona는 파일을 고치지 않음 | 예(`edit` 거부, 사용자 설정이 풀 수 있음) | `shell`은 프롬프트로만 |
 | persona는 workflow 도구·`question`·`subagent`를 쓰지 않음 | 예(권한 + 도구 숨김) | |
 | 밴드가 바뀔 때만 패널을 엶 | | 예 |
-| persona 셋(+ architect)을 병렬로, 조각 전문과 함께 부름 | | 예 |
+| persona 셋(+ architect)을 병렬로 부름 | | 예 |
+| persona가 조각대로 JSON으로 답함 | 예(조각이 역할 프롬프트) | |
 | background로 돌리지 않음 | | 예 |
 | 응답 검증, 질문 하나로 접기 | | 예 |
 | `lateral_reviews`·`lateral_panel_failures` 기록 | | 예 |

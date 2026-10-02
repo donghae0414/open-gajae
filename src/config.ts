@@ -246,7 +246,7 @@ const descriptions: Record<AgentName, string> = {
   "open-gajae-cleaner":
     "Read-only AI-slop and cleanup review of changed files; reports blocking issues.",
   "open-gajae-lateral-reviewer":
-    "Read-only lateral-review persona for deep-interview panels; answers in the shape its assignment asks for.",
+    "Read-only lateral-review persona for deep-interview panels; answers with one JSON finding.",
 };
 
 const deny = (action: string): Rule => ({

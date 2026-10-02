@@ -73,11 +73,11 @@ source: "gajae-code 5c5231418930673e42cc5d08ebe4376e03187533 deep-interview skil
 </Execution_Policy>
 
 <Internal_Panel_Fragment>
-- `lateral-review-panel.md` in this skill's folder is the internal prompt fragment of the Phase 3 panel; it is not a skill and is never loaded through `skill`.
-- Read it only when the panel convenes, and pass its full text in each persona's `subagent(open-gajae-lateral-reviewer)` prompt together with the persona and a prompt-budgeted summary of the interview context (deviation 27). The persona starts from a fresh context and sees only what the prompt carries.
+- gjc's internal prompt fragment of the Phase 3 panel, `lateral-review-panel.md`, is the prompt of the `open-gajae-lateral-reviewer` role; it is not a skill, and you neither read it nor pass it (deviation 27).
+- When the panel convenes, give each persona's `subagent(open-gajae-lateral-reviewer)` call only its `persona` and a prompt-budgeted summary of the interview context. The persona starts from a fresh context and sees only its role prompt and what the call carries.
 - Panel personas are read-only: no code edits, no `.open-gajae/` mutation, no workflow chaining, no formatters, and no execution delegation.
 - Validate every fragment response before using it: required fields must be present, the response must match the requested shape, rationale must cite available context, confidence must be explicit, and insufficient-context fallbacks must be honored.
-- If a panel spawn, fragment read, or response validation fails, continue the normal interview path silently and record an internal audit note in state by incrementing `lateral_panel_failures`; do not expose tool noise to the user unless it changes the next user-facing question.
+- If a panel spawn or response validation fails, continue the normal interview path silently and record an internal audit note in state by incrementing `lateral_panel_failures`; do not expose tool noise to the user unless it changes the next user-facing question.
 - Track `lateral_reviews` and `lateral_panel_failures` in state and final spec metadata.
 </Internal_Panel_Fragment>
 
@@ -567,7 +567,7 @@ The interview convenes a short multi-persona panel at **ambiguity-milestone tran
 
 A transition occurs whenever the band changes versus the prior scored round — in either direction, since bidirectional scoring can move the band back up. On a transition, convene the panel before generating or asking the next question.
 
-**Personas (run in parallel, independent context):** dispatch `researcher`, `contrarian`, and `simplifier` as parallel `subagent(open-gajae-lateral-reviewer)` calls in one message, each prompt carrying the full text of `lateral-review-panel.md`, its `persona`, and its own copy of the prompt-safe context so no persona anchors on another's framing (deviations 27, 37). Add the `architect` persona when the round changed system shape — scope expansion, a new component or integration (trigger D), or any change to ownership or architecture. Each persona runs in the read-only panel role: no edits, no `.open-gajae/` mutation, no execution. Do not run the panel in the background: the plugin does not resume an interview while a subagent runs.
+**Personas (run in parallel, independent context):** dispatch `researcher`, `contrarian`, and `simplifier` as parallel `subagent(open-gajae-lateral-reviewer)` calls in one message, each prompt carrying its `persona` and its own copy of the prompt-safe context so no persona anchors on another's framing; the role's prompt is the panel fragment (deviations 27, 37). Add the `architect` persona when the round changed system shape — scope expansion, a new component or integration (trigger D), or any change to ownership or architecture. Each persona runs in the read-only panel role: no edits, no `.open-gajae/` mutation, no execution. Do not run the panel in the background: the plugin does not resume an interview while a subagent runs.
 
 **Folding findings:** validate each persona response, then fold only concrete, user-safe findings into the next single user-facing question — as 2-3 ranked answer options or one recommended draft. The panel never adds a second question, never mutates requirements on its own, and never marks the interview complete. The one-question-per-round rule stays intact.
 
@@ -591,7 +591,7 @@ Separate from the milestone-triggered lateral panel above, a lightweight **advis
 - `answer_simplifier` — turn the question into 2-3 easy choices or one concise draft answer.
 - `architecture_implications` — check whether the answer changes ownership, interfaces, rollout, or system shape.
 
-Advisory fanout is an assist layer, not a decision maker: it never replaces or delays the single user-facing question, never adds a second question, and never forwards a synthesized answer without the user's approval or edit. It differs from the milestone panel in trigger (per-question, not band-transition) and intent (help the human answer this one question). When both would fire on the same round, run the milestone panel and fold advisory lanes into the same single question. Run lanes as parallel `subagent` calls in one message, not in the background, as for the panel; an OpenCode `subagent` starts from a fresh context, so pass each lane the context it needs in its prompt (deviation 18). On lane failure, fall back silently to the normal generated question.
+Advisory fanout is an assist layer, not a decision maker: it never replaces or delays the single user-facing question, never adds a second question, and never forwards a synthesized answer without the user's approval or edit. It differs from the milestone panel in trigger (per-question, not band-transition) and intent (help the human answer this one question). When both would fire on the same round, run the milestone panel and fold advisory lanes into the same single question. Run lanes as parallel `subagent` calls in one message, not in the background, as for the panel; an OpenCode `subagent` starts from a fresh context, so pass each lane the context it needs in its prompt (deviation 18), and do not run a lane as `open-gajae-lateral-reviewer`, whose prompt asks for the panel's JSON (deviation 27). On lane failure, fall back silently to the normal generated question.
 
 ### Input safety
 
@@ -798,7 +798,7 @@ Skipping any stage is possible but reduces quality assurance:
 - Use `deep-interview handoff(to)` and the `skill` tool to bridge to ralplan or ultragoal only after explicit execution approval — never implement directly. Implementation handoff defaults to ultragoal.
 - The lateral-review panel runs read-only `subagent(open-gajae-lateral-reviewer)` personas in parallel with independent context; it is an assist layer, never an executor and never the completion authority
 - Apply the Closure + Restate gates (Phase 4) through the `question` tool in the user's language; if any of these gates has options, the assistant must call `question` and must not print `Question:`/`Options:` blocks as assistant prose
-- Use the panel fragment `lateral-review-panel.md` only for the Phase 3 panel personas at ambiguity-milestone transitions.
+- Use `open-gajae-lateral-reviewer`, whose prompt is the panel fragment `lateral-review-panel.md`, only for the Phase 3 panel personas at ambiguity-milestone transitions.
 </Tool_Usage>
 
 <Examples>
@@ -955,7 +955,7 @@ Task: Use the user request appended after this skill as the final `User:` line.
 
 ## Source and host substitutions
 
-Source: Gajae Code `packages/coding-agent/src/defaults/gjc/skills/deep-interview/SKILL.md` at `5c5231418930673e42cc5d08ebe4376e03187533` (MIT). The body keeps gjc's principles, Do-not-use list, execution policy, corrupt-state recovery, Phase 0 threshold marker, Phase 0.5 suitability gate, Phase 1 initialization, the Round 0 topology gate, the Phase 2 loop (weakest-dimension targeting, bidirectional triggers A-D, established facts, the deterministic floor, the scoring prompt and formulas, ontology stability, the progress report, incremental state writes, the continuation contract), the Phase 3 lateral review panel and advisory lanes, the Phase 4 closure and restate gates with the spec structure, the Phase 5 bridge, tool usage, examples, stop conditions, checklist and advanced notes, with the host substitutions and deviations below. The panel fragment `lateral-review-panel.md` is gjc's fragment of the same name. Deviation numbers refer to "Deviations from GJC (deep-interview)" in README.md, which records the reason and impact of each one; "ralplan deviation N" and "ultragoal deviation N" refer to those tables.
+Source: Gajae Code `packages/coding-agent/src/defaults/gjc/skills/deep-interview/SKILL.md` at `5c5231418930673e42cc5d08ebe4376e03187533` (MIT). The body keeps gjc's principles, Do-not-use list, execution policy, corrupt-state recovery, Phase 0 threshold marker, Phase 0.5 suitability gate, Phase 1 initialization, the Round 0 topology gate, the Phase 2 loop (weakest-dimension targeting, bidirectional triggers A-D, established facts, the deterministic floor, the scoring prompt and formulas, ontology stability, the progress report, incremental state writes, the continuation contract), the Phase 3 lateral review panel and advisory lanes, the Phase 4 closure and restate gates with the spec structure, the Phase 5 bridge, tool usage, examples, stop conditions, checklist and advanced notes, with the host substitutions and deviations below. gjc's panel fragment `lateral-review-panel.md` is the prompt of the `open-gajae-lateral-reviewer` role (`prompts/open-gajae-lateral-reviewer.md`). Deviation numbers refer to "Deviations from GJC (deep-interview)" in README.md, which records the reason and impact of each one; "ralplan deviation N" and "ultragoal deviation N" refer to those tables.
 
 | gjc 5c52314 | open-gajae | Record |
 |---|---|---|
@@ -980,7 +980,7 @@ Source: Gajae Code `packages/coding-agent/src/defaults/gjc/skills/deep-interview
 | Step 2b′ agent-supplied answers, the auto-answer fragment, the 0.85 clarity cap, the dialectic rhythm guard, the floor's third term | Removed | Deviations 4, 6 |
 | Step 2b″ free-text refine gate | Removed | Deviation 9 |
 | "Ask about these choices" | Removed; a free-text clarification is re-asked | Deviation 7 |
-| Panel personas as fork-context subagents through the `skill-fragment` loader | `subagent(open-gajae-lateral-reviewer)` in parallel; the fragment file's text passed in each prompt | Deviations 18, 27, 37 |
+| Panel personas as fork-context subagents through the `skill-fragment` loader | `subagent(open-gajae-lateral-reviewer)` in parallel, whose role prompt is the fragment; each call carries its `persona` and context | Deviations 18, 27, 37 |
 | Advisory lanes as fork-context subagents | Parallel `subagent` calls with the needed context in the prompt; no fixed role | Deviation 18 |
 | Structured adapter context (`confused_terms`, `references`) riding `ask` metadata | Removed with the metadata | Deviation 3 |
 | "Replacing an already-scored answer for the same round … automatically marks that round's established facts as disputed" (the recorder's `disputeFactsFromRetractedRound`) | The model marks the contradicted facts disputed in the same `write`; the runtime floor then counts them | Deviation 3 |

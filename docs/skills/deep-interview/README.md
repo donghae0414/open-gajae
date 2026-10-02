@@ -8,7 +8,7 @@
 다른 문서와는 이렇게 나뉩니다.
 
 - **정책**: `AGENTS.md`와 루트 `README.md`가 정합니다. GJC와 다른 점은 루트 README의 "Deviations from GJC (deep-interview)" 표에 있습니다. 이 폴더에서 "deep-interview 편차 N"은 그 표의 번호입니다.
-- **결정 기록**: spec `.omc/specs/deep-interview-deep-interview-gjc-revision.md`(Errata E1–E19이 본문보다 우선), 계획 `.omc/plans/ralplan-deep-interview-gjc-revision.md`, 결정 모음 `.omc/plans/deep-interview-gjc-pq-decisions.md`.
+- **결정 기록**: spec `.omc/specs/deep-interview-deep-interview-gjc-revision.md`(Errata E1–E20이 본문보다 우선), 계획 `.omc/plans/ralplan-deep-interview-gjc-revision.md`, 결정 모음 `.omc/plans/deep-interview-gjc-pq-decisions.md`.
 - **이 폴더**: 현재 구현만 적습니다. 결정 ID(`DR-…`, `C-…`, `PQ-…`, `K…`)는 근거를 찾아갈 수 있게 달아 둡니다. 결정 기록과 코드가 다르면 코드가 기준입니다.
 
 ## deep-interview가 하는 일
@@ -20,8 +20,7 @@ deep-interview는 모호한 요청을 한 번에 질문 하나씩 묻고, 답마
 | `deep-interview` 도구 (`src/deep-interview-runtime/tool.ts`) | op 8개(`start`, `write`, `spec`, `handoff`, `status`, `doctor`, `state`, `clear`). deep-interview 상태, 스펙 파일, 스펙 index, 활성 행을 쓰는 유일한 길입니다. `open-gajae`만 부를 수 있습니다. |
 | 훅 (`src/hooks.ts`, `src/deep-interview-runtime/hooks.ts`) | 키워드·멘션 안내, 편집 가드, 스펙 경로 항상 차단, 같은 execution의 skill 로드 게이트, continuation, 압축 문맥, 도구 숨김 |
 | SKILL (`skills/deep-interview/SKILL.md`) | 모델에게 순서를 지시합니다. Phase 0 기준치, Round 0 topology, 질문과 점수, 라운드 기록, 패널, closure·restate gate, 스펙, Phase 5 선택지. |
-| 패널 조각 (`skills/deep-interview/lateral-review-panel.md`) | Phase 3 패널 persona에게 넘기는 프롬프트 조각. skill이 아니며 `skill`로 로드하지 않습니다. |
-| 패널 역할 (`open-gajae-lateral-reviewer`) | 패널 persona가 도는 읽기 전용 subagent 역할 |
+| 패널 역할 (`open-gajae-lateral-reviewer`, `prompts/open-gajae-lateral-reviewer.md`) | 패널 persona가 도는 읽기 전용 subagent 역할. 프롬프트가 gjc 패널 조각 `lateral-review-panel.md`입니다. |
 | 공통 기반 (`src/skill-state/`, `src/state.ts`) | 활성 행과 스냅숏, 감사 로그, 저널 인계, doctor, 세션 쓰기 큐. ralplan·ultragoal과 함께 씁니다. |
 
 **코드가 강제하는 것과 SKILL만 요구하는 것은 다릅니다.** 코드는 도구 입력의 모양, 상태의 phase와 `active`, 스펙 파일의 sha256, 크기 한도를 검사하고, 파일 상태에 따라 거부하거나 주입합니다. 질문을 실제로 `question`으로 했는지, 라운드 기록이 실제 답과 같은지, 모호도가 기준치 아래인지, 패널을 언제 열었는지는 코드가 알지 못합니다. 그런 규칙은 SKILL 문구로만 요구합니다. 각 문서는 이 구분을 따로 적습니다.
