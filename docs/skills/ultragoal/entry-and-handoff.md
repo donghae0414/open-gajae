@@ -40,7 +40,7 @@ gjc 출처: 없음. 안내 문구는 open-gajae가 만든 것입니다(`src/ultr
 ### 검사 순서
 
 ```
-G1  세션 agent 조회(session.get). 역할 subagent(planner·architect·critic·executor·cleaner)면
+G1  세션 agent 조회(session.get). 역할 subagent(planner·architect·critic·executor·cleaner·lateral-reviewer)면
     여기서 끝. 아무것도 하지 않음(중단 표시·goal 보류도 건드리지 않음). 조회 실패는 통과.
 G2  프롬프트 글에 주입 표식(INJECTION_MARKERS: <ultragoal-notice> 등)이 있으면 끝.
     플러그인이 넣은 글이 다시 들어온 경우를 거릅니다.
@@ -121,7 +121,7 @@ G2  프롬프트 글에 주입 표식(INJECTION_MARKERS: <ultragoal-notice> 등)
 - 안내 자체는 상태 파일을 쓰지 않습니다. ultragoal state, 활성 행, goal 모두 그대로입니다. 다만 같은 `prompt` 훅이 계보 루트 세션에서 `goal.releaseHold`(`src/goal/hooks.ts`)를 부르고, 이것은 지금 goal의 보류 기록이나 0이 아닌 도구 없는 턴 수가 있으면 `state/goal-continuation.json`을 다시 씁니다([goal-loop.md](goal-loop.md)). 키워드·멘션이 없는 프롬프트에서도 똑같이 일어납니다.
 - `@ultragoal` 멘션은 호스트가 skill 본문을 메시지에 붙이지만 `skill` 도구 호출은 아닙니다(`ultragoalMentionNotice` 주석). 그래서 멘션만으로는 `goal-planning`이 시작되지 않고, 안내가 `skill` 도구로 불러오라고 말합니다.
 - ultragoal이 주 skill일 때 `@ralplan`·`@deep-interview` 멘션이 붙인 skill 본문은 막지 못합니다. 코드가 막는 것은 `skill` 도구 로드(아래 [체인 가드](#체인-가드))와 `ralplan start`뿐입니다.
-- 안내를 받는 것은 agent가 `open-gajae`인 세션과, agent가 없거나 조회에 실패한 세션입니다. 역할 subagent 다섯(`open-gajae-planner`, `-architect`, `-critic`, `-executor`, `-cleaner`, `ROLE_SUBAGENTS`)은 G1에서 바로 끝나므로 중단 표시와 goal 보류도 풀지 않습니다. 그 밖의 agent(`open-gajae-explore`, `open-gajae-document-specialist`, `build` 같은 호스트·사용자 agent)는 안내를 받지 않지만 중단 표시를 풀고, 계보 루트면 goal 보류도 풉니다([known-limits.md](known-limits.md) U26).
+- 안내를 받는 것은 agent가 `open-gajae`인 세션과, agent가 없거나 조회에 실패한 세션입니다. 역할 subagent 여섯(`open-gajae-planner`, `-architect`, `-critic`, `-executor`, `-cleaner`, `-lateral-reviewer`, `ROLE_SUBAGENTS`)은 G1에서 바로 끝나므로 중단 표시와 goal 보류도 풀지 않습니다. 그 밖의 agent(`open-gajae-explore`, `open-gajae-document-specialist`, `build` 같은 호스트·사용자 agent)는 안내를 받지 않지만 중단 표시를 풀고, 계보 루트면 goal 보류도 풉니다([known-limits.md](known-limits.md) U26).
 
 ## 턴 표식
 
@@ -290,7 +290,7 @@ gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(인계 동사), `tools/skil
 | agent가 `open-gajae`도 역할(planner·architect·critic)도 아님 | `the ralplan tool is not available to <agent>` |
 | 역할 agent | `<agent> may only use write, status and state` |
 | 계보 루트 조회 실패 | `could not resolve the session lineage for ralplan` |
-| `to`가 `"ultragoal"`이 아님(생략 포함). 입력 스키마가 `z.enum(["ultragoal"])`이라 다른 값은 스키마 단계에서 막힘 | `to must be "ultragoal"` |
+| `to` 생략. 입력 스키마가 `z.enum(["ultragoal", "deep-interview"])`라 다른 값은 호스트의 입력 검사에서 막힘. `to: "deep-interview"`는 [ralplan entry-and-handoff.md](../ralplan/entry-and-handoff.md)에 있음 | `to must be "ultragoal" or "deep-interview"` |
 
 그다음 `src/ralplan-runtime/store.ts`의 `ralplanHandoff`가 계보 루트의 트랜잭션 하나에서 `ralplanHandoffTx(tx, root, RUNTIME_OWNER, "ralplan handoff to ultragoal")`를 부릅니다. 마지막 인자(이유)는 `handoffWorkflowTx`의 `reason`으로 넘어가지만, 이 값을 쓰는 곳은 `recordCaller`뿐이고 ralplan 쪽은 `recordCaller`를 넘기지 않으므로 어디에도 저장되지 않습니다. 진입 게이트가 넘기는 `"skill ultragoal loaded after ralplan"`도 같습니다.
 
@@ -644,7 +644,7 @@ ultragoal 실행 중 계획을 다시 세우는 경우입니다(옛 U7).
 | ultragoal이 주 skill이면 `skill ralplan`·`skill deep-interview` 거부 | 예 | |
 | `ultragoal handoff`에 비어 있지 않은 `reason` | 예 | |
 | 인계는 goal을 건드리지 않음 | 예 | |
-| 넘겨받은 ralplan에서 `ralplan start`를 부르지 않음 | | 예 (ultragoal이 비활성이라 코드는 허용) |
+| 넘겨받은 ralplan에서 `ralplan start`를 부르지 않음 | 예 (`ralplan start`는 활성 ralplan run을 거부, ralplan 편차 39) | |
 | 넘긴 뒤 ralplan·deep-interview 작업 중에는 `ultragoal` op를 부르지 않음 | | 예 (끝나지 않은 `goals.json`이 있으면 reconcile op가 ultragoal을 다시 켬) |
 | `ralplan handoff`는 T 단계와 `active`를 요구 | 예 | |
 | `ultragoal handoff`는 ultragoal의 활성·단계를 요구 | 아니오 (파일 존재만 확인) | SKILL도 요구하지 않음 |

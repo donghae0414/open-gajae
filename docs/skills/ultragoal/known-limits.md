@@ -66,7 +66,7 @@
 
 옛 문서의 "복원 안내"는 이제 없습니다. `src/hooks.ts`의 `prompt` 훅은 agent에 따라 셋으로 나뉩니다.
 
-- **역할 subagent**(`ROLE_SUBAGENTS`: planner, architect, critic, executor, cleaner 다섯): 첫 검사(G1)에서 바로 돌아갑니다. 아무것도 하지 않습니다.
+- **역할 subagent**(`ROLE_SUBAGENTS`: planner, architect, critic, executor, cleaner, lateral-reviewer 여섯): 첫 검사(G1)에서 바로 돌아갑니다. 아무것도 하지 않습니다.
 - **그 밖의 다른 agent**(예: 루트 세션의 `build`, `open-gajae-explore`, `open-gajae-document-specialist`):
   - 중단 표시를 풀고, 계보 루트 세션이면 goal 보류도 풉니다([goal-loop.md](goal-loop.md)).
   - ralplan·deep-interview·ultragoal 키워드와 멘션 안내는 주지 않습니다.

@@ -488,7 +488,7 @@ Send a message to continue: any user message releases the hold and resets the cr
 
 `src/hooks.ts` `prompt` 훅이 진짜 사용자 프롬프트를 받으면:
 
-1. G1: 세션 agent가 역할 subagent 다섯(`open-gajae-planner`, `-architect`, `-critic`, `-executor`, `-cleaner`) 가운데 하나면 끝. 조회 실패는 계속 진행.
+1. G1: 세션 agent가 역할 subagent 여섯(`open-gajae-planner`, `-architect`, `-critic`, `-executor`, `-cleaner`, `-lateral-reviewer`) 가운데 하나면 끝. 조회 실패는 계속 진행.
 2. G2: 프롬프트 텍스트에 `INJECTION_MARKERS`의 표지(`<goal-notice>`, `<goal-context>`, `<goal-continuation>` 등)가 들어 있으면 플러그인 주입문으로 보고 끝.
 3. `interrupted`에서 이 세션을 지움(Esc 해제, 5절).
 4. `rootSession(sessionID)`이 자기 자신이면 `goal.releaseHold(sessionID)`. agent가 `build` 같은 다른 agent여도 풉니다(R-OD20).

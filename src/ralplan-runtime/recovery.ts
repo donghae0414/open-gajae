@@ -10,7 +10,7 @@
 //   `:116-389` (bounds, markdown sections, objective, `projectRalplanRun*`),
 //   `:391-400` (`isSafeRunId`), `:408-440` (the state half of
 //   `projectLatestRalplanRun`)
-// - `session/agent-session.ts:667-710` (`renderWorkflowRecoveryContext`),
+// - `session/agent-session.ts:667-703` (`renderWorkflowRecoveryContext`),
 //   `:745-753` (`sanitizeCompactionStateText`)
 // Not ported: ultragoal-only fields (`currentGoal`, `progress`, whose render
 // lines never appear for ralplan), the zero-progress fingerprint (read only by

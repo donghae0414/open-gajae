@@ -1,15 +1,15 @@
 // Workflow host hooks, assembled here (ultragoal revision plan S3 3b): the
-// continuation on durable execution events (the goal loop first, then
-// ralplan), the keyword/mention notices, the goal hold release and the turn
-// marker on the v2 `prompt` hook, the mutation guards, the `skill` chain guard
-// and turn gate, and the red-team fragment on `execute.before`, the marker
-// revert on `execute.after`, the workflow-tool hiding and the goal context on
-// `context` (plan C-11, C-9), and the compaction recovery context. The goal
-// logic lives in `src/goal/hooks.ts`, the ultragoal seed and texts in
+// continuation on durable execution events (deep-interview, then the goal loop,
+// then ralplan), the keyword/mention notices, the goal hold release and the
+// turn marker on the v2 `prompt` hook, the mutation guards, the `skill` chain
+// guard and turn gate, and the red-team fragment on `execute.before`, the
+// marker revert on `execute.after`, the workflow-tool hiding and the goal
+// context on `context` (plan C-11, C-9), and the compaction recovery context.
+// The goal logic lives in `src/goal/hooks.ts`, the ultragoal seed and texts in
 // `src/ultragoal-runtime/`, the ralplan handoff in
 // `src/ralplan-runtime/store.ts`. The prompt hook also carries the
-// deep-interview keyword and `@deep-interview` mention, which only inject
-// OMC's magic-keyword guide and seed no state at all.
+// deep-interview keyword and `@deep-interview` mention, which only inject OMC's
+// magic-keyword guide and seed no state at all.
 //
 // Ralplan plan S3 (gajae-code 5c5231418930673e42cc5d08ebe4376e03187533, MIT):
 // the ralplan keyword and mention only add a notice (D-F13, R-O6) and the OMC
@@ -19,7 +19,7 @@
 // (`skill-state/workflow-mutation-guard.ts:22-29,264-351,1767-1866`;
 // deviations 11, 23); continuation keeps OMC's loop over the gjc terminal set
 // with a hook-only counter file (deviations 10, 26); compaction adds the gjc
-// recovery contract (`session/agent-session.ts:667-710`, deviation 20).
+// recovery contract (`session/agent-session.ts:667-703`, deviation 20).
 //
 // Ultragoal revision plan S3 (same gjc revision):
 // - C-9 (PQ-20 A, PQ-7 B, D-TL6): on each root `succeeded`, an active goal
@@ -255,7 +255,7 @@ const PRIMARY_AGENT = "open-gajae";
 const RED_TEAM_AGENT = "open-gajae-executor";
 
 /**
- * G1's deny-list: the six owned role subagents from `src/config.ts`. A
+ * G1's deny-list: six of the eight owned subagents in `src/config.ts`. A
  * `subagent` turn runs in a child session carrying the child's agent, and a
  * role's brief can quote a workflow keyword, so the prompt hook skips these
  * roles: no keyword or mention notices in a session whose agent has

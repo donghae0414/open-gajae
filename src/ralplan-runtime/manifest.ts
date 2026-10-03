@@ -94,7 +94,7 @@ const SKILL_TOOL_TERMINAL_PHASES = [
 /**
  * T (plan C-2): gjc `TERMINAL_PHASES` ∪ ralplan `terminalStates` =
  * final, handoff, complete, completed, failed, cancelled, canceled, inactive.
- * Used by running, continuation, the ultragoal entry gate and the handoff op.
+ * Used by continuation, the `skill ultragoal` turn gate and the handoff op.
  */
 export const TERMINAL_PHASES: ReadonlySet<string> = new Set<string>([
   ...RALPLAN_TERMINAL_STATES,

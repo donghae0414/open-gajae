@@ -21,8 +21,8 @@
 // `path` must be a neutral temp file, DR-11), 31 (`start{run_id}`, DR-19), 32
 // (the owner session is the lineage root, not an argument, DR-1), 34 (the
 // handoff needs a phase in T, DR-7), 39 (`start` refuses while a ralplan
-// run is active, deep-interview revision plan DR-39). DR-22: agents the
-// plugin does not own can see the tool and are refused at run time.
+// run is active, deep-interview revision plan DR-39). DR-22: agents other than
+// `open-gajae` and the three roles are refused here; `src/hooks.ts` hides it too.
 
 import { z } from "zod";
 import { type StateStore, ULTRAGOAL_MODE } from "../state.js";
@@ -108,7 +108,7 @@ const input = z.object({
     .string()
     .optional()
     .describe(
-      "start/write: the run folder (1-64 of A-Z a-z 0-9 . _ -, no ..); defaults to the state's run_id, then the session id.",
+      "start/write: the run folder (1-64 of A-Z a-z 0-9 . _ -, not starting with ., no ..); defaults to the state's run_id, then the session id.",
     ),
   stage: z
     .string()
@@ -154,7 +154,7 @@ const input = z.object({
     .optional()
     .describe('state: fields to merge; null deletes a field. Stop here is {"active": false}.'),
   to: z.enum(["ultragoal", "deep-interview"]).optional().describe("handoff: the target skill."),
-  force: z.boolean().optional().describe("clear: overwrite a corrupt state."),
+  force: z.boolean().optional().describe("clear: clear even a corrupt or stale state (skips the corrupt, stale and unreadable-row checks)."),
 });
 
 type Args = z.output<typeof input>;
