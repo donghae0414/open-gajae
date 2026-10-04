@@ -1,9 +1,17 @@
 {
   "name": "open-gajae",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
-  "description": "OpenCode plugin with gjc-based deep-interview, ralplan and ultragoal workflows, session-scoped state and read-only specialists",
+  "description": "OpenCode plugin that takes coding work from a vague idea to verified changes with three skills: deep-interview (clarify), ralplan (plan) and ultragoal (execute)",
   "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/donghae0414/open-gajae.git"
+  },
+  "homepage": "https://github.com/donghae0414/open-gajae#readme",
+  "bugs": {
+    "url": "https://github.com/donghae0414/open-gajae/issues"
+  },
   "exports": {
     ".": "./src/index.ts"
   },
@@ -16,7 +24,6 @@
     "src",
     "skills",
     "prompts",
-    "assets/branding",
     "licenses",
     "LICENSE",
     "THIRD-PARTY-NOTICES.md"
