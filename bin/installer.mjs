@@ -97,7 +97,8 @@ export async function install({ configDir, home, now }) {
   // 1. Compute and verify; a failure here writes nothing.
   const jsoncFile = join(configDir, "opencode.jsonc");
   const jsonFile = join(configDir, "opencode.json");
-  const file = existsSync(jsoncFile) ? jsoncFile : jsonFile;
+  // jsonc if present, else json if present; a new file is jsonc, as the host's own `Config.update` makes.
+  const file = existsSync(jsoncFile) || !existsSync(jsonFile) ? jsoncFile : jsonFile;
   const exists = existsSync(file);
   const original = exists ? await readFile(file, "utf8") : "";
   const text = original.trim() ? original : "{}\n";

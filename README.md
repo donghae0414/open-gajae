@@ -46,7 +46,7 @@ bunx open-gajae install     # or: npx open-gajae install
 | `experimental.subagent_depth` | `2` | kept; a value below 2 gets a notice |
 | `~/.open-gajae/open-gajae.jsonc` | a template with every setting commented out | left untouched |
 
-- **Which file:** `opencode.jsonc` in OpenCode's global config folder (`OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`), or `opencode.json` when there is no `opencode.jsonc`. With neither, it creates `opencode.json`; with both, it edits only `opencode.jsonc` and prints a warning.
+- **Which file:** `opencode.jsonc` in OpenCode's global config folder (`OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`), or `opencode.json` when there is no `opencode.jsonc`. With neither, it creates `opencode.jsonc`; with both, it edits only `opencode.jsonc` and prints a warning.
 - **Safety:** an existing file is backed up as `<file>.bak-<YYYYMMDD-HHMMSS>` before it changes. Invalid JSON or JSONC stops the command before anything is written, and rerunning it changes nothing.
 
 ### Manual setup

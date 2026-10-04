@@ -58,14 +58,14 @@ const T2_GOLDEN = `{
 }
 `;
 
-test("T-1: a missing config folder gets a new opencode.json with the three entries", async () => {
+test("T-1: a missing config folder gets a new opencode.jsonc with the three entries", async () => {
   await fixture({}, async (_, home, root) => {
     const configDir = join(root, "missing", "opencode");
     await lib.install({ configDir, home, now });
-    expect(await readFile(join(configDir, "opencode.json"), "utf8")).toBe(
+    expect(await readFile(join(configDir, "opencode.jsonc"), "utf8")).toBe(
       '{\n  "plugins": [\n    "open-gajae"\n  ],\n  "default_agent": "open-gajae",\n  "experimental": {\n    "subagent_depth": 2\n  }\n}\n',
     );
-    expect(await readdir(configDir)).toEqual(["opencode.json"]);
+    expect(await readdir(configDir)).toEqual(["opencode.jsonc"]);
   });
 });
 

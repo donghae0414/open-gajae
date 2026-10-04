@@ -1,6 +1,6 @@
 {
   "name": "open-gajae",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "OpenCode plugin that takes coding work from a vague idea to verified changes with three skills: deep-interview (clarify), ralplan (plan) and ultragoal (execute)",
   "license": "SEE LICENSE IN LICENSE",

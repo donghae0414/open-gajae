@@ -46,7 +46,7 @@ bunx open-gajae install     # 또는: npx open-gajae install
 | `experimental.subagent_depth` | `2` | 그대로 둠. 2보다 작으면 안내 |
 | `~/.open-gajae/open-gajae.jsonc` | 모든 설정이 주석인 템플릿 | 건드리지 않음 |
 
-- **고치는 파일:** OpenCode 전역 설정 폴더(`OPENCODE_CONFIG_DIR`, 없으면 `$XDG_CONFIG_HOME/opencode`, 그것도 없으면 `~/.config/opencode`)의 `opencode.jsonc`, 그 파일이 없으면 `opencode.json`입니다. 둘 다 없으면 `opencode.json`을 만들고, 둘 다 있으면 `opencode.jsonc`만 고치며 경고를 출력합니다.
+- **고치는 파일:** OpenCode 전역 설정 폴더(`OPENCODE_CONFIG_DIR`, 없으면 `$XDG_CONFIG_HOME/opencode`, 그것도 없으면 `~/.config/opencode`)의 `opencode.jsonc`, 그 파일이 없으면 `opencode.json`입니다. 둘 다 없으면 `opencode.jsonc`를 만들고, 둘 다 있으면 `opencode.jsonc`만 고치며 경고를 출력합니다.
 - **안전장치:** 기존 파일은 고치기 전에 `<파일 이름>.bak-<YYYYMMDD-HHMMSS>`로 백업합니다. JSON·JSONC가 잘못되었으면 아무것도 쓰지 않고 멈추며, 다시 실행해도 바뀌는 것이 없습니다.
 
 ### 직접 설정
