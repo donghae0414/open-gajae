@@ -23,3 +23,9 @@
 - `prompts/*.md` and `skills/**/SKILL.md` are runtime contracts, not documentation-only cleanup targets. Change them together with affected validation and tests.
 - Do not remove useful storage or safety mechanisms solely because of their source. Evaluate them against the adopted contract and host requirements. Preserve attribution and license notices for retained third-party material; a policy change does not change provenance.
 - The reference repositories are study material, not implementation targets. Do not modify them unless explicitly requested.
+
+## Releases
+
+- A release is an annotated tag `vX.Y.Z` matching the `package.json` version. Pushing it runs `.github/workflows/release.yml`, which tests, publishes to npm, and creates the GitHub Release. Never run `npm publish` locally.
+- The tag message becomes the release notes.
+- "Push" means commits only. Create and push a tag only when the maintainer asks for a release; a pushed tag publishes at once.
