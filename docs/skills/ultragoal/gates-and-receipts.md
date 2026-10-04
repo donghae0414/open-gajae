@@ -58,7 +58,7 @@ SKILL의 "Boundary verification (per goal, then once at the end)"은 이것을 "
 - 이미 끝난 앞 목표를 재오픈하면, 나머지가 모두 `complete`이므로 그 목표가 최종 목표가 됩니다. 예: G001(per-goal), G002(final)로 끝난 run에서 G001을 재오픈하면 `next`는 G001에 최종 gate를 요구합니다.
 - 같은 부모에 열린 수정 목표가 둘 이상이면, 먼저 완료되는 수정 목표가 부모를 `superseded`로 바꿉니다. 나머지 수정 목표는 필수 목표로 남습니다.
 
-코드 머리말은 gjc `ultragoal-runtime.ts`의 `chooseReceiptKind`(per-story, batch, fresh-final 분기 제외)와 `:3738-3748`(수정 목표 완료가 부모를 supersede)을 출처로 적고, 편차 29, 43, 44를 답니다. 루트 README의 편차 29 기록에 따르면 gjc는 부모를 supersede하기 전의 plan으로 gate를 검사하고 영수증 종류는 그 뒤에 다시 고릅니다. open-gajae는 두 가지 모두 부모가 이미 superseded인 복사본으로 정합니다. 그래서 run을 닫는 수정 목표는 첫 checkpoint부터 최종 gate를 내야 합니다.
+코드 머리말은 gjc `ultragoal-runtime.ts`의 `chooseReceiptKind`(per-story, batch, fresh-final 분기 제외)와 `:3738-3748`(수정 목표 완료가 부모를 supersede)을 출처로 적고, 편차 29, 43, 44를 답니다. 편차 29(`docs/development.md`)에 따르면 gjc는 부모를 supersede하기 전의 plan으로 gate를 검사하고 영수증 종류는 그 뒤에 다시 고릅니다. open-gajae는 두 가지 모두 부모가 이미 superseded인 복사본으로 정합니다. 그래서 run을 닫는 수정 목표는 첫 checkpoint부터 최종 gate를 내야 합니다.
 
 ### 1.2 `next`의 `checkpoint requires=`
 
@@ -466,7 +466,7 @@ Reopened <id>; revise it, then run ultragoal next and checkpoint it again.
 - 수정 목표의 completion view에서는 부모가 superseded로 보입니다. 다른 끝나지 않은 필수 목표가 없으면 수정 목표가 최종 목표이고, `next`는 첫 실행부터 `FINAL_REQUIRES`를 출력합니다 (편차 29).
 - `review_blocked` 목표가 하나라도 있으면 `goal complete`는 거부됩니다 ([goal-loop.md](goal-loop.md)).
 
-SKILL은 새 수정 목표의 최종 gate를 "a new cohort generation"으로, README 편차 29는 "a second cohort generation"으로 적습니다. 코드는 세대를 기억하지 않으므로 이 세대 번호는 강제하지 않습니다 (1.4).
+SKILL은 새 수정 목표의 최종 gate를 "a new cohort generation"으로, 편차 29(`docs/development.md`)는 "2세대 cohort"로 적습니다. 코드는 세대를 기억하지 않으므로 이 세대 번호는 강제하지 않습니다 (1.4).
 
 ### 6.2 수정 목표를 완료하면
 

@@ -1,6 +1,6 @@
 # ralplan 저장 파일과 상태
 
-이 문서는 ralplan이 디스크에 남기는 파일과, 그 파일을 바꾸는 규칙을 코드 그대로 적습니다. 다루는 것은 세션 폴더와 계보 루트, 세션마다 하나인 쓰기 큐, 상태 파일 `state/ralplan-state.json`의 모양과 필드, phase manifest, 활성 행·스냅숏·보이는 주 skill, HUD 칩, 감사 로그, 인계 저널, doctor, 저장소 바인딩, `ralplan.*` 설정, continuation 카운터 파일입니다. 기준 코드는 [README.md](README.md) 머리에 있습니다. 코드 위치는 `5b92a60` 기준이고, 루트 `README.md`는 절 이름으로 가리킵니다(줄 번호를 적을 때는 현재 작업 트리의 파일 기준).
+이 문서는 ralplan이 디스크에 남기는 파일과, 그 파일을 바꾸는 규칙을 코드 그대로 적습니다. 다루는 것은 세션 폴더와 계보 루트, 세션마다 하나인 쓰기 큐, 상태 파일 `state/ralplan-state.json`의 모양과 필드, phase manifest, 활성 행·스냅숏·보이는 주 skill, HUD 칩, 감사 로그, 인계 저널, doctor, 저장소 바인딩, `ralplan.*` 설정, continuation 카운터 파일입니다. 기준 코드는 [README.md](README.md) 머리에 있습니다. 코드 위치는 `5b92a60` 기준입니다.
 
 예시는 기준 코드를 bun으로 임시 `StateStore`에 대고 실제로 실행해 얻은 것입니다(`tests/ralplan-tool.test.ts`처럼 `createTools`로 도구를 만들고 가짜 계보를 줌). 세션 폴더 절대 경로는 `<session>`, 저장소 경로는 `<worktree>`, 커밋 해시는 `<HEAD>`로 줄였습니다. 시각, uuid, sha256은 실행마다 다릅니다.
 
@@ -168,7 +168,7 @@ gjc의 workflow 봉투(envelope)입니다. gjc의 `receipt`, checksum, `state_re
 
 ### `start` 없이 `write`가 만든 모양
 
-상태 파일이 없을 때 `write`는 `persistActiveRunIdTx`(`store.ts:513-545`)로 상태를 만듭니다(루트 README "Accepted behavior differences"의 "No seeding; `write` creates state" 행, R-O6). 새 세션에서 `ralplan write(stage="planner", stage_n=1, …)` 뒤:
+상태 파일이 없을 때 `write`는 `persistActiveRunIdTx`(`store.ts:513-545`)로 상태를 만듭니다(`docs/development.md` "GJC로부터의 deviation (ralplan)"의 "수용한 동작 차이" 표 "시딩 없음, `write`가 state 생성" 행, R-O6). 새 세션에서 `ralplan write(stage="planner", stage_n=1, …)` 뒤:
 
 ```json
 {
@@ -280,7 +280,7 @@ gjc `migrateWorkflowState`의 v1 → v2(`store.ts:263-279`; gjc `gjc-runtime/sta
 | `ralplan write` | `run_id`가 없거나 다르면 새 run으로 보고 정상 기록. 전이 감사는 이전 phase가 manifest 상태가 아니라 남지 않음 |
 | `ralplan clear` (force 없이) | 통과. 결과는 `{skill, active: false, current_phase: "complete", iteration: 2, updated_at, version: 2}`처럼 다른 필드를 남김 |
 
-루트 README "Accepted behavior differences"의 Old-format state 행이 이 동작을 적습니다. 정리하는 길은 `ralplan clear`입니다([known-limits.md](known-limits.md)).
+`docs/development.md` "GJC로부터의 deviation (ralplan)"의 "수용한 동작 차이" 표 "이전 형식 state" 행이 이 동작을 적습니다. 정리하는 길은 `ralplan clear`입니다([known-limits.md](known-limits.md)).
 
 ## 4. phase manifest
 
@@ -311,7 +311,7 @@ gjc `migrateWorkflowState`의 v1 → v2(`store.ts:263-279`; gjc `gjc-runtime/sta
 
 `isValidTransition(from, to)`(`:147-152`)는 같은 phase이거나 표의 행이면 참입니다.
 
-- `write`는 표에 없는 이동도 씁니다. 감사 행 `invalid_transition_detected`만 남깁니다(spec D-T11). SKILL 순서가 이런 행을 늘 만듭니다: 병렬 리뷰 `intent→critic`·`critic→architect`, `architect→post-interview`, `post-interview→final` 등(루트 README "transition audit rows"; 7장의 실행 예).
+- `write`는 표에 없는 이동도 씁니다. 감사 행 `invalid_transition_detected`만 남깁니다(spec D-T11). SKILL 순서가 이런 행을 늘 만듭니다: 병렬 리뷰 `intent→critic`·`critic→architect`, `architect→post-interview`, `post-interview→final` 등([known-limits.md](known-limits.md) RK9; 7장의 실행 예).
 - `state` op는 표에 없는 이동을 거부합니다. 그래서 `final`에서는 같은 `final`(예: Stop here) 말고 어디로도 못 갑니다. 인계가 `final` → `handoff`를 `state` op가 아니라 공통 인계로 하는 까닭입니다(ralplan 편차 22).
 - 인계의 caller 쓰기는 비활성이라 전이 검사를 하지 않습니다. callee로 쓰일 때는 검사합니다. 예: ralplan이 `handoff`나 `final`에 있다가 `ultragoal handoff(to:"ralplan")`로 `planner`가 되면 `handoff→planner`·`final→planner` 행이 표에 없어 `invalid_transition_detected`가 남습니다(`tests/skill-state.test.ts` "handoff ultragoal → ralplan: …").
 
@@ -413,7 +413,7 @@ T를 쓰는 곳은 위 표의 셋(continuation, `skill ultragoal` 턴 게이트,
 
 - `start`·`write`·`state`·`clear`의 행 동기화는 best-effort입니다(`bestEffort`, `store.ts:286-292`). 실패해도 op 결과는 바뀌지 않습니다(gjc HUD 동기화와 같음). 인계의 행 쓰기는 best-effort가 아닙니다.
 - 행 쓰기는 하위 skill(ultragoal)의 행을 지우지 않습니다. 인계는 위쪽 행을 지우지 않습니다.
-- **Stop here나 `clear` 뒤의 `write`**: 상태는 비활성으로 남지만(3장) 행은 다시 **활성**으로 생깁니다(실행으로 확인). 그러면 ralplan이 다시 보이는 주 skill이 됩니다(phase는 아래처럼 잠긴 `final`·`complete`로 보임). 계획 가드와 continuation은 상태의 `active`를 따로 보므로 다시 켜지지 않지만, doctor는 `active entry for ralplan does not match a live active mode-state`를 보고하고, deep-interview `start`와 취소된 인터뷰의 재개는 ralplan을 이유로 거부합니다(`otherPrimaryTx`, `src/deep-interview-runtime/store.ts:217-223,313-314,708-711`). Stop here 뒤라면 `state {"active": false}`나 `clear`가 이 행을 지웁니다. `clear` 뒤라면 `clear(force: true)`, 또는 manifest phase를 함께 넣은 `state` 패치(예: `{"active": false, "current_phase": "final"}`)가 지웁니다. 이전 phase `complete`가 manifest 상태가 아니라 전이 검사를 건너뛰기 때문입니다(`store.ts:1041-1046`). phase를 `complete`에 둔 채의 `state {"active": false}`는 `unknown ralplan phase "complete"`로, force 없는 `clear`는 이미 끝난 상태로 거부됩니다(모두 실행으로 확인). ultragoal의 활성 행도 이 행을 지웁니다. 상태가 비활성이므로 `ralplan handoff`는 거부됩니다(R-OD18). 루트 README "Write semantics"가 이 동작을 적습니다.
+- **Stop here나 `clear` 뒤의 `write`**: 상태는 비활성으로 남지만(3장) 행은 다시 **활성**으로 생깁니다(실행으로 확인). 그러면 ralplan이 다시 보이는 주 skill이 됩니다(phase는 아래처럼 잠긴 `final`·`complete`로 보임). 계획 가드와 continuation은 상태의 `active`를 따로 보므로 다시 켜지지 않지만, doctor는 `active entry for ralplan does not match a live active mode-state`를 보고하고, deep-interview `start`와 취소된 인터뷰의 재개는 ralplan을 이유로 거부합니다(`otherPrimaryTx`, `src/deep-interview-runtime/store.ts:217-223,313-314,708-711`). Stop here 뒤라면 `state {"active": false}`나 `clear`가 이 행을 지웁니다. `clear` 뒤라면 `clear(force: true)`, 또는 manifest phase를 함께 넣은 `state` 패치(예: `{"active": false, "current_phase": "final"}`)가 지웁니다. 이전 phase `complete`가 manifest 상태가 아니라 전이 검사를 건너뛰기 때문입니다(`store.ts:1041-1046`). phase를 `complete`에 둔 채의 `state {"active": false}`는 `unknown ralplan phase "complete"`로, force 없는 `clear`는 이미 끝난 상태로 거부됩니다(모두 실행으로 확인). ultragoal의 활성 행도 이 행을 지웁니다. 상태가 비활성이므로 `ralplan handoff`는 거부됩니다(R-OD18). [known-limits.md](known-limits.md) RK8도 이 동작을 적습니다.
 
 ### 방금 쓴 단계와 잠긴 phase (R-OD5, R-OD15)
 
@@ -450,7 +450,7 @@ T를 쓰는 곳은 위 표의 셋(continuation, `skill ultragoal` 턴 게이트,
 
 ## 6. HUD 칩
 
-`src/ralplan-runtime/hud.ts`(gjc `skill-state/workflow-hud.ts:188-248` `buildRalplanHudSummary`, 칩 순서 대조함), 공통 도우미와 정규화는 `src/skill-state/hud.ts`. 칩은 활성 행의 `hud`에 **저장만** 합니다. 그리는 코드는 없습니다(ralplan 편차 9, R-OD17: TUI 사이드바 보류, 루트 README "Mandatory follow-up development" 6번).
+`src/ralplan-runtime/hud.ts`(gjc `skill-state/workflow-hud.ts:188-248` `buildRalplanHudSummary`, 칩 순서 대조함), 공통 도우미와 정규화는 `src/skill-state/hud.ts`. 칩은 활성 행의 `hud`에 **저장만** 합니다. 그리는 코드는 없습니다(ralplan 편차 9, R-OD17: TUI 사이드바 보류, `docs/development.md` "필수 후속 개발" 6번).
 
 ### 계산하는 곳
 
@@ -482,7 +482,7 @@ T를 쓰는 곳은 위 표의 셋(continuation, `skill ultragoal` 턴 게이트,
   revision · architect · critic · post-interview · adr · final … 1 more stage
   ```
   첫 줄은 8단계 중 6단어를 보이면 84자라 5단어로 줄인 것입니다.
-- **`pending`**: `write(stage="final")`과, 활성 `final`에서의 `state` op가 붙입니다. `pending`이 있으면 `arch`·`crit`는 나오지 않습니다. Stop here는 행을 지우므로 `pending` 칩도 사라집니다(루트 README Accepted behavior differences "Stop here removes the active row").
+- **`pending`**: `write(stage="final")`과, 활성 `final`에서의 `state` op가 붙입니다. `pending`이 있으면 `arch`·`crit`는 나오지 않습니다. Stop here는 행을 지우므로 `pending` 칩도 사라집니다(`docs/development.md` "GJC로부터의 deviation (ralplan)"의 "수용한 동작 차이" 표 "Stop here가 활성 행을 제거" 행).
 - **정규화**(`normalizeWorkflowHudSummary`, `src/skill-state/hud.ts:129-146`, 계획 DR-9, gjc와 같은 값): `version`이 1이 아니면 버림, 칩은 배열 순서대로 최대 6개, label 32자, value·summary 80자에서 자름, ANSI 제거, 줄바꿈·탭은 공백, 모르는 severity는 버림, `updated_at` 40자.
 - **6개 한도로 빠지는 칩**: `pending`이 없을 때 `stage`, `iter`, `stages`, `arch`, `crit`, `verdict`, `handoff`가 모두 있으면 일곱이라 마지막 `handoff`가 빠집니다. 실행 예: `final` 1 뒤 `revision`·`architect`·`critic` 2를 쓴 행의 칩은 `stage=critic`, `iter=2`, `stages=revision · architect · critic`, `arch=1/1`, `crit=1/1`, `verdict=OKAY`이고 `handoff`가 없습니다. gjc도 같은 순서와 한도라 같은 결과입니다.
 
@@ -605,7 +605,7 @@ ralplan만 고르므로 `skills_scanned`는 1입니다. 파일은 직접 파싱�
 
 ### 출력
 
-`final` 뒤 다듬기(`revision` 2)를 쓴 직후(루트 README "Known behavior (as in GJC)"):
+`final` 뒤 다듬기(`revision` 2)를 쓴 직후([known-limits.md](known-limits.md) RK8):
 
 ```json
 {
@@ -647,7 +647,7 @@ ralplan만 고르므로 `skills_scanned`는 1입니다. 파일은 직접 파싱�
 
 ## 10. 저장소 바인딩
 
-`src/ralplan-runtime/binding.ts`(gjc `gjc-runtime/repository-binding.ts:13-30,207-215`, 줄 번호는 파일 머리말의 값). 파일 머리말과 루트 README ralplan 편차 12에 따르면 gjc는 `.git`을 직접 읽어 바인딩을 잡고 worktree가 다르면 쓰기를 거부합니다(gjc 쪽은 이 문서를 쓰며 다시 확인하지 않았습니다). 여기서는 기록만 하고 강제하지 않습니다(ralplan 편차 12, spec D-T9).
+`src/ralplan-runtime/binding.ts`(gjc `gjc-runtime/repository-binding.ts:13-30,207-215`, 줄 번호는 파일 머리말의 값). 파일 머리말과 ralplan 편차 12에 따르면 gjc는 `.git`을 직접 읽어 바인딩을 잡고 worktree가 다르면 쓰기를 거부합니다(gjc 쪽은 이 문서를 쓰며 다시 확인하지 않았습니다). 여기서는 기록만 하고 강제하지 않습니다(ralplan 편차 12, spec D-T9).
 
 **모양** `gjc.repository_binding.v1`(`REPOSITORY_BINDING_SCHEMA`):
 
@@ -752,7 +752,7 @@ OMC continuation의 차단기 카운터를 담는 훅 전용 파일입니다(계
 **SKILL과 프롬프트만 요구하는 것**
 
 - 상태를 `ralplan start`로 시작하는 것(코드는 `write`만으로도 상태를 만듦).
-- 잠긴 phase 뒤의 doctor `stale_active_state`만 보고 `clear`하지 않는 것(SKILL "During post-final refinement …" 단락, 루트 README "Known behavior").
+- 잠긴 phase 뒤의 doctor `stale_active_state`만 보고 `clear`하지 않는 것(SKILL "During post-final refinement …" 단락, [known-limits.md](known-limits.md) RK8).
 - 역할 id를 `status`로 읽어 같은 역할 세션을 이어 부르는 것, `resumable`·`fallback_*`를 맞게 넣는 것([roles-and-consensus.md](roles-and-consensus.md)).
 - Stop here 뒤 더 바꾸지 않는 것(SKILL step 8 "make no further changes"). 코드는 그 뒤의 `write`도 받아 단계 파일을 쓰고 활성 행을 다시 만듭니다(5장). SKILL은 그런 `write` 뒤 상태가 비활성으로 남는다고만 적고, 행이 다시 활성이 되는 것은 적지 않습니다.
 - ultragoal 실행 중 생긴 ralplan 상태를 `state(patch={"active": false})`나 `clear`로 정리하는 것(SKILL "`ralplan write` does not check for a running ultragoal" 단락).

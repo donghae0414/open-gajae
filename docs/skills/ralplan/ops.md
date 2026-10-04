@@ -13,7 +13,7 @@
 - 계획 가드, 도구 숨김, 역할 권한 규칙, continuation(그 breaker가 부르는 `state` op 포함): [guards-and-continuation.md](guards-and-continuation.md)
 - 세 역할 agent와 합의 루프의 호출 순서: [roles-and-consensus.md](roles-and-consensus.md)
 
-"ralplan 편차 N"은 루트 `README.md`의 "Deviations from GJC (ralplan)" 절(README.md:394-454)에 있는 편차 표(398-438)의 번호입니다. 같은 절의 "Accepted behavior differences"는 438-452입니다. 코드 위치는 main `5b92a60` 기준이고, 루트 README의 줄 번호만은 이 문서들과 함께 들어가는 현재 파일 기준입니다(118행 뒤로는 5b92a60보다 2줄씩 뒤). 루트 README의 ralplan 절은 README.md:115-193이고, 그 안의 `ralplan` 도구 op 표는 129-137입니다. gjc 줄 번호는 open-gajae 파일 머리말 주석(`src/ralplan-runtime/tool.ts:10-25`, `store.ts:14-61`)이 적은 값을 옮긴 것입니다. 이 문서를 쓰며 gjc 소스(`5c5231418930673e42cc5d08ebe4376e03187533`)로 다시 확인한 것은 `gjc-runtime/state-runtime.ts:1290-1345`(`state write`의 phase 검사)뿐입니다.
+"ralplan 편차 N"은 `docs/development.md` "GJC로부터의 deviation (ralplan)" 절에 있는 편차 표의 번호입니다. 같은 절의 "수용한 동작 차이" 표는 행 이름으로 가리킵니다. 코드 위치는 main `5b92a60` 기준입니다. gjc 줄 번호는 open-gajae 파일 머리말 주석(`src/ralplan-runtime/tool.ts:10-25`, `store.ts:14-61`)이 적은 값을 옮긴 것입니다. 이 문서를 쓰며 gjc 소스(`5c5231418930673e42cc5d08ebe4376e03187533`)로 다시 확인한 것은 `gjc-runtime/state-runtime.ts:1290-1345`(`state write`의 phase 검사)뿐입니다.
 
 ## 한눈에 보기
 
@@ -98,7 +98,7 @@ Operate this session's ralplan run (gjc ralplan): start a run, write a stage art
 
 - 4의 원래 예외(`src/hooks.ts`의 `could not resolve the session lineage for <sessionID>` 등)는 `cause`에만 남고 결과 문구에는 나오지 않습니다.
 - 그 결과 역할의 자식 세션에서 부른 op도 루트 세션 폴더의 상태와 run을 씁니다. 영수증의 `session_id`도 루트 id입니다(spec DR-1, ralplan 편차 32). 역할의 자기 세션 id는 `write`가 역할 메타데이터로만 기록합니다([write](#write)).
-- 소유하지 않은 agent(호스트 `build`·`general`, 사용자 agent, `open-gajae-executor` 등)는 `context` 훅이 요청에서 도구를 지우므로 보통 부를 수 없고, 불러도 2에서 거부됩니다. 도구 숨김은 [guards-and-continuation.md](guards-and-continuation.md)에 있습니다. `tool.ts:24-25` 머리말도 "DR-22: agents other than `open-gajae` and the three roles are refused here; `src/hooks.ts` hides it too."라고 적습니다. 숨김이 실행 시 거부만 하던 DR-22의 설계를 대신한 경위는 루트 README "Accepted behavior differences"의 숨김 행(README.md:452)에 있습니다.
+- 소유하지 않은 agent(호스트 `build`·`general`, 사용자 agent, `open-gajae-executor` 등)는 `context` 훅이 요청에서 도구를 지우므로 보통 부를 수 없고, 불러도 2에서 거부됩니다. 도구 숨김은 [guards-and-continuation.md](guards-and-continuation.md)에 있습니다. `tool.ts:24-25` 머리말도 "DR-22: agents other than `open-gajae` and the three roles are refused here; `src/hooks.ts` hides it too."라고 적습니다. 숨김이 실행 시 거부만 하던 DR-22의 설계를 대신한 경위는 `docs/development.md` "GJC로부터의 deviation (ralplan)"의 "수용한 동작 차이" 표 "`ralplan`·`ultragoal`·`goal`·`deep-interview`가 숨겨지는 범위" 행에 있습니다.
 
 실제 출력:
 
@@ -146,7 +146,7 @@ op마다 `store.ralplanTransaction(owner, tx => …)` 하나를 열고, 그 안�
 표 밖의 조건:
 
 - `start`는 상태와 상관없이 ultragoal 상태가 활성이면 거부합니다. 이 검사가 가장 먼저입니다([start](#start)).
-- `write`는 활성 ultragoal이 있어도 거부하지 않습니다(spec R-AE1, R-O6). 그래서 ultragoal 실행 중에도 ralplan 상태를 만들거나 다시 켤 수 있습니다(루트 README "Accepted behavior differences"의 "One-mode rule partly lifted", README.md:448).
+- `write`는 활성 ultragoal이 있어도 거부하지 않습니다(spec R-AE1, R-O6). 그래서 ultragoal 실행 중에도 ralplan 상태를 만들거나 다시 켤 수 있습니다(`docs/development.md` "GJC로부터의 deviation (ralplan)"의 "수용한 동작 차이" 표 "한 모드 원칙 일부 해제" 행).
 - 같은 execution의 `skill ultragoal` 게이트는 op가 아니라 훅이 `ralplanHandoffTx`를 부르는 길이므로 이 표의 `handoff` 칸과 거부 문구가 다릅니다([entry-and-handoff.md](entry-and-handoff.md)).
 
 ## 공통 도우미
@@ -496,7 +496,7 @@ ralplan의 상태, 행, 스냅숏을 읽기 전용으로 검사합니다. `docto
 
   행이 있는 진행 중 run(예: `start` 직후)의 상태를 망가뜨리면 `files_scanned`가 3, `findings_total`이 2이고, `state/active/ralplan.json`에 대한 `stale_active_state`(`active entry for ralplan does not match a live active mode-state`, `fixCommand` `ralplan clear`)가 하나 더 나옵니다(`doctor.ts:224-232`, 실행해 확인). 이때도 `clear`는 손상 상태 때문에 `force`가 필요합니다.
 
-- **알려진 보고**: 잠긴 phase(`final`, `complete` 등) 위의 쓰기 뒤에는 행의 phase가 방금 쓴 단계라서 `stale_active_state`가 나옵니다. gjc와 같고(R-OD8), SKILL(SKILL.md:32)과 루트 README("Known behavior", README.md:189)는 이 보고만으로 `clear`하지 말라고 안내합니다. 테스트 "rows follow the stage just written, doctor reports drift, …"가 확인합니다.
+- **알려진 보고**: 잠긴 phase(`final`, `complete` 등) 위의 쓰기 뒤에는 행의 phase가 방금 쓴 단계라서 `stale_active_state`가 나옵니다. gjc와 같고(R-OD8), SKILL(SKILL.md:32)은 이 보고만으로 `clear`하지 말라고 안내합니다([known-limits.md](known-limits.md) RK8). 테스트 "rows follow the stage just written, doctor reports drift, …"가 확인합니다.
 
 ## `state`
 

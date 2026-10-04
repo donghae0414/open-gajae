@@ -192,7 +192,7 @@ reconcile은 `goals.json`과 원장에서 실행 상태를 다시 계산해 mode
   - 활성이면 행을 쓰고, 비활성이면 행을 지웁니다. 그 뒤 스냅숏을 다시 만듭니다.
 - **계획이 없을 때**: 계획 없이 reconcile하는 op(`status`, `classify_blocker`)는 mode-state를 비활성 `missing`으로 씁니다. 이 경우 `goal-planning`이 끝나고 행도 지워집니다. 임시 폴더에서 계획 없이 `status`를 불러 `current_phase: "missing"`, `active: false`가 쓰이는 것을 확인했습니다.
 - **실패**: reconcile은 op 결과를 바꾸지 않습니다. 예를 들어 `goals.json`이 깨진 채로 `classify_blocker`를 부르면 reconcile 안의 `readPlanTx`가 실패합니다. 실패하면 원장에 `{eventId, type: "reconcile_failed", error, timestamp}` 행을 덧붙이려 시도하고, 그것도 실패하면 조용히 넘어갑니다. 테스트 "a reconcile failure keeps the op's result and appends gjc's reconcile_failed ledger row"는 다른 경로로 실패를 일으킵니다. `create` 뒤 `state/active/other.json`을 깨진 JSON으로 만들고 `status`를 부르면, reconcile이 스냅숏을 다시 만들며 활성 행들을 읽다가(`src/skill-state/rows.ts`의 `readRowsTx`) 실패합니다. 테스트는 결과가 `# ultragoal status`로 시작하고 원장 마지막 행이 `reconcile_failed`임을 확인합니다.
-- **알려진 동작**: `ultragoal handoff` 뒤 ralplan을 진행하는 중에 reconcile하는 op를 부르면 ultragoal이 `goals.json`에서 다시 활성이 되고 ralplan 행이 지워집니다(루트 README 알려진 동작, spec D-SF1). 행 규칙은 [state-and-files.md](state-and-files.md)에 있습니다.
+- **알려진 동작**: `ultragoal handoff` 뒤 ralplan을 진행하는 중에 reconcile하는 op를 부르면 ultragoal이 `goals.json`에서 다시 활성이 되고 ralplan 행이 지워집니다([known-limits.md](known-limits.md)의 기록된 동작, spec D-SF1). 행 규칙은 [state-and-files.md](state-and-files.md)에 있습니다.
 
 ### 원장 행의 모양
 

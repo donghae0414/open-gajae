@@ -1,6 +1,6 @@
 // Ralplan HUD chips for `state/active/ralplan.json` (`hud`), recomputed by the
 // `ralplan` tool on every state or ledger change (spec D-H5, D-H7). Nothing
-// draws them yet: the TUI sidebar is deferred (R-OD17, README follow-up 6).
+// draws them yet: the TUI sidebar is deferred (R-OD17, docs/development.md 필수 후속 개발 6).
 // Pure: the caller passes the stage, the parsed index and the state fields.
 //
 // Source: gajae-code 5c5231418930673e42cc5d08ebe4376e03187533 (MIT),

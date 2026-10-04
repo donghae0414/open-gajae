@@ -453,7 +453,7 @@ test("the deep-interview skill follows the gjc skill with its deviations marked"
   ])
     expect(`${forbidden}: ${body.includes(forbidden)}`).toBe(`${forbidden}: false`);
   expect(source).toContain("5c5231418930673e42cc5d08ebe4376e03187533");
-  expect(source).toContain('"Deviations from GJC (deep-interview)"');
+  expect(source).toContain('"GJC로부터의 deviation (deep-interview)" in docs/development.md');
   // Spec E20 (PQ-27 A): the panel fragment is the lateral reviewer's prompt,
   // so the skill folder holds no fragment file to read.
   expect(await Bun.file(new URL("../skills/deep-interview/lateral-review-panel.md", import.meta.url)).exists()).toBe(false);
@@ -482,7 +482,7 @@ test("the deep-interview skill follows the gjc skill with its deviations marked"
     expect(`${forbidden}: ${persona.includes(forbidden)}`).toBe(`${forbidden}: false`);
 });
 
-test("every deviation the deep-interview skill and lateral-reviewer prompt cite has a row in both README tables (P-AC9)", async () => {
+test("every deviation the deep-interview skill and lateral-reviewer prompt cite has a row in the docs/development.md table (P-AC9)", async () => {
   const cited = new Set<number>();
   for (const file of ["../skills/deep-interview/SKILL.md", "../prompts/open-gajae-lateral-reviewer.md"]) {
     const text = await readFile(new URL(file, import.meta.url), "utf8");
@@ -491,23 +491,19 @@ test("every deviation the deep-interview skill and lateral-reviewer prompt cite 
       if (!match[1]) for (const n of match[2].match(/\d+/g) ?? []) cited.add(Number(n));
   }
   expect(cited.size).toBeGreaterThan(0);
-  for (const [file, heading] of [
-    ["README.md", "## Deviations from GJC (deep-interview)"],
-    ["README.ko.md", "## GJC로부터의 deviation (deep-interview)"],
-  ] as const) {
-    const lines = (await readFile(new URL(`../${file}`, import.meta.url), "utf8")).split("\n");
-    const start = lines.indexOf(heading);
-    expect(start).toBeGreaterThan(-1);
-    const end = lines.findIndex((line, index) => index > start && line.startsWith("## "));
-    const rows = new Set(
-      lines
-        .slice(start + 1, end)
-        .map((line) => /^\| (\d+) \|/.exec(line)?.[1])
-        .filter((n): n is string => n !== undefined)
-        .map(Number),
-    );
-    expect(`${file}: ${[...cited].filter((n) => !rows.has(n)).sort((a, b) => a - b)}`).toBe(`${file}: `);
-  }
+  const lines = (await readFile(new URL("../docs/development.md", import.meta.url), "utf8")).split("\n");
+  const start = lines.indexOf("## GJC로부터의 deviation (deep-interview)");
+  expect(start).toBeGreaterThan(-1);
+  const found = lines.findIndex((line, index) => index > start && line.startsWith("## "));
+  const end = found === -1 ? lines.length : found;
+  const rows = new Set(
+    lines
+      .slice(start + 1, end)
+      .map((line) => /^\| (\d+) \|/.exec(line)?.[1])
+      .filter((n): n is string => n !== undefined)
+      .map(Number),
+  );
+  expect(`${[...cited].filter((n) => !rows.has(n)).sort((a, b) => a - b)}`).toBe("");
 });
 
 test("the three skills register with frontmatter id, name and description", async () => {
@@ -734,25 +730,37 @@ test("neither SKILL.md carries the unsubstituted OMC arguments placeholder", asy
   }
 });
 
-test("both READMEs carry the GJC deep-interview, ralplan and ultragoal deviations and the mandatory follow-up sections", async () => {
+test("docs/development.md carries the GJC deep-interview, ralplan and ultragoal deviations and the mandatory follow-up sections", async () => {
   // Plan S5 (D-D1, D-D2): the one doc test; exact heading lines, so a renamed
   // or demoted section fails.
-  for (const [file, headings] of [
-    [
-      "README.md",
-      ["## Deviations from GJC (ralplan)", "## Deviations from GJC (ultragoal)", "## Deviations from GJC (deep-interview)", "## Mandatory follow-up development"],
-    ],
-    [
-      "README.ko.md",
-      ["## GJC로부터의 deviation (ralplan)", "## GJC로부터의 deviation (ultragoal)", "## GJC로부터의 deviation (deep-interview)", "## 필수 후속 개발"],
-    ],
-  ] as const) {
-    const lines = (
-      await readFile(new URL(`../${file}`, import.meta.url), "utf8")
-    ).split("\n");
-    for (const heading of headings)
-      expect(`${file}: ${heading}: ${lines.includes(heading)}`).toBe(
-        `${file}: ${heading}: true`,
-      );
-  }
+  const lines = (
+    await readFile(new URL("../docs/development.md", import.meta.url), "utf8")
+  ).split("\n");
+  for (const heading of ["## GJC로부터의 deviation (ralplan)", "## GJC로부터의 deviation (ultragoal)", "## GJC로부터의 deviation (deep-interview)", "## 필수 후속 개발"])
+    expect(`${heading}: ${lines.includes(heading)}`).toBe(`${heading}: true`);
+});
+
+test("README.md and README.ko.md have the same heading levels in order and the same number of code blocks", async () => {
+  // AC-K1: a fence is a line starting with ``` or ~~~ after leading
+  // whitespace; only opening fences count, and headings inside a block don't.
+  const shape = async (name: string) => {
+    const levels: number[] = [];
+    let blocks = 0;
+    let open = false;
+    for (const line of (await readFile(new URL(`../${name}`, import.meta.url), "utf8")).split("\n")) {
+      const trimmed = line.trimStart();
+      if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+        if (!open) blocks++;
+        open = !open;
+      } else if (!open) {
+        const heading = /^(#{1,6}) /.exec(line);
+        if (heading) levels.push(heading[1].length);
+      }
+    }
+    return { levels, blocks };
+  };
+  const [english, korean] = await Promise.all([shape("README.md"), shape("README.ko.md")]);
+  expect(korean.levels).toEqual(english.levels);
+  expect(korean.blocks).toBe(english.blocks);
+  expect(english.blocks).toBeGreaterThan(0);
 });

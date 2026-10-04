@@ -1,6 +1,6 @@
 # 합의 루프와 역할 agent
 
-이 문서는 SKILL의 합의 루프(1–9단계)가 어떤 도구 호출과 단계 파일로 이어지는지, 그중 무엇을 코드가 강제하고 무엇을 SKILL과 역할 프롬프트만 요구하는지를 적습니다. 함께 다루는 것은 세 역할 agent `open-gajae-planner`·`open-gajae-architect`·`open-gajae-critic`의 등록과 권한, 프롬프트, OpenCode 호스트에서 역할 subagent를 다시 부르는(재개·조종) 방식, `--interactive`·`--deliberate`, `question` 사용, 최종 승인, Pre-Execution Gate, 두 pass로 끝나는 run의 호출 순서입니다. 기준 코드는 [README.md](README.md) 머리에 있습니다. 코드 위치는 그 기준 코드의 줄 번호이고, 루트 `README.md`의 줄 번호만은 이 폴더로 가는 링크 문단이 들어간 지금 파일의 번호입니다. 예시 출력은 기준 코드를 임시 폴더의 `StateStore` 위에서 bun으로 실제로 불러 얻은 것입니다(`tests/ralplan-tool.test.ts`와 같은 방식, 역할의 자식 세션은 가짜 계보로 흉내 냄). 세션 폴더 절대 경로는 `<session>`, 프로젝트 경로는 `<project>`로 바꿨고, 시각과 해시는 실행마다 다릅니다.
+이 문서는 SKILL의 합의 루프(1–9단계)가 어떤 도구 호출과 단계 파일로 이어지는지, 그중 무엇을 코드가 강제하고 무엇을 SKILL과 역할 프롬프트만 요구하는지를 적습니다. 함께 다루는 것은 세 역할 agent `open-gajae-planner`·`open-gajae-architect`·`open-gajae-critic`의 등록과 권한, 프롬프트, OpenCode 호스트에서 역할 subagent를 다시 부르는(재개·조종) 방식, `--interactive`·`--deliberate`, `question` 사용, 최종 승인, Pre-Execution Gate, 두 pass로 끝나는 run의 호출 순서입니다. 기준 코드는 [README.md](README.md) 머리에 있습니다. 코드 위치는 그 기준 코드의 줄 번호입니다. 예시 출력은 기준 코드를 임시 폴더의 `StateStore` 위에서 bun으로 실제로 불러 얻은 것입니다(`tests/ralplan-tool.test.ts`와 같은 방식, 역할의 자식 세션은 가짜 계보로 흉내 냄). 세션 폴더 절대 경로는 `<session>`, 프로젝트 경로는 `<project>`로 바꿨고, 시각과 해시는 실행마다 다릅니다.
 
 다음 주제는 다른 문서가 맡습니다.
 
@@ -135,7 +135,7 @@ SKILL `:102-110`.
 
 - 6: 합의(같은 pass의 Critic `OKAY` + Architect `CLEAR`/`APPROVE`) 뒤, 사전 `intent` 영수증을 기준으로 합의가 새로 만든 가정·충돌만 모읍니다(a). `specs/deep-interview-*.md`와 관련 계획을 훑어 이전 결정과 어긋나는 곳을 찾습니다(b). 그리고 **`--interactive`와 상관없이** `question`으로 하나씩 확인합니다(c). 계획이 사용자 의도와 어긋나면 5단계 revision으로 돌아갑니다. 결과는 `ralplan write(stage="post-interview", …)`로 남기고 영수증과 짧은 상태(reconciled-clean / reconciled-with-revision / open-confirmations-pending)만 돌려줍니다(d).
 - 7: join gate를 다시 확인하고, `ralplan write(stage="final", …)`로 ADR(Decision, Drivers, Alternatives considered, Why chosen, Consequences, Follow-ups)과 `## Intent Reconciliation` 절을 담은 최종 계획을 씁니다. 코드는 `final`을 `pending-approval.md`로 복사하고 `auto_handoff`를 계산해 영수증, `index.jsonl`의 final 행, 상태에 남깁니다. 절이 있는지는 보지 않습니다.
-- SKILL은 `final`을 `post-interview` 바로 뒤에 씁니다. 전이 표는 `final`로 가는 길을 `adr`에서만 두므로 이 쓰기는 `invalid_transition_detected` 감사 행을 남깁니다. gjc도 같습니다(루트 README "Known behavior (as in GJC): transition audit rows").
+- SKILL은 `final`을 `post-interview` 바로 뒤에 씁니다. 전이 표는 `final`로 가는 길을 `adr`에서만 두므로 이 쓰기는 `invalid_transition_detected` 감사 행을 남깁니다. gjc도 같습니다([known-limits.md](known-limits.md) RK9).
 
 8–9단계는 [최종 승인과 admission](#최종-승인과-admission)에 있습니다.
 
@@ -151,7 +151,7 @@ SKILL `:102-110`.
 | 모드 | `subagent`(`registerAgents`, `src/config.ts:362`). 호스트 `subagent` 도구는 `primary` 모드 agent를 거부하므로(`subagent.ts:136-137`) 리더 `open-gajae`는 subagent가 될 수 없습니다. |
 | 시스템 프롬프트 | `prompts/<이름>.md` 그대로(`loadPrompts`, `src/config.ts:330-341`; `:363-371`). `<open-gajae-runtime-settings>` 블록은 `open-gajae`에만 붙습니다. 플러그인 시작 때 한 번 읽습니다. |
 | 모델 | 설정 `agents.<이름>.model`이 있으면 `draft.model`로 넣습니다(`src/config.ts:372-380`). 아래 "모델과 variant" |
-| 권한 | `draft.permissions.push(...roleRules(id))`(`src/config.ts:381`). 호스트 기본 규칙 뒤에 붙고, 사용자의 호스트 설정 `agents.<id>` 규칙이 그 뒤에 와서 이깁니다(`roleRules` 주석 `:268-273`, 루트 README "Owned roles and settings") |
+| 권한 | `draft.permissions.push(...roleRules(id))`(`src/config.ts:381`). 호스트 기본 규칙 뒤에 붙고, 사용자의 호스트 설정 `agents.<id>` 규칙이 그 뒤에 와서 이깁니다(`roleRules` 주석 `:268-273`, `docs/development.md` "자체 역할과 권한") |
 
 설명은 `descriptions`(`src/config.ts:231-250`) 그대로이고, 호스트가 리더의 `subagent` 도구 설명 끝 "Available subagents:" 목록에 붙입니다(`subagent.ts:271-295`).
 
@@ -175,7 +175,7 @@ SKILL `:102-110`.
 
 호스트는 어떤 도구의 마지막 일치 규칙이 `*` deny면 그 도구를 요청에서 아예 뺍니다(`whollyDisabled`, `opencode/packages/core/src/tool.ts:231,291-294`). 그래서 세 역할에게 `question`과 편집 도구는 보이지 않고, architect·critic에게는 `subagent`도 보이지 않습니다. planner의 `subagent`는 마지막 규칙이 allow라 보이며, 다른 agent를 고르면 호스트가 `Subagent denied: <id>`로 거부합니다(`subagent.ts:138-151`). 규칙은 `tests/integration.test.ts`의 "read-only roles deny edit, subagent, question, deep-interview and session tools; primary adds none"와 "planner edits no path and delegates only to the two research roles"가 확인합니다.
 
-planner가 실제로 위임하려면 호스트 설정 `experimental.subagent_depth`가 2 이상이어야 합니다. 호스트는 부른 세션의 깊이(부모를 따라 올라간 수)가 한도 이상이면 `Subagent depth limit reached (<한도>). Increase "experimental.subagent_depth" to allow nested subagents.`로 거부하고, 기본 한도는 1입니다(`subagent.ts:117-133`). planner는 리더의 자식(깊이 1)이므로 기본값에서는 거부됩니다. 플러그인은 이 값을 바꿀 수 없습니다(루트 `README.md:56`).
+planner가 실제로 위임하려면 호스트 설정 `experimental.subagent_depth`가 2 이상이어야 합니다. 호스트는 부른 세션의 깊이(부모를 따라 올라간 수)가 한도 이상이면 `Subagent depth limit reached (<한도>). Increase "experimental.subagent_depth" to allow nested subagents.`로 거부하고, 기본 한도는 1입니다(`subagent.ts:117-133`). planner는 리더의 자식(깊이 1)이므로 기본값에서는 거부됩니다. 플러그인은 이 값을 바꿀 수 없습니다(`docs/development.md` "OMC와 v1 플러그인으로부터의 deviation" 표의 "`subagent_depth`는 host 설정" 행).
 
 ### 모델과 variant
 
@@ -400,7 +400,7 @@ SKILL이 바꾸는 것:
 - gjc의 `workflowGate: { stage: "ralplan", kind: "approval" }` 표식은 없습니다. OpenCode `question`에 그런 필드가 없기 때문입니다(ralplan 편차 8).
 - 호스트 설명은 추천 선택지를 **맨 앞에** 두고 "(Recommended)"를 붙이라고 합니다(`question.ts:21`). SKILL의 승인 선택지는 gjc 그대로 Refine further가 먼저이고 추천 선택지가 둘째입니다.
 
-**질문이 열려 있는 동안 continuation은 돌지 않습니다.** 루트 README "Consensus flow" 문단(`README.md:169`)의 주장이고, 코드로 확인됩니다. `question`은 폼의 답이 올 때까지 `Deferred.await`로 도구 호출을 붙잡고(`opencode/packages/core/src/form.ts:148-153`), 리더 세션의 execution은 그동안 끝나지 않습니다. 플러그인의 ralplan continuation은 루트 세션의 `session.execution.succeeded`에서만 돕니다(`src/hooks.ts:1285-1286`). 실제 OpenCode에서 실행해 확인하지는 않았습니다. 질문을 닫으면(dismiss) 그 execution이 어떻게 끝나고 정지 표식이 어떻게 남는지는 [guards-and-continuation.md](guards-and-continuation.md)에 있습니다.
+**질문이 열려 있는 동안 continuation은 돌지 않습니다.** 코드로 확인됩니다. `question`은 폼의 답이 올 때까지 `Deferred.await`로 도구 호출을 붙잡고(`opencode/packages/core/src/form.ts:148-153`), 리더 세션의 execution은 그동안 끝나지 않습니다. 플러그인의 ralplan continuation은 루트 세션의 `session.execution.succeeded`에서만 돕니다(`src/hooks.ts:1285-1286`). 실제 OpenCode에서 실행해 확인하지는 않았습니다. 질문을 닫으면(dismiss) 그 execution이 어떻게 끝나고 정지 표식이 어떻게 남는지는 [guards-and-continuation.md](guards-and-continuation.md)에 있습니다.
 
 ## 최종 승인과 admission
 

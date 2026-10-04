@@ -61,4 +61,4 @@ This prompt is Gajae Code's deep-interview panel fragment `packages/coding-agent
 | `.gjc/` | `.open-gajae/` | Host path |
 | — | "`shell` is for read-only inspection only. Do not ask the user questions and do not delegate." | States the role's permissions: it is denied `question`, `subagent`, file edits and the workflow tools |
 
-See README.md "Deviations from GJC (deep-interview)" and THIRD-PARTY-NOTICES.md.
+See docs/development.md "GJC로부터의 deviation (deep-interview)" and THIRD-PARTY-NOTICES.md.

@@ -16,7 +16,7 @@
 
 - **execution**: 호스트(OpenCode v2)가 세션에서 모델을 한 번 돌리는 단위입니다. `session.execution.started`로 시작해 `succeeded`, `failed`, `interrupted` 가운데 하나로 끝납니다. 이 문서에서 "턴"은 execution 하나를 뜻합니다.
 - **루트 세션(lineage root)**: 부모가 없는 세션입니다. subagent는 자식 세션에서 돌고, goal과 ultragoal 파일은 모두 루트 세션 폴더에 있습니다.
-- **synthetic 메시지**: 플러그인이 `session.synthetic(...)`으로 세션에 써 넣는 메시지입니다. `resume: true`면 호스트가 새 execution을 시작합니다. `resume: false`면 플러그인은 새 execution을 요청하지 않고 메시지만 씁니다. 그래도 루트 README "Known behaviors"에 따르면 기본 `steer` 전달 때문에, 또는 `/compact` 뒤에 모델 스텝이 돌 수 있습니다. 이것은 호스트 동작이며 2절과 6절에 적었습니다. `description`은 TUI에 보이는 한 줄입니다(없으면 TUI가 메시지를 숨김, `src/hooks.ts` 머리 주석).
+- **synthetic 메시지**: 플러그인이 `session.synthetic(...)`으로 세션에 써 넣는 메시지입니다. `resume: true`면 호스트가 새 execution을 시작합니다. `resume: false`면 플러그인은 새 execution을 요청하지 않고 메시지만 씁니다. 그래도 [known-limits.md](known-limits.md)의 기록된 동작에 따르면 기본 `steer` 전달 때문에, 또는 `/compact` 뒤에 모델 스텝이 돌 수 있습니다. 이것은 호스트 동작이며 2절과 6절에 적었습니다. `description`은 TUI에 보이는 한 줄입니다(없으면 TUI가 메시지를 숨김, `src/hooks.ts` 머리 주석).
 
 ## 구성 요소
 
@@ -58,7 +58,7 @@
 
 ## 1. `goal` 도구
 
-출처(파일 머리 주석): gajae-code `5c52314…` `goals/tools/goal-tool.ts`, `gjc-runtime/ultragoal-guard.ts`, `gjc-runtime/ultragoal-receipt-freshness.ts`, `goals/runtime.ts`, `goals/state.ts`. 편차 8(D-TL3, 사용량 없음과 actor 제한), 10(D-TL9, nudge 없음, `drop` 가드 없음), 12(`source`), 32(DR-11), 37(DR-9, `drop`이 파일을 남김), 41(`tool.ts` 머리 주석의 DR-10: `complete`는 plan C-7의 run 완료(`runCompletion`) 기준이고, 영수증 때문에 거부할 때 다시 열 목표를 알려 줌. 루트 README 편차 표 41행은 GJC에 없는 결과 줄들에 관한 것이고, 이 reopen 줄이 그 가운데 하나). 등록은 `src/tools.ts` `createTools`.
+출처(파일 머리 주석): gajae-code `5c52314…` `goals/tools/goal-tool.ts`, `gjc-runtime/ultragoal-guard.ts`, `gjc-runtime/ultragoal-receipt-freshness.ts`, `goals/runtime.ts`, `goals/state.ts`. 편차 8(D-TL3, 사용량 없음과 actor 제한), 10(D-TL9, nudge 없음, `drop` 가드 없음), 12(`source`), 32(DR-11), 37(DR-9, `drop`이 파일을 남김), 41(`tool.ts` 머리 주석의 DR-10: `complete`는 plan C-7의 run 완료(`runCompletion`) 기준이고, 영수증 때문에 거부할 때 다시 열 목표를 알려 줌. `docs/development.md`의 편차 표 41행은 GJC에 없는 결과 줄들에 관한 것이고, 이 reopen 줄이 그 가운데 하나). 등록은 `src/tools.ts` `createTools`.
 
 ### 입력
 
@@ -146,7 +146,7 @@ Resolvable blockers must be worked, not paused: investigate, `ultragoal add`, de
 If the blocker is genuinely human-only, record `ultragoal classify_blocker(classification: "human_blocked", evidence: "<human-only dependency>")`, then record a clean bound `ultragoal record_critic_verdict(terminus: "pause", classification_event_id: "<eventId>", verdict: "OKAY", evidence: "<critic evidence>", blockers: [])` before pausing.
 ```
 
-정리하면 `goals.json`이 없을 때 `complete`는 허용되고, `pause`는 `ultragoal/` 폴더에 무엇이 있을 때만 거부됩니다(루트 README "Known behaviors" 마지막 행).
+정리하면 `goals.json`이 없을 때 `complete`는 허용되고, `pause`는 `ultragoal/` 폴더에 무엇이 있을 때만 거부됩니다([known-limits.md](known-limits.md)의 기록된 동작).
 
 ### `goal-state.json`
 
@@ -273,7 +273,7 @@ If the work is unfinished, leave the goal active.
 
 ### gjc와 다른 점
 
-gjc는 이 문맥을 숨긴 custom 메시지로 넣습니다. 여기서는 `<goal-context>` 표지로 감싼 **보이는** synthetic 메시지이고 TUI 줄이 있습니다(편차 30). 루트 README "Known behaviors"에 따르면 이 메시지는 goal이 끝난 뒤에도 기록에 남고, 기본 `steer` 전달 때문에 모델 스텝이 한 번 더 돌 수 있습니다(plan R12). 이 호스트 동작은 플러그인 코드로는 확인 못 함.
+gjc는 이 문맥을 숨긴 custom 메시지로 넣습니다. 여기서는 `<goal-context>` 표지로 감싼 **보이는** synthetic 메시지이고 TUI 줄이 있습니다(편차 30). [known-limits.md](known-limits.md)의 기록된 동작에 따르면 이 메시지는 goal이 끝난 뒤에도 기록에 남고, 기본 `steer` 전달 때문에 모델 스텝이 한 번 더 돌 수 있습니다(plan R12). 이 호스트 동작은 플러그인 코드로는 확인 못 함.
 
 ## 3. continuation 루프
 
@@ -351,7 +351,7 @@ goal이 처음 켜진 뒤 첫 판단에서 기록 `{ "goal_id": "<id>", "tool_le
 
 ### agent를 보지 않음 (PQ-20 A)
 
-`decideContinuation`과 `continueSession`은 agent를 보지 않습니다(gjc 경로 A와 같음). 세션을 `build` 등 다른 agent로 바꿔도 goal이 `active`인 동안 continuation이 들어옵니다. 그 agent에게는 `goal`과 `ultragoal` 도구가 숨겨져 있어 goal을 끝낼 수 없고, 그 agent의 다른 도구 호출은 도구 진행으로 셉니다. 끝내는 방법은 Esc(다음 프롬프트까지), 도구 없는 턴 3번 보류, `open-gajae`로 돌아가 `goal drop`입니다(루트 README "Known behaviors", 후속 U27).
+`decideContinuation`과 `continueSession`은 agent를 보지 않습니다(gjc 경로 A와 같음). 세션을 `build` 등 다른 agent로 바꿔도 goal이 `active`인 동안 continuation이 들어옵니다. 그 agent에게는 `goal`과 `ultragoal` 도구가 숨겨져 있어 goal을 끝낼 수 없고, 그 agent의 다른 도구 호출은 도구 진행으로 셉니다. 끝내는 방법은 Esc(다음 프롬프트까지), 도구 없는 턴 3번 보류, `open-gajae`로 돌아가 `goal drop`입니다([known-limits.md](known-limits.md) U27).
 
 ### 주입 문구
 
@@ -608,7 +608,7 @@ STALLED: durable progress has not changed across <n> compaction recoveries. Do n
 
 ### 보류 중 `/compact`
 
-루트 README "Known behaviors"에는 이렇게 적혀 있습니다: 보류 중에 `/compact`를 하면 대기 중이던 `<goal-notice>`가 전달되고, `resume: false`로 넣었는데도 호스트가 모델 스텝을 한두 번 돌립니다. 보류 자체는 남고, 사용자 메시지 전에는 continuation이 이어지지 않습니다(근거: 호스트 synthetic 전달, 대처: 메시지를 보내 계속).
+[known-limits.md](known-limits.md)의 기록된 동작에는 이렇게 적혀 있습니다: 보류 중에 `/compact`를 하면 대기 중이던 `<goal-notice>`가 전달되고, `resume: false`로 넣었는데도 호스트가 모델 스텝을 한두 번 돌립니다. 보류 자체는 남고, 사용자 메시지 전에는 continuation이 이어지지 않습니다(근거: 호스트 synthetic 전달, 대처: 메시지를 보내 계속).
 
 코드로 확인되는 부분: 압축 훅은 `goal-continuation.json`을 읽지도 쓰지도 않고, 보류 중 루트 `succeeded`는 `decideContinuation`에서 `held`로 끝나 아무것도 넣지 않습니다. 호스트가 알림을 전달하며 스텝을 도는 것과 `/compact`가 `prompt` 훅을 거치지 않는지는 플러그인 코드로 확인 못 함.
 

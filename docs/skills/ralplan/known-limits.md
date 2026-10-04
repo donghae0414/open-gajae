@@ -2,13 +2,13 @@
 
 이 문서는 ralplan에 남아 있는 한계와, 처음 보면 이상해 보이지만 기록된 동작을 모읍니다. 각 항목은 무엇이 일어나는지, 왜 그런지, 사용자나 모델이 무엇을 하면 되는지를 적습니다. 기준 코드는 [README.md](README.md) 머리에 있습니다.
 
-- **출처**: 루트 `README.md`의 Ralplan 절 알려진 동작(176–193행), "Deviations from GJC (ralplan)" 표의 Impact 열과 "Accepted behavior differences"(394–454행), "Deviations from OMC" 표의 R-OD20·R-OD21 행(390행), "Mandatory follow-up development" 4–6(581–583행). 계획 `.omc/plans/ralplan-gjc-stage-trail.md`의 §5 위험과 §8.1 결정. ultragoal·deep-interview known-limits의 ralplan 관련 항목. 2026-09-28~29 수동 실행 기록. 이 폴더의 문서를 쓰며 코드에서 찾은 것(RK36–RK41과 여러 항목의 보충).
-- **줄 번호**: 코드 위치는 커밋 `5b92a60` 기준입니다. `.omc/` 아래의 계획·spec·진행 기록은 `.gitignore`에 들어 있어 저장소에 없는 로컬 기록입니다. 루트 `README.md`와 `README.ko.md`의 줄 번호는 이 문서와 함께 들어가는 현재 파일 기준이고, 이 문서가 인용한 줄은 두 파일에서 같은 번호입니다.
+- **출처**: 커밋 `8ab6266`의 ralplan 사용 설명에 있던 알려진 동작(지금은 이 문서). `docs/development.md`의 "GJC로부터의 deviation (ralplan)" 표의 영향 열과 "수용한 동작 차이", "OMC와 v1 플러그인으로부터의 deviation" 표의 R-OD20·R-OD21 행("안내는 `open-gajae` primary에만"), "필수 후속 개발" 4–6. 계획 `.omc/plans/ralplan-gjc-stage-trail.md`의 §5 위험과 §8.1 결정. ultragoal·deep-interview known-limits의 ralplan 관련 항목. 2026-09-28~29 수동 실행 기록. 이 폴더의 문서를 쓰며 코드에서 찾은 것(RK36–RK41과 여러 항목의 보충).
+- **줄 번호**: 코드 위치는 커밋 `5b92a60` 기준입니다. `.omc/` 아래의 계획·spec·진행 기록은 `.gitignore`에 들어 있어 저장소에 없는 로컬 기록입니다.
 - **번호**: RK 번호는 이 문서에서 새로 붙였습니다. ultragoal의 U 번호와 deep-interview의 K 번호는 다시 쓰지 않고, 그 문서의 번호 그대로 가리킵니다([ultragoal known-limits](../ultragoal/known-limits.md), [deep-interview known-limits](../deep-interview/known-limits.md)).
-- **gjc와 같음**: 표시한 항목은 gjc(`gajae-code/`, 고정 커밋 `5c52314`)에서도 같은 결과가 납니다. 표시한 곳마다 이 문서를 쓰며 gjc 소스를 읽어 확인했고, 그 위치를 함께 적습니다. README에서 옮기기만 한 gjc 위치는 그렇다고 따로 적습니다. gjc 경로는 `gajae-code/packages/coding-agent/src/` 기준입니다.
+- **gjc와 같음**: 표시한 항목은 gjc(`gajae-code/`, 고정 커밋 `5c52314`)에서도 같은 결과가 납니다. 표시한 곳마다 이 문서를 쓰며 gjc 소스를 읽어 확인했고, 그 위치를 함께 적습니다. `docs/development.md`의 편차 표에서 옮기기만 한 gjc 위치는 그렇다고 따로 적습니다. gjc 경로는 `gajae-code/packages/coding-agent/src/` 기준입니다.
 - **실행 확인**: 이 문서를 쓰며 bun으로 임시 `StateStore` 위에 `ralplan` 도구를 만들어(`tests/ralplan-tool.test.ts`와 같은 방식) 돌려 본 항목입니다. 결과의 세션 폴더 경로는 `<session>`으로 바꿨고, 시각과 sha256은 실행마다 다릅니다.
 - **테스트**: 근거의 테스트는 `파일:줄`로 적습니다. 그 줄에서 시작하는 `test(...)` 하나를 가리킵니다. RP1–RP5는 `tests/ralplan-tool.test.ts`의 테스트 이름 앞머리입니다.
-- **편차 번호**: "ralplan 편차 N"은 루트 README "Deviations from GJC (ralplan)" 표의 N번 행입니다.
+- **편차 번호**: "ralplan 편차 N"은 `docs/development.md` "GJC로부터의 deviation (ralplan)" 표의 N번 행입니다. "수용 차이"는 같은 절의 "수용한 동작 차이" 표입니다.
 
 자세한 동작은 이웃 문서에 있습니다.
 
@@ -26,7 +26,7 @@
 | RK1 | `skill ralplan` 로드와 키워드·멘션은 상태를 쓰지 않는다. `ralplan start`(또는 첫 `write`) 전에는 계획 가드와 continuation이 없다 | ralplan 편차 36; `executeBefore`(`src/hooks.ts:1004-1097`) | 로드 직후 `ralplan start` (SKILL 지시) |
 | RK2 | 활성 run이 있으면 `start`가 거부된다. 승인 질문 중인 활성 `final`도, 새 `run_id`를 줘도 같다. ultragoal로 인계한 뒤에는 ultragoal 거부에 걸린다 | ralplan 편차 39; `start`(`src/ralplan-runtime/tool.ts:189-211`); RP3, RP4; 실행 확인 | 이어 가려면 `write`. 새로 하려면 Stop here·`clear` 뒤 새 `run_id`로 `start`. ultragoal 인계 뒤에는 `ultragoal handoff(to: "ralplan")` 뒤 새 `run_id`로 `write` |
 | RK3 | `run_id` 없는 `start`는 옛 run 폴더를 이어 쓴다. 옛 단계 파일, opener 예산, 막힘 행, `pending-approval.md`가 남는다 (gjc와 같음) | `startRunTx`(`store.ts:915-988`); 계획 R-11; 실행 확인 | 새 계획은 `start(run_id: "<새 이름>")` |
-| RK4 | `start` 없이 `write`로 생긴 상태에는 `mode`, `interactive`, `task`, `repository_binding`이 없다 (gjc와 같음) | `persistActiveRunIdTx`(`store.ts:513-545`); 수용 차이 "No seeding"; R-O6 | 기록만 |
+| RK4 | `start` 없이 `write`로 생긴 상태에는 `mode`, `interactive`, `task`, `repository_binding`이 없다 (gjc와 같음) | `persistActiveRunIdTx`(`store.ts:513-545`); 수용 차이 "시딩 없음, `write`가 state 생성"; R-O6 | 기록만 |
 | RK5 | 키워드는 안내만 하고 `open-gajae`에만 간다. 감지는 OMC 규칙 그대로라 `ralplan 이거 정리해줘`는 조용하고 `랄플랜 이거 정리해줘`는 발화하며, `use 랄플랜 for this`처럼 영어 동사 뒤의 별칭은 발화하지 않는다 (OMC와 같음) | `prompt` 훅(`src/hooks.ts:860-1002`); R-OD20, U26; `tests/ralplan.test.ts:231`; 실행 확인 | `@ralplan` 멘션이나 `skill ralplan` |
 | RK6 | ultragoal 실행 중의 `write`가 ralplan을 활성으로 만든다. 그 행은 다음 ultragoal 행 쓰기에 지워져, 행 없는 활성 상태가 남을 수 있다 | `write`(`tool.ts:249`), `syncActiveRowTx`(`src/skill-state/rows.ts:144-162`); R-AE1, R-13, U22 | `ralplan state(patch={"active": false})` 또는 `ralplan clear` |
 | RK7 | 잠기지 않은 phase에서 `active: false`로 멈춘 run은 같은 run의 다음 `write`로 다시 활성이 된다 (gjc와 같음) | `persistActiveRunIdTx`(`store.ts:531-541`); 실행 확인 | 역할이 다 끝난 뒤 다시 멈추거나 `clear` |
@@ -58,7 +58,7 @@
 | RK33 | 여러 OpenCode 프로세스 사이는 직렬화하지 않는다 | 필수 후속 4, R-5, U31; `queueKey`(`src/state.ts:446-451`) | 한 worktree에 프로세스 하나 |
 | RK34 | `repository_binding`은 기록만 하고 강제하지 않는다 | ralplan 편차 12; `src/ralplan-runtime/binding.ts` | 기록만 |
 | RK35 | 병렬 쓰기 호스트 프로브는 같은 큐의 경합을 강제하지 않는다 | `tests/ralplan-trail-probe.ts:9-12`; 로컬 기록 `.omc/progress.txt:73` | 열린 리뷰 항목(차단 아님) |
-| RK36 | 결과·거부 문구와 SKILL·프롬프트 몇 곳이 실제 동작과 다르다. 루트 README의 불일치는 2026-10-04 고침 | 2026-10-03 문서화; 아래 절 | 결정 필요 (README 부분은 해결) |
+| RK36 | 결과·거부 문구와 SKILL·프롬프트 몇 곳이 실제 동작과 다르다. 사용 설명 문서의 불일치는 2026-10-04 `8ab6266`에서 고침 | 2026-10-03 문서화; 아래 절 | 결정 필요 (사용 설명 부분은 해결) |
 | RK37 | 역할이 자기 lane 밖 단계와 새 `run_id`를 쓸 수 있고, `state` op는 어떤 필드도 지키지 않는다(안전하지 않은 `run_id`가 들어가면 `start`·`handoff`가 막힌다). 조인 gate는 상태로 볼 수 없다 | `tool.ts:61,236-239`, `patchStateTx`; 실행 확인 | 결정 필요 |
 | RK38 | 원장 복구·중복 처리에 가장자리 동작이 있다(복구의 "no changes written", 깨진 index 줄, opener 전 단계, 중간 실패를 되돌리지 않음 등) | `writeStageTx`, `ledger.ts`; 실행 확인 | 결정 필요 |
 | RK39 | run 전환이 옛 필드를 남기고, 상태의 몇 필드는 기록만 하며, HUD 칩 상한이 `handoff` 칩을 떨어뜨린다 | `store.ts:523-529`, `hud.ts`; 실행 확인 | 기록만 |
@@ -73,7 +73,7 @@
 
 - **흐름**: `@ralplan` 멘션과 키워드는 `[MODE: RALPLAN]` 안내만 넣습니다(`src/hooks.ts:938-957`). 멘션과 `skill ralplan` 로드는 턴 표식도 세웁니다(`:951,997`, `:1093`). 상태 파일도 활성 행도 생기지 않습니다.
 - **결과**: `ralplan start`나 첫 `ralplan write` 전까지 ralplan은 보이는 주 skill이 아닙니다. 그래서 계획 가드가 편집을 막지 않고, 모델이 턴을 끝내도 continuation이 없습니다.
-- **gjc와 다름**: README 편차 36에 따르면 gjc는 `/skill:ralplan` 로드 때 `planner` 상태와 저장소 바인딩, 활성 행을 씁니다(`hooks/skill-state.ts:387-496,641`; 이 위치는 README에서 옮겼고 이 문서를 쓰며 다시 읽지 않았습니다). open-gajae는 spec D-F13·R-O6대로 `start`를 진입으로 둡니다.
+- **gjc와 다름**: ralplan 편차 36에 따르면 gjc는 `/skill:ralplan` 로드 때 `planner` 상태와 저장소 바인딩, 활성 행을 씁니다(`hooks/skill-state.ts:387-496,641`; 이 위치는 편차 표에서 옮겼고 이 문서를 쓰며 다시 읽지 않았습니다). open-gajae는 spec D-F13·R-O6대로 `start`를 진입으로 둡니다.
 - **예외**: 같은 execution에서 deep-interview를 로드한 뒤의 `skill ralplan`은 deep-interview 로드 게이트를 지납니다(`src/hooks.ts:1074-1092`). 게이트가 인계하면 ralplan은 `planner`로 활성이 됩니다([entry-and-handoff.md](entry-and-handoff.md)).
 - **정리**: SKILL의 첫 지시가 `ralplan start`입니다(`skills/ralplan/SKILL.md:17`).
 
@@ -104,7 +104,7 @@
 - **거부 문구가 알려 주지 않음**: RK2의 거부 문구는 "To plan anew, stop it first …"까지만 말합니다(`tool.ts:77`). 그대로 멈춘 뒤 `run_id` 없이 `start`하면 옛 폴더로 가서 새 계획의 `planner` 1이 위처럼 덮어쓰기로 거부됩니다. 새 `run_id`를 주라는 말은 SKILL에만 있습니다(RK36).
 - **정리**: 새 계획은 `start(task, run_id: "<새 이름>")`(`SKILL.md:17`). 계획 R-11이 같은 위험을 적었습니다.
 
-#### RK4. `write`로 생긴 상태 (수용 차이 "No seeding", gjc와 같음)
+#### RK4. `write`로 생긴 상태 (수용 차이 "시딩 없음, `write`가 state 생성", gjc와 같음)
 
 - `start` 없는 첫 `write`는 `persistActiveRunIdTx`로 상태를 만듭니다(`store.ts:513-545`). 필드는 `run_id`, `skill`, `active: true`, `current_phase`(쓴 단계), `version`, `updated_at`뿐입니다. `mode`, `interactive`, `task`, `repository_binding`, `session_id`는 없습니다.
 - 영수증의 `repository_binding`은 그때 잡은 값입니다(`store.ts:645-648`). 상태에는 저장되지 않으므로, 이런 run에서는 쓰기마다 세션 큐 안에서 `git`을 다시 불러 바인딩을 잡습니다.
@@ -116,7 +116,7 @@
 - **안내만**: 키워드·멘션은 상태를 쓰지 않습니다(RK1).
 - **받는 쪽**: `open-gajae`, agent가 없는 세션, agent 조회가 실패한 세션만 안내를 받습니다(`src/hooks.ts:906`, R-OD20). 역할 subagent의 프롬프트는 훅 첫 검사에서 바로 돌아갑니다(`:870`). 호스트 `build`·`general`과 사용자 agent는 안내를 받지 않습니다. 이들에게는 `ralplan` 도구가 숨겨지고 호출해도 거부되기 때문입니다.
 - **감지 규칙**: OMC 감지기를 그대로 옮겼습니다(`src/ralplan.ts` 141행 이후). 질문, 문서화 요청, 인용, 코드·표·인용 블록 안의 단어, 백틱 안의 `ralplan`은 발화하지 않습니다. OMC의 ASCII/한국어 비대칭도 그대로입니다. `랄플랜 이거 정리해줘`는 발화하고 `ralplan 이거 정리해줘`는 발화하지 않습니다(`tests/ralplan.test.ts:231`, 사용자 결정으로 대칭화하지 않음).
-- **문맥 예** (해결, 2026-10-04: README.md 121행은 예전에 "따옴표 속 언급은 발화하지 않는다", "활성화 동사나 메시지 맨 앞"이라고 줄여 적었으나, 지금은 아래 동작과 실제 호출 문맥을 적습니다). 실행 확인(`detectRalplanKeyword`): `run "ralplan" on this issue`는 발화합니다. 한국어 문장 가운데의 키워드(`이 이슈 랄플랜 해줘`, `이번 작업은 ralplan 으로 해줘`)는 발화하지 않고, `랄플랜 해줘`처럼 맨 앞이면 발화합니다.
+- **문맥 예** (해결, 2026-10-04: 옛 사용 설명의 키워드 문단은 "따옴표 속 언급은 발화하지 않는다", "활성화 동사나 메시지 맨 앞"이라고 줄여 적었으나, `8ab6266`에서 아래 동작과 실제 호출 문맥을 적도록 고쳤습니다. 지금은 [entry-and-handoff.md](entry-and-handoff.md)의 키워드 감지 절이 적습니다). 실행 확인(`detectRalplanKeyword`): `run "ralplan" on this issue`는 발화합니다. 한국어 문장 가운데의 키워드(`이 이슈 랄플랜 해줘`, `이번 작업은 ralplan 으로 해줘`)는 발화하지 않고, `랄플랜 해줘`처럼 맨 앞이면 발화합니다.
 - **영어 동사 뒤의 한국어·일본어 별칭 (OMC와 같음)**: 활성화 동사 정규식과 영어 진단 정규식은 `\b…\b`로 키워드를 감싸서(`src/ralplan.ts:487-488,547-548`) 한글·가나 별칭을 잡지 못합니다. 실행 확인: `use 랄플랜 for this`와 `start ラルプラン now`는 조용하고 `please 랄플랜 this`는 발화합니다. 진단 문맥도 비대칭이라 `ralplan keeps looping`은 조용하지만 `랄플랜 keeps looping`은 발화합니다. OMC `5281b19`의 같은 정규식(`src/hooks/keyword-detector/index.ts:509-510,569-570`)을 그대로 옮긴 것입니다.
 - **함께 온 요청**: ultragoal이 보이는 주 skill이면 ralplan 안내 대신 ultragoal 인계 안내가 갑니다(`:941-945`, PQ-5 (1) B). 한 메시지에 ralplan과 ultragoal 키워드가 함께 있으면 ultragoal 안내는 빠집니다(`:961`).
 - **정리**: 안내가 없어도 `@ralplan` 멘션이나 `skill ralplan`으로 들어갈 수 있습니다. 자세한 규칙은 [entry-and-handoff.md](entry-and-handoff.md)에 있습니다.
@@ -129,9 +129,9 @@
 - **행**: ralplan 행이 쓰이지만 순위상 ultragoal(2)이 ralplan(1)보다 위라서(`rows.ts:51-55`) ultragoal이 보이는 주 skill로 남습니다. 이 동안 ralplan 가드와 continuation은 적용되지 않습니다.
 - **행이 지워지는 경우**: 그 뒤 ultragoal이 자기 행을 활성으로 쓰면(reconcile하는 op나 `skill ultragoal` 시드, `src/ultragoal-runtime/store.ts:428-432,491-501`) `syncActiveRowTx`가 위쪽 파이프라인 행인 ralplan 행을 지웁니다(`rows.ts:154-157`). ralplan 상태는 `active: true` 그대로입니다.
 - **결과**:
-  - ralplan 행이 남은 채 ultragoal 행이 없어지면 ralplan이 보이는 주 skill이 됩니다. 계획 가드가 편집을 막고, goal이 활성이 아니면 ralplan continuation이 다시 돕니다(README 181행).
+  - ralplan 행이 남은 채 ultragoal 행이 없어지면 ralplan이 보이는 주 skill이 됩니다. 계획 가드가 편집을 막고, goal이 활성이 아니면 ralplan continuation이 다시 돕니다(수용 차이 "한 모드 원칙 일부 해제").
   - ralplan 행이 지워졌으면 ralplan은 보이는 주 skill이 아니라서 가드와 continuation은 없습니다. 대신 `ralplan start`가 거부되고(RK2), 압축 때 ralplan 문맥이 들어가며(RK32), doctor는 이 상태를 보고하지 않습니다(RK30).
-- **정리**: `ralplan state(patch={"active": false})`나 `ralplan clear`. 계획 가드의 거부 문구도 두 방법을 적습니다(`RALPLAN_MUTATION_BLOCK_MESSAGE`, `src/hooks.ts:334-335`). gjc 그대로 두기로 한 관리자 결정입니다(R-AE1, 계획 R-13, 수용 차이 "One-mode rule partly lifted").
+- **정리**: `ralplan state(patch={"active": false})`나 `ralplan clear`. 계획 가드의 거부 문구도 두 방법을 적습니다(`RALPLAN_MUTATION_BLOCK_MESSAGE`, `src/hooks.ts:334-335`). gjc 그대로 두기로 한 관리자 결정입니다(R-AE1, 계획 R-13, 수용 차이 "한 모드 원칙 일부 해제").
 
 #### RK7. 멈춘 run이 다음 `write`로 다시 켜짐 (gjc와 같음)
 
@@ -141,10 +141,10 @@
 - **gjc**: `persistActiveRunId`가 같은 방식으로 다시 켭니다(`gjc-runtime/ralplan-runtime.ts:1014-1026`, "always re-assert active").
 - **정리**: 역할이 끝난 뒤 다시 멈춥니다. run을 끝낼 것이면 `ralplan clear`입니다. `complete`는 잠긴 phase라 그 뒤 같은 run의 쓰기는 상태를 다시 켜지 않습니다. 다만 행 문제가 남습니다(RK8).
 
-#### RK8. 잠긴 phase 뒤의 쓰기, doctor, clear (README 알려진 동작, gjc와 같음)
+#### RK8. 잠긴 phase 뒤의 쓰기, doctor, clear (기록된 동작, gjc와 같음)
 
 - **흐름**: 같은 run의 phase가 잠겨 있으면(`final`, `handoff`, `complete` 등) `write`는 `active`와 `current_phase`를 바꾸지 않습니다(`store.ts:531-537`, R-OD9). 그러나 상태가 그대로인 것은 아닙니다. 역할 id·`*_resumable`·fallback 필드, lane 판정(`last_review_verdict*`), `final`의 `auto_handoff`는 그 뒤에 병합되고, 그때마다 `updated_at`이 바뀌며 상태 쓰기 감사 행이 남습니다(`store.ts:823-840`). 활성 행은 언제나 `active: true`, phase = 쓴 단계로 다시 씁니다(`store.ts:842-867`). gjc `syncRalplanHud`도 `active: !options.pendingApproval || options.stage === "final"`(`gjc-runtime/ralplan-runtime.ts:1922`)이라, 쓰기 뒤의 호출(`:2217-2226`)에서는 늘 참입니다.
-- **실행 확인 (병합)**: `final` 1 뒤 Stop here, 그다음 architect가 `architect` 2를 `lane_verdict: "WATCH"`로 쓰면, 상태에서 `updated_at`, `architect_id`, `last_review_verdict`, `last_review_verdict_lane`, `last_review_verdict_stage_n`이 바뀌고 `active: false`, `current_phase: "final"`은 그대로이며, 행은 `{active: true, phase: "architect"}`로 다시 생깁니다. README.md 181행은 예전에 "the state is left untouched"라고 적었으나, 이 병합과 행 다시 쓰기, Stop here·`clear` 뒤 행을 지우는 방법을 적도록 고쳤습니다(해결, 2026-10-04). 계획 DR-3(`.omc/plans/ralplan-gjc-stage-trail.md:31`)은 옛 문구 그대로입니다(역사 기록). `SKILL.md:30`은 "does not re-activate"라고만 해 맞습니다.
+- **실행 확인 (병합)**: `final` 1 뒤 Stop here, 그다음 architect가 `architect` 2를 `lane_verdict: "WATCH"`로 쓰면, 상태에서 `updated_at`, `architect_id`, `last_review_verdict`, `last_review_verdict_lane`, `last_review_verdict_stage_n`이 바뀌고 `active: false`, `current_phase: "final"`은 그대로이며, 행은 `{active: true, phase: "architect"}`로 다시 생깁니다. 옛 사용 설명의 write 의미 문단은 "the state is left untouched"라고 적었으나, `8ab6266`에서 이 병합과 행 다시 쓰기, Stop here·`clear` 뒤 행을 지우는 방법을 적도록 고쳤습니다(해결, 2026-10-04). 지금은 이 항목과 [stages-and-ledger.md](stages-and-ledger.md) 6.4, [state-and-files.md](state-and-files.md)가 적습니다. 계획 DR-3(`.omc/plans/ralplan-gjc-stage-trail.md:31`)은 옛 문구 그대로입니다(역사 기록). `SKILL.md:30`은 "does not re-activate"라고만 해 맞습니다.
 - **실행 확인**: `final` 1 뒤에 `revision` 2를 쓴 세 경우입니다. doctor 결과의 `problems[].message`이고, `fixCommand`는 모두 `ralplan clear`였습니다.
 
   | 경우 | 상태 / 행 | doctor 메시지 | force 없는 `clear` | `state(patch={"active": false})` |
@@ -154,7 +154,7 @@
   | `clear` 뒤 쓰기 | `{active: false, complete}` / 활성 `revision` | 위 셋(phase가 `complete`) | `existing state for ralplan is stale (mode-state is already terminal (complete)); use force: true to clear` | `unknown ralplan phase "complete"` |
 
 - gjc doctor도 같은 두 문구로 보고합니다(`gjc-runtime/state-runtime.ts:417,525`).
-- **문제 1**: 위 두 경우에 doctor가 권하는 `ralplan clear`는 run을 끝냅니다. clear는 잠긴 상태 phase를 행 phase 대신 읽기 때문입니다(`describeStaleClearTx`, R-OD14; gjc `gjc-runtime/state-runtime.ts:244-270`도 같음). SKILL(`SKILL.md:32`)과 README(189행)는 "이 보고만으로 clear하지 않는다"고 적습니다(계획 R-25: 문서 안내로만 완화).
+- **문제 1**: 위 두 경우에 doctor가 권하는 `ralplan clear`는 run을 끝냅니다. clear는 잠긴 상태 phase를 행 phase 대신 읽기 때문입니다(`describeStaleClearTx`, R-OD14; gjc `gjc-runtime/state-runtime.ts:244-270`도 같음). SKILL(`SKILL.md:32`)과 [ops.md](ops.md)의 `doctor` 절은 "이 보고만으로 clear하지 않는다"고 적습니다(계획 R-25: 문서 안내로만 완화).
 - **문제 2**: `clear` 뒤 쓰기로 생긴 행에는 force 없는 `clear`, `ralplan handoff`, `{"active": false}`만의 `state` 패치가 듣지 않습니다. force 없는 `clear`는 상태가 이미 종료 phase(`complete`)라서 거부하고(`describeStaleClearTx`의 첫 검사, `store.ts:1097-1099`), `ralplan handoff`는 비활성 ralplan을 거부하며(RK23), phase를 주지 않은 패치는 phase가 `complete`로 남아 manifest 밖이라 거부됩니다(RK10). 듣는 것은 `clear(force: true)`와, manifest phase를 함께 주는 패치(예: `state(patch={"active": false, "current_phase": "final"})`)입니다. 이전 phase `complete`가 manifest 상태가 아니라서 전이 검사를 건너뛰기 때문입니다(`store.ts:1037-1046`; RK37의 `run_id` 고치기와 같은 방식). 실행 확인: 그 패치는 성공했고, 행이 지워졌으며, 상태는 `{active: false, current_phase: "final"}`이 됐습니다.
 - **문제 3**: 그 행이 남아 있는 동안 ralplan이 보이는 주 skill이 됩니다. 행 쓰기는 위쪽 deep-interview 행도 지웁니다. `deep-interview start`와 취소된 인터뷰의 재개(`state(patch={"active": true})`)는 이때 거부됩니다(`otherPrimaryTx`, `src/deep-interview-runtime/store.ts:217-223,313-314,710-711`). Stop here 뒤 다듬기의 행도 같고, 그때는 `ralplan state(patch={"active": false})`로 풀립니다. 실행 확인(`clear` 뒤 쓰기): `deep-interview start`는 다음처럼 거부되고, 문구가 권하는 세 방법은 이 상태에서 모두 실패합니다.
 
@@ -164,10 +164,10 @@
 
 - **정리**: 다듬기로 생긴 행은 `ralplan state(patch={"active": false})`(Stop here)로, `clear` 뒤의 행은 `ralplan clear(force: true)`나 `ralplan state(patch={"active": false, "current_phase": "final"})`로 지웁니다. 뒤의 것은 상태를 `final`로 되돌리므로, run을 끝난 상태로 두려면 `clear(force: true)`입니다. SKILL의 손상·낡은 상태 복구 절도 `clear(force=true)`를 적습니다(`SKILL.md:28`). 테스트 `tests/ralplan-tool.test.ts:292`, `tests/hooks.test.ts:1171`.
 
-#### RK9. 전이 감사 행 (README 알려진 동작, gjc와 같음)
+#### RK9. 전이 감사 행 (기록된 동작, gjc와 같음)
 
 - `write`의 phase 이동이 전이 표(`RALPLAN_TRANSITIONS`, `manifest.ts:42-69`)에 없으면, 이전 상태가 활성일 때 `invalid_transition_detected` 감사 행을 남기고 그대로 씁니다(`writeStateTx`, `store.ts:199-228`, spec D-T11).
-- SKILL 순서가 이 행을 늘 만듭니다. 1회차 병렬 리뷰(`intent→critic`, `critic→architect`), architect가 마지막인 합의(`architect→post-interview`), `revision→architect`, `post-interview→final` 등입니다(README 191행). 2026-09-30 수동 실행 두 번에서도 4~5행씩 남았습니다(U38).
+- SKILL 순서가 이 행을 늘 만듭니다. 1회차 병렬 리뷰(`intent→critic`, `critic→architect`), architect가 마지막인 합의(`architect→post-interview`), `revision→architect`, `post-interview→final` 등입니다([stages-and-ledger.md](stages-and-ledger.md) 6.6의 표). 2026-09-30 수동 실행 두 번에서도 4~5행씩 남았습니다(U38).
 - 인계도 같은 감사 행을 남길 수 있습니다(RK28). 영향은 감사 로그의 소음뿐이고 ralplan을 다시 개정할 때 볼 후보입니다(계획 R-18). gjc도 같은 자리에서 감사 행만 남기고 씁니다(`gjc-runtime/state-writer.ts:1052-1066`).
 
 #### RK10. `state` op로 할 수 없는 것 (ralplan 편차 38)
@@ -179,7 +179,7 @@
 
 #### RK11. 옛 형식 상태 (DR-21)
 
-- **기록된 동작**: 알 수 없는 phase(예: OMC의 `current_phase: "ralplan"`)의 상태는 판독 불가로 봅니다. 계획 가드는 풀리고, continuation은 없고, `skill ultragoal` 게이트는 지나가고, doctor는 `schema_violation`을 보고합니다(README 450행, `tests/hooks.test.ts:1206`).
+- **기록된 동작**: 알 수 없는 phase(예: OMC의 `current_phase: "ralplan"`)의 상태는 판독 불가로 봅니다. 계획 가드는 풀리고, continuation은 없고, `skill ultragoal` 게이트는 지나가고, doctor는 `schema_violation`을 보고합니다(수용 차이 "이전 형식 state", `tests/hooks.test.ts:1206`).
 - **어긋나는 곳**: `start`의 활성 검사는 `active === true`만 봅니다(`tool.ts:197-198`). 실행 확인(`{active: true, current_phase: "ralplan"}`):
 
   | 호출 | 결과 |
@@ -189,11 +189,11 @@
   | `doctor` | `schema_violation`, `unknown ralplan phase "ralplan"`, fix `ralplan clear (force: true)` |
   | `clear` (force 없음) | 성공. `{active: false, current_phase: "complete"}` |
 
-- README 450행은 예전에 "delete their state by hand"라고 적었으나(편집 도구는 `state/**` 항상 차단에 걸림), 지금은 `start` 거부와 `state` 거부를 적고 `ralplan clear`로 초기화하라고 합니다(해결, 2026-10-04). 코드 동작(활성인 옛 상태를 `start`가 거부하고, 그 거부가 권하는 `state {"active": false}`가 실패함)은 그대로 한계입니다. force 없는 `ralplan clear`로 충분합니다. `run_id`가 없는 옛 상태라면 첫 `write`도 새 run으로 바꿉니다. 옛 필드 위에 `run_id`, phase, `active`를 씁니다(RK4).
+- 수용 차이 "이전 형식 state" 행은 예전에 "delete their state by hand"라고 적었으나(편집 도구는 `state/**` 항상 차단에 걸림), `8ab6266`에서 `start` 거부와 `state` 거부를 적고 `ralplan clear`로 초기화하라고 고쳤습니다(해결, 2026-10-04). 코드 동작(활성인 옛 상태를 `start`가 거부하고, 그 거부가 권하는 `state {"active": false}`가 실패함)은 그대로 한계입니다. force 없는 `ralplan clear`로 충분합니다. `run_id`가 없는 옛 상태라면 첫 `write`도 새 run으로 바꿉니다. 옛 필드 위에 `run_id`, phase, `active`를 씁니다(RK4).
 
 #### RK12. receipt·revision 없음 (ralplan 편차 17)
 
-- 상태 봉투에 gjc `receipt`, checksum, `state_revision`이 없습니다(R-OD6). 행과 스냅숏에도 revision 번호가 없습니다(수용 차이 "No revision numbers").
+- 상태 봉투에 gjc `receipt`, checksum, `state_revision`이 없습니다(R-OD6). 행과 스냅숏에도 revision 번호가 없습니다(수용 차이 "revision 번호 없음").
 - 그래서 `status(fields: ["fresh", "fresh_until", "receipt"])`는 늘 `fresh: false`이고 나머지 둘은 비어 있습니다(`store.ts:1229-1252`). 실행 확인: 결과가 `{"fresh": false}`였습니다. `state` op 뒤의 receipt는 활성 행에만 실립니다(`stateWriteReceipt`, `store.ts:295-317`).
 - revision 없이도 쓰기 순서가 바뀌지 않는 것은 한 프로세스의 세션 큐 하나가 모든 쓰기를 줄 세우기 때문입니다. 여러 프로세스는 RK33입니다.
 
@@ -222,7 +222,7 @@
 
 - **막힌 `final`**: `final`은 쓸 수 있고, 영수증의 `auto_handoff`는 `{"configuredTarget":"off","effectiveTarget":"off","degradationReason":"planning_stuck","source":"default"}`입니다. 그런데 `ralplan handoff(to: "ultragoal")`는 막힘을 보지 않고 성공하며, 결과는 계획을 "the approved plan"이라고 부릅니다(실행 확인). 같은 execution 게이트도 `final`이면 인계합니다(`src/hooks.ts:809-812`). gjc 체인 가드도 막힘을 보지 않습니다(`tools/skill.ts:54-61`).
 - **lane 예산 초과도 run 전체를 막음**: 막힘 행은 run마다 하나이고(`ralplanPlanningStuckIndexKey`), lane 예산 초과도 그 행을 씁니다. 그 뒤 새 `revision`으로 합의에 이르러도 그 run의 모든 `final`은 `off`/`planning_stuck`이 되고, 상태의 `planning_stuck` 때문에 continuation도 멈춥니다. 실행 확인: `planner` 1, `architect` 1 뒤 `architect` 2가 lane 예산에 걸린 run에서 `revision` 2, `architect` 3(`CLEAR`), `critic` 3(`OKAY`)을 거쳐 쓴 `final` 3의 `auto_handoff`가 `degradationReason: "planning_stuck"`였습니다. lane 막힘 안내(`ledger.ts:742-744`)와 `SKILL.md:170`은 revision으로 넘기라고만 하고, 그러면 이 run은 승인 단계에서 끝난다는 말이 없습니다.
-- **정리**: SKILL만 "막힌 final은 실행으로 보내지 않는다"고 요구합니다(`SKILL.md:100,111,117`). README.md 167행도 예전에는 "never dispatched"를 코드 동작처럼 적었으나, 지금은 코드가 강제하지 않아 막힌 `final`도 인계될 수 있다고 적습니다(해결, 2026-10-04). 코드 동작은 그대로입니다. 막힌 `final` 뒤에는 Stop here(`state(patch={"active": false})`)입니다. 거부 문구를 고칠지는 결정이 필요합니다(U14).
+- **정리**: SKILL만 "막힌 final은 실행으로 보내지 않는다"고 요구합니다(`SKILL.md:100,111,117`). 옛 사용 설명의 예산 문단도 예전에는 "never dispatched"를 코드 동작처럼 적었으나, `8ab6266`에서 코드가 강제하지 않아 막힌 `final`도 인계될 수 있다고 고쳤습니다(해결, 2026-10-04). 코드 동작은 그대로입니다. 막힌 `final` 뒤에는 Stop here(`state(patch={"active": false})`)입니다. 거부 문구를 고칠지는 결정이 필요합니다(U14).
 
 #### RK15. `stage_n`은 모델이 정함 (수동 실행 2026-09-28)
 
@@ -238,7 +238,7 @@
 - **코드가 보지 않는 것**:
   - 두 lane이 같은 planner 산출물을 리뷰했는지(리뷰 조인 gate, `SKILL.md:80`)
   - `final` 전에 Critic `OKAY`와 Architect `CLEAR`가 있는지
-  - 충돌이 있을 때 `revision` 전에 disposition이 있는지(`SKILL.md:81`). disposition은 쓸 때만 검사됩니다. README.md 164행도 예전에는 "must resolve each conflict before revision"이라고 적었으나, 지금은 도구가 `revision` 전에 요구하지 않고 쓸 때만 검사한다고 적습니다(해결, 2026-10-04).
+  - 충돌이 있을 때 `revision` 전에 disposition이 있는지(`SKILL.md:81`). disposition은 쓸 때만 검사됩니다. 옛 사용 설명의 disposition 문장도 예전에는 "must resolve each conflict before revision"이라고 적었으나, `8ab6266`에서 도구가 `revision` 전에 요구하지 않고 쓸 때만 검사한다고 고쳤습니다(해결, 2026-10-04; 지금은 [stages-and-ledger.md](stages-and-ledger.md) 11장).
   - 2회차부터 architect → critic 순서, 재리뷰 묶음, `intent`·`post-interview`를 썼는지
   - 승인 질문을 했는지, `--deliberate`의 pre-mortem이 있는지
   - architect의 `APPROVE`/`COMMENT`/`REQUEST CHANGES`. 받을 입력 칸이 없습니다(`lane_verdict`는 `CLEAR`/`WATCH`/`BLOCK`만, `LANE_VERDICTS`).
@@ -247,7 +247,7 @@
 
 #### RK17. 본문 전달 방식 (ralplan 편차 30, R-O4)
 
-- **역할**: `path`를 주면 바로 거부합니다(`tool.ts:220-223`, "`<agent>` must pass the artifact as content; path is for the primary agent only"). 큰 산출물(수십~백 KB 넘게)도 도구 인자로 인라인 전달됩니다(수용 차이 "Roles pass content only", 계획 R-7). 호스트 프로브 ①은 64 KiB 넘는 `content`가 바이트 그대로 저장되는지 확인합니다(`tests/ralplan-trail-probe.ts:4-8`).
+- **역할**: `path`를 주면 바로 거부합니다(`tool.ts:220-223`, "`<agent>` must pass the artifact as content; path is for the primary agent only"). 큰 산출물(수십~백 KB 넘게)도 도구 인자로 인라인 전달됩니다(수용 차이 "역할은 `content`만", 계획 R-7). 호스트 프로브 ①은 64 KiB 넘는 `content`가 바이트 그대로 저장되는지 확인합니다(`tests/ralplan-trail-probe.ts:4-8`).
 - **primary**: `path`는 OS 임시 루트 아래, 프로젝트 밖의 일반 파일만 받습니다(`readTempArtifact`, `temp-paths.ts:94-122`). 저장소 파일은 `ralplan write path must be a file under an OS temp directory outside the project: <file>`로 거부됩니다. gjc 런타임은 바인딩된 worktree 안의 파일을 받습니다(편차 30의 출처).
 - **`os.tmpdir()`의 실제 경로는 거부 (gjc와 같음)**: 임시 루트 목록은 `os.tmpdir()`를 `path.resolve`로만 넣고, 대상이 그 루트 안인지 먼저 글자로 비교합니다(`temp-paths.ts:18-29,80-81`). macOS에서 `os.tmpdir()`는 `/var/folders/…/T`이고 실제 경로는 `/private/var/folders/…/T`라서, 실제 경로로 적은 파일은 목록의 어느 루트에도 글자로 들어가지 않아 거부됩니다. 실행 확인: `realpath(os.tmpdir())` 아래 파일은 위 문구로 거부되고, `os.tmpdir()` 그대로 적은 같은 위치의 파일은 저장됐습니다. `/tmp`와 `/private/tmp`는 둘 다 목록에 있어 상관없습니다. 계획 가드의 임시 경로 예외도 같은 함수라 같습니다(RK18). gjc `neutralTempRoots`·`isNeutralTempPath`도 같습니다(`skill-state/workflow-mutation-guard.ts:1698-1708,1755-1766`). 우회는 `content`입니다.
 
@@ -271,9 +271,9 @@
 #### RK20. continuation이 붙잡지 않는 것 (ralplan 편차 10)
 
 - **조건**: ralplan이 보이는 주 skill이고(`decideRalplan`, `src/hooks.ts:476-483`, PQ-7 B), 상태가 활성이고, phase가 T(종료 phase 8개) 밖이고, `planning_stuck`이 아닐 때만 돕니다(`shouldContinue`, `src/ralplan.ts:121-139`). 그 앞에서 deep-interview가 먼저 판단하고, goal이 활성이면 goal 경로만 돕니다(`src/hooks.ts:558-585`).
-- **결과 1**: `final`과 `handoff`는 T라 붙잡지 않습니다. 모델이 `final`을 쓰고 승인 질문 없이 턴을 끝내면 세션이 멈춥니다. 활성 `final`에서는 계획 가드가 계속 편집을 막으므로(`tests/hooks.test.ts:1188`) 사용자 답을 기다리는 상태가 됩니다. README 편차 10에 따르면 gjc의 Codex Stop 훅은 `final`·`handoff`에서도 멈춤을 막고, gjc TUI 세션에는 ralplan continuation이 없습니다(이 문서를 쓰며 gjc 소스를 다시 읽지 않음).
+- **결과 1**: `final`과 `handoff`는 T라 붙잡지 않습니다. 모델이 `final`을 쓰고 승인 질문 없이 턴을 끝내면 세션이 멈춥니다. 활성 `final`에서는 계획 가드가 계속 편집을 막으므로(`tests/hooks.test.ts:1188`) 사용자 답을 기다리는 상태가 됩니다. ralplan 편차 10에 따르면 gjc의 Codex Stop 훅은 `final`·`handoff`에서도 멈춤을 막고, gjc TUI 세션에는 ralplan continuation이 없습니다(이 문서를 쓰며 gjc 소스를 다시 읽지 않음).
 - **결과 2**: 보이는 주 skill이 아닌 활성 ralplan(RK6, RK24)에는 continuation이 없습니다. `tests/hooks.test.ts:1637`.
-- **결과 3**: `ultragoal handoff(to: "ralplan")`으로 넘겨받은 run에서는 goal이 그대로 활성이라, ralplan continuation 대신 goal continuation이 턴을 맡습니다. 그 문구는 "Continue working on the active goal …"입니다(`src/goal/messages.ts:224-236`; README Ultragoal 절 "The goal is left as it is, so the goal loop keeps prompting while planning").
+- **결과 3**: `ultragoal handoff(to: "ralplan")`으로 넘겨받은 run에서는 goal이 그대로 활성이라, ralplan continuation 대신 goal continuation이 턴을 맡습니다. 그 문구는 "Continue working on the active goal …"입니다(`src/goal/messages.ts:224-236`; 인계는 goal을 그대로 두므로 계획하는 동안에도 goal 루프가 재촉함, [ultragoal entry-and-handoff.md](../ultragoal/entry-and-handoff.md)).
 
 #### RK21. continuation이 agent를 확인하지 않음 (R-OD21, U27)
 
@@ -289,7 +289,7 @@
 - **새 계획에도 이어짐**: 카운터는 `run_id`로만 구별됩니다. Stop here나 `clear` 뒤에는 ralplan이 보이는 주 skill이 아니라서 `decideRalplan`이 카운터를 읽기 전에 돌아가므로(`src/hooks.ts:483`) 되돌리지 않고, `start`는 상태의 `run_id`를 다시 쓰므로(RK3) 45분 안에 시작한 새 계획은 옛 횟수를 이어받습니다. 다른 문서 작성 중 실행 확인: 2회 뒤 Stop here → `clear` → `start` 다음 continuation이 `3/30`이었습니다.
 - **`final`의 Stop here**: `final`을 쓴 뒤 활성 `final`인 채로 루트 `succeeded`가 한 번이라도 오면 그때 카운터가 0이 됩니다(T). 보통 흐름처럼 승인 질문과 Stop here가 `final`을 쓴 execution 안에서 끝나면(질문이 execution을 붙잡음) 0이 되지 않고 이어집니다. 다른 문서 작성 중 실행 확인. 경우별 설명은 [guards-and-continuation.md](guards-and-continuation.md)의 카운터 파일 절에 있습니다.
 - **소진**: 31번째 판단에서 `patchStateTx(…, {"active": false})`를 훅 소유자로 부르고 breaker 안내를 넣습니다(`src/hooks.ts:513-526`, `tests/hooks.test.ts:569`). 행이 지워지고 run은 그 phase에 비활성으로 남습니다. Stop here와 같은 모양이라 다음 같은 run의 쓰기가 다시 켭니다(RK7).
-- **breaker 안내와 감사 행**: breaker 안내는 continuation과 같은 `inject`로 들어가 `resume: true`이고 프롬프트 덧붙이기 대체가 없어서, 안내 뒤에 execution이 한 번 더 돕니다(`src/hooks.ts:430-435,593`). 감사 행은 `breaker-exhausted` 표시가 붙은 상태 쓰기, `remove-active-entry`, `rebuild-active-snapshot` 셋입니다(테스트는 표시가 붙은 행만 셈, `tests/hooks.test.ts:588-593`). README 125·185행은 예전에 이 안내를 `resume: false` 안내 목록에 넣고 감사 행을 하나라고 적었으나, 지금은 이대로 적습니다(해결, 2026-10-04).
+- **breaker 안내와 감사 행**: breaker 안내는 continuation과 같은 `inject`로 들어가 `resume: true`이고 프롬프트 덧붙이기 대체가 없어서, 안내 뒤에 execution이 한 번 더 돕니다(`src/hooks.ts:430-435,593`). 감사 행은 `breaker-exhausted` 표시가 붙은 상태 쓰기, `remove-active-entry`, `rebuild-active-snapshot` 셋입니다(테스트는 표시가 붙은 행만 셈, `tests/hooks.test.ts:588-593`). 옛 사용 설명의 안내·continuation 문단은 예전에 이 안내를 `resume: false` 안내 목록에 넣고 감사 행을 하나라고 적었으나, `8ab6266`에서 이대로 고쳤습니다(해결, 2026-10-04; 지금은 `docs/development.md` "안내(synthetic) 삽입 방식"과 [guards-and-continuation.md](guards-and-continuation.md)).
 - **문구**: continuation 본문 마지막 줄은 ``When done, call `ralplan clear` to cleanly exit.``입니다(`src/ralplan.ts:46-56`, OMC 문구의 마지막 줄만 바꾼 DR-17). SKILL의 끝은 승인 질문과 `handoff` 또는 Stop here라서, 모델이 이 줄을 따라 `final` 뒤에 `clear`하면 그 뒤 `ralplan handoff`가 거부됩니다(RK23). continuation은 T에서는 돌지 않으므로 이 줄은 계획 중에만 보입니다.
 - 정리: 소진 뒤 이어 가려면 `ralplan state(patch={"active": true})`(같은 phase라 전이 검사를 지남)나 다음 `write`입니다.
 
@@ -313,7 +313,7 @@
 #### RK24. 같은 execution 게이트와 나중 execution (ralplan 편차 37, PQ-21 A, U8)
 
 - **흐름**: 턴 표식은 execution이 끝날 때마다 지워집니다(`src/hooks.ts:1264`). `ultragoalGate`(`:796-818`)는 표식이 `ralplan`이고 ralplan이 활성이며 phase가 알려진 phase일 때만 ralplan을 봅니다. T면 인계하고, 아니면 RK14의 문구로 거부합니다.
-- **나중 execution**: continuation이나 백그라운드 subagent 완료가 연 execution에서 `skill ultragoal`을 로드하면 게이트 없이 ultragoal을 시드합니다(`:815`, `seedUltragoalTx` `src/ultragoal-runtime/store.ts:452-503`). 시드의 행 쓰기가 ralplan 행을 위쪽 파이프라인 행으로 지우고(`rows.ts:154-157`), ralplan 상태는 활성 `final`로 남습니다. README.md 178행은 예전에 "leaves ralplan as it is"라고만 적었으나, 지금은 상태는 남고 새 ultragoal 행이 ralplan 행을 지운다고 적습니다(해결, 2026-10-04). 보이는 주 skill이 아니라 continuation이 없고(RK20), `ralplan start`는 거부되며(RK2), 압축 문맥은 들어갑니다(RK32). README 알려진 동작(298행)과 `tests/hooks.test.ts:1562`.
+- **나중 execution**: continuation이나 백그라운드 subagent 완료가 연 execution에서 `skill ultragoal`을 로드하면 게이트 없이 ultragoal을 시드합니다(`:815`, `seedUltragoalTx` `src/ultragoal-runtime/store.ts:452-503`). 시드의 행 쓰기가 ralplan 행을 위쪽 파이프라인 행으로 지우고(`rows.ts:154-157`), ralplan 상태는 활성 `final`로 남습니다. 옛 사용 설명의 같은 execution 게이트 문장은 "leaves ralplan as it is"라고만 적었으나, `8ab6266`에서 상태는 남고 새 ultragoal 행이 ralplan 행을 지운다고 고쳤습니다(해결, 2026-10-04; 지금은 [entry-and-handoff.md](entry-and-handoff.md)). 보이는 주 skill이 아니라 continuation이 없고(RK20), `ralplan start`는 거부되며(RK2), 압축 문맥은 들어갑니다(RK32). [ultragoal known-limits.md](../ultragoal/known-limits.md)의 기록된 동작과 `tests/hooks.test.ts:1562`.
 - **늦은 `ralplan handoff`**: 그 뒤 `ralplan handoff(to="ultragoal")`를 부르면 활성 `final`이라 성공합니다(다른 문서 작성 중 실행 확인). 공통 인계는 ultragoal을 늘 시작 phase `goal-planning`으로 쓰므로(`handoff.ts:230-239`), 이미 `create`한 ultragoal도 `goal-planning`으로 돌아갑니다(이 부분은 코드로 확인, 실행하지 않음; K15·U40과 같은 방식).
 - **같은 execution에서 순서가 바뀐 경우**: 게이트가 먼저 인계하면, SKILL 9단계대로 이어 부른 `ralplan handoff`는 `ralplan was already handed off …`로 거부됩니다(U8). 문구가 ultragoal로 가라고 하므로 흐름은 멈추지 않습니다.
 - 정리: `final` 뒤에는 `skill ultragoal` 전에 `ralplan handoff(to="ultragoal")`를 먼저 부릅니다(`SKILL.md:117-127`).
@@ -337,7 +337,7 @@
 
 #### RK28. 넘겨받은 run과 되돌려지는 run (U13, U40, K7, K15)
 
-- **옛 run 이어 쓰기**: `ultragoal handoff(to: "ralplan")`와 deep-interview 인계는 공통 인계로 ralplan 상태 위에 병합하므로 `run_id`, `task`, `mode`, `repository_binding`이 남습니다(`handoff.ts:230-239`). 옛 `final` 승인, opener 예산, `stage_n`, 막힘 행이 이어지고, 쓴 `stage_n`을 다른 내용으로 다시 쓰면 거부됩니다(README 299행, PQ-4 A, U13, K7, 계획 R-11). 새 예산이 필요하면 첫 `write`에 새 `run_id`를 줍니다. `start`는 RK2로 거부됩니다.
+- **옛 run 이어 쓰기**: `ultragoal handoff(to: "ralplan")`와 deep-interview 인계는 공통 인계로 ralplan 상태 위에 병합하므로 `run_id`, `task`, `mode`, `repository_binding`이 남습니다(`handoff.ts:230-239`). 옛 `final` 승인, opener 예산, `stage_n`, 막힘 행이 이어지고, 쓴 `stage_n`을 다른 내용으로 다시 쓰면 거부됩니다(PQ-4 A, U13, K7, 계획 R-11). 새 예산이 필요하면 첫 `write`에 새 `run_id`를 줍니다. `start`는 RK2로 거부됩니다.
 - **되돌리기**: 공통 인계는 callee를 늘 시작 phase로 씁니다. 이미 활성인 ralplan(예: `architect`)도 `planner`로 돌아가고, `invalid_transition_detected` 감사 행이 먼저 남습니다(`handoff.ts:172-189`). `ultragoal handoff`는 ultragoal이 활성인지 보지 않고(U40), deep-interview의 끝난 인터뷰 연결도 그렇습니다(K15, 관리자가 알고 유지한 PQ-36 C).
 
 #### RK29. deep-interview 쪽 항목 (K1, K11, K12, K14)
@@ -358,7 +358,7 @@
 #### RK31. 진행 표시 없음 (ralplan 편차 9, 필수 후속 6, R-OD17, U5, K4)
 
 - 활성 행과 스냅숏에 gjc HUD 칩을 기록하지만 그리는 TUI 플러그인이 없습니다. 배포된 OpenCode 2.0.15 바이너리가 TUI 플러그인의 `solid-js`·`@opentui/*` import를 호스트 인스턴스로 연결하지 않아, port 브랜치에서 만든 사이드바를 병합 전에 지웠습니다. 이는 2026-09-29 수동 확인 결과이고 코드로 확인할 수 없습니다.
-- Stop here는 gjc처럼 활성 행을 지웁니다(R-OD10). 그래서 나중에 사이드바를 다시 붙여도 Stop here 뒤에는 승인 대기 계획을 보여 줄 행이 없습니다(수용 차이 "Stop here removes the active row"). `pending-approval.md`는 남습니다.
+- Stop here는 gjc처럼 활성 행을 지웁니다(R-OD10). 그래서 나중에 사이드바를 다시 붙여도 Stop here 뒤에는 승인 대기 계획을 보여 줄 행이 없습니다(수용 차이 "Stop here가 활성 행을 제거"). `pending-approval.md`는 남습니다.
 - 지금은 `ralplan status`로 진행을 봅니다. 칩 모양은 [state-and-files.md](state-and-files.md)에 있습니다.
 
 #### RK32. 압축 복구 문맥의 조건
@@ -424,25 +424,25 @@
 
 이 절은 2026-10-03 이 폴더의 문서 8개를 쓰며 찾은 것과, 그 문서들을 검토하며 찾은 것을 모읍니다. 각 작성자와 검토자가 코드를 읽었고, 여러 항목은 bun으로 재현했습니다. 재현한 것은 "실행 확인"으로 적습니다. 기존 항목을 보충하는 것은 그 항목(RK2, RK3, RK4, RK5, RK8, RK14, RK16, RK17, RK18, RK22, RK24, RK32)에 넣었습니다. RK36은 그런 항목을 한 줄로 가리킨 뒤 새로 나온 것만 풀어 적고, RK37–RK41은 새 항목입니다. "결정 필요"는 AGENTS.md에 따라 관리자가 코드나 문구를 고칠지, 기록만 할지 정할 항목입니다.
 
-2026-10-04 관리자는 "코드가 기준"으로 정했습니다. 그래서 루트 README·README.ko, 소스 주석 몇 곳, `ralplan` 도구의 입력 설명 둘을 코드 동작에 맞게 고쳤고, 코드 동작은 바꾸지 않았습니다(줄 수도 그대로라 이 문서의 줄 번호는 유효합니다). 고친 것은 "(해결, 2026-10-04)"로 표시합니다. 코드 동작 자체가 한계인 것(예: 막힌 `final`의 인계, 잠긴 phase 뒤 병합, 옛 형식 상태의 `start` 거부, continuation 문구의 `ralplan clear`)은 해당 항목에 그대로 남습니다.
+2026-10-04 관리자는 "코드가 기준"으로 정했습니다. 그래서 커밋 `8ab6266`에서 영어·한국어 사용 설명 문서, 소스 주석 몇 곳, `ralplan` 도구의 입력 설명 둘을 코드 동작에 맞게 고쳤고, 코드 동작은 바꾸지 않았습니다(줄 수도 그대로라 이 문서의 줄 번호는 유효합니다). 고친 것은 "(해결, 2026-10-04)"로 표시합니다. 코드 동작 자체가 한계인 것(예: 막힌 `final`의 인계, 잠긴 phase 뒤 병합, 옛 형식 상태의 `start` 거부, continuation 문구의 `ralplan clear`)은 해당 항목에 그대로 남습니다.
 
-### RK36. 결과 문구·SKILL·프롬프트가 실제 동작과 다름 (결정 필요; 루트 README 부분은 해결)
+### RK36. 결과 문구·SKILL·프롬프트가 실제 동작과 다름 (결정 필요; 사용 설명 부분은 해결)
 
 **앞 항목에 설명이 있는 것**
-- (해결, 2026-10-04) README.md 181행의 "the state is left untouched"와 행이 "stays until the next Stop here, handoff, or clear": RK8
-- (해결, 2026-10-04) README.md 178행의 "leaves ralplan as it is": RK24
-- (해결, 2026-10-04) README.md 164·167행에서 SKILL만 지키는 문장(disposition 먼저, 막힌 `final`을 보내지 않음): RK16, RK14
-- (해결, 2026-10-04) README.md 125·185행의 breaker 안내 방식과 감사 행 수: RK22
-- (해결, 2026-10-04) README.md 450행의 옛 형식 상태 "delete their state by hand": RK11
+- (해결, 2026-10-04, `8ab6266`) 사용 설명 write 의미 문단의 "the state is left untouched"와 행이 "stays until the next Stop here, handoff, or clear": RK8
+- (해결, 2026-10-04, `8ab6266`) 사용 설명 같은 execution 게이트 문장의 "leaves ralplan as it is": RK24
+- (해결, 2026-10-04, `8ab6266`) 사용 설명 disposition·예산 문단에서 SKILL만 지키는 문장(disposition 먼저, 막힌 `final`을 보내지 않음): RK16, RK14
+- (해결, 2026-10-04, `8ab6266`) 사용 설명 안내·continuation 문단의 breaker 안내 방식과 감사 행 수: RK22
+- (해결, 2026-10-04, `8ab6266`) 수용 차이 "이전 형식 state" 행의 "delete their state by hand": RK11
 - 활성 run 거부 문구가 새 `run_id`를 말하지 않음: RK3
 - `RALPLAN_RUNNING_REFUSAL`의 승인 단계 안내와 막힌 `final`의 "the approved plan": RK14
 - continuation 문구의 ``When done, call `ralplan clear` …``: RK22
 - `clear` 뒤 ralplan 행이 남았을 때 deep-interview 거부 문구가 권하는 세 방법이 모두 실패함: RK8
 
-**루트 README** (`README.md`; `README.ko.md`도 같은 줄)
-- **op 표**(129–137행): `handoff` 행은 `to="ultragoal"`만 적었으나 지금은 `"deep-interview"`도 적고(`tool.ts:156,297`), `start` 행은 활성 run 거부(편차 39, RK2)도 적습니다(해결, 2026-10-04). `doctor` 행(134행)도 예전에는 `ralplan doctor`가 요약을 JSON으로 돌려준다는 말이 없었으나, 지금은 적습니다(해결, 2026-10-04; `tool.ts:287-288`). deep-interview와 ultragoal의 doctor는 gjc 텍스트를 돌려줍니다(109·245행).
-- **중단 이유**(185행, OMC 편차 표 383행): (해결, 2026-10-04) 예전에는 `superseded`를 중단 이유로 적었으나, 호스트 v2.0.15의 `InterruptReason`은 `user`, `shutdown`, `inactivity`뿐이라(`opencode/packages/core/src/session/execution.ts:49`) 지금은 "other reasons (`inactivity`)"로 적습니다. 기다리는 대상도 `background: true` subagent만이 아니라 같은 location의 모든 자식 execution이라고 고쳤습니다(`src/hooks.ts:1269-1275`).
-- **편차 7의 영향**(406행): (해결, 2026-10-04) 예전의 "The reviewer model cannot change per run"은 지나쳤습니다. 지금은 run별 플래그는 없고, 호출 하나의 모델은 호스트 `subagent`의 `model` 입력으로만 바꿀 수 있으며 그 설명이 사용자가 명시적으로 요청할 때로 제한한다고 적습니다(`opencode/packages/core/src/tool/plugin/subagent.ts:36-39`).
+**사용 설명 문서** (`8ab6266`에서 고침)
+- **ralplan op 표**: `handoff` 행은 `to="ultragoal"`만 적었으나 `"deep-interview"`도 적고(`tool.ts:156,297`), `start` 행은 활성 run 거부(편차 39, RK2)도 적도록 고쳤습니다(해결, 2026-10-04). `doctor` 행도 예전에는 `ralplan doctor`가 요약을 JSON으로 돌려준다는 말이 없었으나, 적도록 고쳤습니다(해결, 2026-10-04; `tool.ts:287-288`). 지금 op 설명은 [ops.md](ops.md)에 있습니다. deep-interview와 ultragoal의 doctor는 gjc 텍스트를 돌려줍니다([deep-interview ops.md](../deep-interview/ops.md), [ultragoal ops.md](../ultragoal/ops.md)).
+- **중단 이유**(ralplan continuation 문단과 OMC 편차 표의 "interrupt 처리가 reason 기반" 행): (해결, 2026-10-04) 예전에는 `superseded`를 중단 이유로 적었으나, 호스트 v2.0.15의 `InterruptReason`은 `user`, `shutdown`, `inactivity`뿐이라(`opencode/packages/core/src/session/execution.ts:49`) "다른 이유(`inactivity`)"로 고쳤습니다. 지금은 [guards-and-continuation.md](guards-and-continuation.md)와 `docs/development.md`의 그 행이 적습니다. 기다리는 대상도 `background: true` subagent만이 아니라 같은 location의 모든 자식 execution이라고 고쳤습니다(`src/hooks.ts:1269-1275`).
+- **ralplan 편차 7의 영향**: (해결, 2026-10-04) 예전의 "The reviewer model cannot change per run"은 지나쳤습니다. 지금은 run별 플래그는 없고, 호출 하나의 모델은 호스트 `subagent`의 `model` 입력으로만 바꿀 수 있으며 그 설명이 사용자가 명시적으로 요청할 때로 제한한다고 적습니다(`opencode/packages/core/src/tool/plugin/subagent.ts:36-39`).
 
 **결과·거부 문구** (`src/ralplan-runtime/store.ts`)
 - **이미 인계된 ralplan**: `to: "ultragoal"` 쪽 거부 문구는 ``continue in the `ultragoal` skill.``로 고정입니다(`store.ts:1355-1358`). deep-interview로 넘긴 ralplan에 `ralplan handoff(to: "ultragoal")`를 부르면 ultragoal로 가라고 잘못 안내합니다(실행 확인). `handoff_to`를 읽는 것은 `to: "deep-interview"` 분기뿐입니다(`:1347-1350`).
@@ -487,8 +487,8 @@
 
 ### RK40. gjc와의 작은 차이 두 가지 (기록만; 2026-10-04 편차 40·41로 기록)
 
-- **가드의 phase 비교**: 계획 가드는 `current_phase`를 그대로 비교합니다(`src/hooks.ts:753-758`). gjc는 trim·소문자로 맞추고, 상태 phase가 없으면 행 phase를 씁니다(`skill-state/workflow-mutation-guard.ts:273,348`). 손으로 고친 상태(예: `" Architect "`)에서만 차이가 나며, open-gajae는 알 수 없는 phase로 보고 가드를 풉니다. 루트 README ralplan 편차 40.
-- **사라진 `final` 파일의 중복 판정**: ``refusing to deduplicate ralplan final stage <N>: stage artifact missing at <path>.``(`store.ts:417-420`)는 open-gajae에만 있습니다. gjc는 파일 읽기 오류를 그대로 던집니다(`gjc-runtime/ralplan-runtime.ts:1787`). 루트 README ralplan 편차 41.
+- **가드의 phase 비교**: 계획 가드는 `current_phase`를 그대로 비교합니다(`src/hooks.ts:753-758`). gjc는 trim·소문자로 맞추고, 상태 phase가 없으면 행 phase를 씁니다(`skill-state/workflow-mutation-guard.ts:273,348`). 손으로 고친 상태(예: `" Architect "`)에서만 차이가 나며, open-gajae는 알 수 없는 phase로 보고 가드를 풉니다. ralplan 편차 40.
+- **사라진 `final` 파일의 중복 판정**: ``refusing to deduplicate ralplan final stage <N>: stage artifact missing at <path>.``(`store.ts:417-420`)는 open-gajae에만 있습니다. gjc는 파일 읽기 오류를 그대로 던집니다(`gjc-runtime/ralplan-runtime.ts:1787`). ralplan 편차 41.
 
 ### RK41. 낡은 주석·입력 설명·계획 문구·다른 문서 (고칠 때 같이)
 
@@ -497,7 +497,7 @@
 - (해결, 2026-10-04) `src/hooks.ts:2-3`: 예전의 "the goal loop first, then ralplan"을 "(deep-interview, then the goal loop, then ralplan)"으로 고쳤습니다(`:558-570`).
 - (해결, 2026-10-04) `src/hooks.ts:258`: 예전의 "the six owned role subagents from `src/config.ts`"를 "six of the eight owned subagents in `src/config.ts`"로 고쳤습니다(`config.ts:9-21`, `ROLE_SUBAGENTS` `:266-273`). 동작은 그대로입니다. 집합에 없는 `open-gajae-explore`와 `open-gajae-document-specialist`는 첫 검사를 지나 자기 세션의 중단 표시를 풀고, 안내는 받지 않습니다(`:906`).
 - (해결, 2026-10-04) 입력 설명: `force`(`tool.ts:157`)는 예전의 "overwrite a corrupt state"에서 "clear: clear even a corrupt or stale state (skips the corrupt, stale and unreadable-row checks)."로 고쳤습니다(`store.ts:1107,1156`). `run_id`(`tool.ts:111`)에는 "not starting with ."을 더했습니다(`safeComponent`, `src/state.ts:204-207`).
-- (해결, 2026-10-04) gjc 출처 줄: 루트 README ralplan 편차 20(417행)과 `src/hooks.ts:22`, `src/ralplan-runtime/recovery.ts:13`의 머리 주석은 `renderWorkflowRecoveryContext`를 `session/agent-session.ts:667-710`으로 적었습니다. 함수는 `:667-703`이라(705행부터는 다음 함수의 주석) 세 곳 모두 `:667-703`으로 고쳤습니다.
+- (해결, 2026-10-04, `8ab6266`) gjc 출처 줄: ralplan 편차 20 행과 `src/hooks.ts:22`, `src/ralplan-runtime/recovery.ts:13`의 머리 주석은 `renderWorkflowRecoveryContext`를 `session/agent-session.ts:667-710`으로 적었습니다. 함수는 `:667-703`이라(705행부터는 다음 함수의 주석) 세 곳 모두 `:667-703`으로 고쳤습니다.
 - 계획 R-OD18(`.omc/plans/ralplan-gjc-stage-trail.md:462`)은 `demoteRalplanForUltragoalEntry({requireActive})`와 트랜잭션 전 검사를 적지만 둘 다 없습니다. 게이트는 트랜잭션 안에서 봅니다(`src/hooks.ts:807-812`). R-OD20(`:464`)은 prompt 훅의 ultragoal seed·복원 안내와 오래된 seed 정리를 적지만 모두 사라졌습니다.
 - (해결, 2026-10-04) ultragoal 문서: `docs/skills/ultragoal/entry-and-handoff.md`의 `ralplan handoff` 입력 검사 표는 `to` 스키마를 `z.enum(["ultragoal"])`, 문구를 `to must be "ultragoal"`로 적었고(실제는 두 값, 문구는 `to must be "ultragoal" or "deep-interview"`, `tool.ts:156,297`), 끝의 "코드가 강제하는 것" 표는 넘겨받은 ralplan에서 코드가 `ralplan start`를 허용한다고 적었습니다(지금은 거부, ralplan 편차 39). 같은 문서의 G1 목록과 안내 대상 문단, `goal-loop.md`의 보류 해제 G1, `known-limits.md` U26은 역할 subagent를 다섯으로 적었습니다(`ROLE_SUBAGENTS`는 `open-gajae-lateral-reviewer`를 더한 여섯). 모두 고쳤습니다.
 - 쓰이지 않는 코드: `StartRunInput.handoff_from`·`handoff_at`(`store.ts:886-894`, R-O1)을 넘기는 호출이 없습니다. `RalplanNotActiveError`(`store.ts:1295`)는 던지기만 하고 어디서도 구별해 받지 않습니다.

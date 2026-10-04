@@ -2,19 +2,19 @@
 
 이 폴더는 open-gajae `ralplan`이 **지금 코드에서 어떻게 동작하는지**를 단계별로 적은 문서입니다.
 
-- **기준 코드**: `main` 커밋 `5b92a60`에, 이 문서들과 함께 들어가는 소스 주석·도구 입력 설명 수정(2026-10-04, 코드 동작은 그대로, 줄 수도 그대로)을 더한 것. 코드 위치는 `5b92a60`의 `path:line`으로 적고 그 줄 번호는 수정 뒤에도 맞습니다. 함수·상수 이름을 함께 씁니다. 루트 `README.md`의 줄 번호는 이 폴더를 가리키는 링크 문단이 들어간 현재 파일 기준입니다.
+- **기준 코드**: `main` 커밋 `5b92a60`에, 이 문서들과 함께 들어가는 소스 주석·도구 입력 설명 수정(2026-10-04, 코드 동작은 그대로, 줄 수도 그대로)을 더한 것. 코드 위치는 `5b92a60`의 `path:line`으로 적고 그 줄 번호는 수정 뒤에도 맞습니다. 함수·상수 이름을 함께 씁니다.
 - **참조한 gajae-code(gjc)**: `5c5231418930673e42cc5d08ebe4376e03187533`. gjc 줄 번호는 각 open-gajae 파일의 머리말 주석이 적은 값을 옮긴 것이고, 이 파일을 쓰며 gjc 소스로 다시 확인하지는 않았습니다.
 - **호스트**: OpenCode v2.0.15(`opencode/`).
 
 다른 문서와는 이렇게 나뉩니다.
 
-- **정책**: `AGENTS.md`와 루트 `README.md`가 정합니다. ralplan은 README의 "Ralplan" 절(`README.md:115-193`)과 "Deviations from GJC (ralplan)" 절(`README.md:394-454`, 그 안의 "Accepted behavior differences" 표는 `:440-454`)에 있습니다. 이 폴더에서 "ralplan 편차 N"은 그 편차 표의 N번 행입니다. 철회된 번호(14, 15, 16, 18, 19, 24, 25, 27, 28, 29)는 다시 쓰지 않습니다. "deep-interview 편차 N", "ultragoal 편차 N"은 각 skill의 편차 표입니다.
+- **정책**: `AGENTS.md`와 `docs/development.md`가 정합니다. GJC와 다른 점은 `docs/development.md`의 "GJC로부터의 deviation (ralplan)" 절에 있고, 관리자가 수용한 차이는 그 안의 "수용한 동작 차이" 표에 있습니다. 이 폴더에서 "ralplan 편차 N"은 그 편차 표의 N번 행입니다. 철회된 번호(14, 15, 16, 18, 19, 24, 25, 27, 28, 29)는 다시 쓰지 않습니다. "deep-interview 편차 N", "ultragoal 편차 N"은 각 skill의 편차 표입니다.
 - **결정 기록**: 이식 spec `.omc/specs/deep-interview-ralplan-gjc-stage-trail.md`(끝의 Errata가 본문을 고칩니다), 이식 계획 `.omc/plans/ralplan-gjc-stage-trail.md`(§1.3 `DR-…`, §3.0 `C-…`, §7 편차 초안, §8.1 `R-O…`·`R-OD…`·`R-AE1`·`R-CE1`). 그 뒤 개정은 `.omc/plans/ralplan-ultragoal-gjc-revision.md`과 `.omc/plans/ultragoal-gjc-pq-decisions.md`(`PQ-…`), `.omc/plans/ralplan-deep-interview-gjc-revision.md`과 `.omc/plans/deep-interview-gjc-pq-decisions.md`에 있습니다.
-- **이 폴더**: 현재 구현만 적습니다. 결정 ID와 편차 번호는 근거를 찾아갈 수 있게 달아 둡니다. 결정 기록이나 README와 코드가 다르면 코드가 기준입니다.
+- **이 폴더**: 현재 구현만 적습니다. 결정 ID와 편차 번호는 근거를 찾아갈 수 있게 달아 둡니다. 결정 기록이나 `docs/development.md`와 코드가 다르면 코드가 기준입니다.
 
 ## ralplan이 하는 일
 
-ralplan은 Planner·Architect·Critic 세 역할 agent가 합의할 때까지 계획을 다듬는 workflow입니다. 단계마다 산출물을 run 폴더에 바뀌지 않는 파일로 남기고 원장 `index.jsonl`에 한 줄씩 적으며, 마지막 계획은 `pending-approval.md`로 둡니다. 사용자가 실행을 승인하기 전에는 계획만 하고, 승인되면 ultragoal로 넘깁니다. gjc의 ralplan skill, 역할 프롬프트, 런타임 계약을 OpenCode 플러그인에 맞게 옮긴 것이고, 키워드 감지와 continuation은 OMC에서 온 것을 유지합니다(continuation은 편차 10, 키워드 감지는 `src/ralplan.ts:141` 머리 주석과 루트 `README.md:121`).
+ralplan은 Planner·Architect·Critic 세 역할 agent가 합의할 때까지 계획을 다듬는 workflow입니다. 단계마다 산출물을 run 폴더에 바뀌지 않는 파일로 남기고 원장 `index.jsonl`에 한 줄씩 적으며, 마지막 계획은 `pending-approval.md`로 둡니다. 사용자가 실행을 승인하기 전에는 계획만 하고, 승인되면 ultragoal로 넘깁니다. gjc의 ralplan skill, 역할 프롬프트, 런타임 계약을 OpenCode 플러그인에 맞게 옮긴 것이고, 키워드 감지와 continuation은 OMC에서 온 것을 유지합니다(continuation은 편차 10, 키워드 감지는 `src/ralplan.ts:141` 머리 주석과 [entry-and-handoff.md](entry-and-handoff.md)의 키워드 감지 절).
 
 | 구성 | 역할 |
 |---|---|

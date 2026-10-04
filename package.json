@@ -1,14 +1,17 @@
 {
   "name": "open-gajae",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "OpenCode plugin with gjc-based deep-interview, ralplan and ultragoal workflows, session-scoped state and read-only specialists",
   "license": "SEE LICENSE IN LICENSE",
   "exports": {
     ".": "./src/index.ts"
   },
+  "bin": {
+    "open-gajae": "bin/open-gajae.mjs"
+  },
   "files": [
+    "bin",
     "index.ts",
     "src",
     "skills",

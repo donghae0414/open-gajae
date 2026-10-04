@@ -29,6 +29,7 @@ op 하나하나의 검사와 결과는 [ops.md](ops.md), 파일 모양은 [state
 4. agent가 `open-gajae`가 아닌 문자열이면 여기서 끝납니다. 안내는 `open-gajae`(그리고 agent가 없거나 조회에 실패한 세션)에만 갑니다.
 5. 감지(`src/hooks.ts:908-921`):
    - 멘션: `event.prompt.skills`에 id `deep-interview`가 있음
+     - 이 목록은 TUI가 채웁니다. 사용자가 `@deep-interview`를 입력하고 자동완성 목록에서 고르면 TUI가 skill 첨부를 프롬프트의 `skills`에 넣습니다(`opencode/packages/tui/src/component/prompt/autocomplete.tsx:216-226,427-435`). 서버는 글의 `@`를 해석하지 않고 받은 `skills`만 훅에 넘깁니다(`opencode/packages/core/src/session/prompt.ts:40-47`). 그래서 자동완성을 고르지 않고 `@deep-interview`를 글자로만 보내면 멘션이 아니고 skill도 붙지 않습니다. 그 글자는 아래 키워드 감지가 잡습니다(실행 확인: `detectDeepInterviewKeyword("@deep-interview a todo app")`는 감지).
    - 키워드: `detectDeepInterviewKeyword`(`src/ralplan.ts:772-778`). OMC 정규식 `/\b(deep[\s-]interview|ouroboros)\b|(딥인터뷰)|(ディープインタビュー)/i`(`src/ralplan.ts:32-33`)에 OMC의 일반 가드(질문, 인용, 코드, 표, 블록 인용 같은 정보성 문맥은 제외)를 씁니다. ralplan과 달리 "실행해 달라"는 문맥은 요구하지 않습니다. 정리한 텍스트가 `ouroboros`·`ooo` CLI 꼴(`/^\s*\/?(?:ouroboros|ooo)\b/i`)로 시작하면 감지하지 않습니다.
 6. ralplan이나 deep-interview를 감지했으면 보이는 주 skill이 ultragoal인지 봅니다. 행을 읽을 수 없으면 아니라고 봅니다.
 7. 안내 고르기(`src/hooks.ts:980-995`):

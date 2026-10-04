@@ -13,7 +13,7 @@
 // `clear`, `handoff` verbs) with `gjc-runtime/state-runtime.ts` (state
 // doctor, write, clear). The op-tool shape, actor check and root-session
 // resolution follow `src/ultragoal-runtime/tool.ts`.
-// Deviations (README "Deviations from GJC (deep-interview)"): 1 (CLI verbs →
+// Deviations (docs/development.md "GJC로부터의 deviation (deep-interview)"): 1 (CLI verbs →
 // eight ops; the owner is the lineage root), 2 (no stage/check/apply/discard),
 // 24 (the tool is `open-gajae`'s alone), 30 (the description names cancel and
 // resume), 38 (`spec(…, handoff: "ralplan")` is `--deliberate`; no `--force`).

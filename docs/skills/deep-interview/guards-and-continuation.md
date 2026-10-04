@@ -74,6 +74,7 @@ Use: `ralplan` for ralplan state and plans, `ultragoal` for ultragoal state, `go
 ### 막지 않는 것
 
 - `shell`로 하는 변경. 명령을 해석하지 않습니다. SKILL(DIPP-8)과 역할 프롬프트가 글로만 금지합니다.
+- 다른 세션의 스펙이나 계획을 **읽는 것**. 사용자가 그 경로를 입력으로 주면 모델은 호스트의 읽기 도구와 그 권한으로 읽고, 실제로 읽은 경로를 알립니다. 상태, 소유, 승인, 편집 권한은 아무것도 넘어오지 않습니다. 코드가 아니라 메인 에이전트 프롬프트의 규칙입니다(`prompts/open-gajae.md:196`).
 - 대소문자가 다른 경로. 정규식이 대소문자를 구분합니다(ultragoal known-limits U4와 같은 성격).
 - 여러 OpenCode 프로세스 사이의 동시 쓰기.
 

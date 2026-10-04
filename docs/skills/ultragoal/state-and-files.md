@@ -83,7 +83,7 @@
 
 - `enqueue(target, operation)`은 모듈 전역 `targetQueues`(Map)에 키마다 Promise 꼬리를 이어 붙입니다. 앞 작업이 실패해도 다음 작업은 돕니다(`previous.catch(() => undefined)`).
 - 키는 `queueKey(sessionID)` = `<.open-gajae 경로>\0<세션 ID>\0workflow`입니다. 모드 이름이 키에 없습니다. 그래서 한 세션의 `read`/`write`/`patch`/`clear`(모든 모드)와 모든 `workflowTransaction`이 **하나의 큐**에 줄을 섭니다. 루트 경로가 키에 있으므로 같은 worktree의 `StateStore` 인스턴스 둘도 같은 큐를 씁니다. 다른 세션은 다른 큐입니다(`tests/state.test.ts` "C-1: one workflow queue per session…").
-- 큐는 한 프로세스 안의 것입니다. 프로세스 사이 잠금은 없습니다(루트 README의 ralplan 편차 17: "several processes are a known limit").
+- 큐는 한 프로세스 안의 것입니다. 프로세스 사이 잠금은 없습니다(`docs/development.md`의 ralplan 편차 17: "여러 프로세스는 알려진 한계").
 - `ralplanTransaction`은 `workflowTransaction`의 다른 이름입니다(plan C-1.2).
 
 **왜 하나인가.** ultragoal의 한 op는 여러 스킬의 파일을 함께 바꿉니다. 활성 행을 쓰면 상위 스킬(ralplan, deep-interview)의 행을 지우고, 스냅숏은 모든 스킬의 행을 모아 다시 만듭니다. 인계는 두 스킬의 mode-state와 행, 스냅숏, 저널을 한 번에 바꿉니다. 큐가 하나면 이런 쓰기가 다른 스킬의 쓰기와 섞이지 않고, 세션의 workflow 파일은 큐 밖에서 바뀌지 않습니다(`queueKey` 주석). 스냅숏을 같은 큐 안에서 행 파일로 다시 만들기 때문에, gjc처럼 스냅숏에 있는 모든 행을 다시 쓸 필요도 없습니다(`src/skill-state/rows.ts` 헤더의 편차).
@@ -500,7 +500,7 @@ reconcile, seed, 인계, `state`, `clear`는 모두 기존 필드 위에 병합�
 | `hud` | 정규화한 HUD 요약(6장) |
 | `receipt` | ultragoal 행에는 쓰지 않습니다 |
 
-`source_state_revision`, `thread_id`, `turn_id`는 없습니다. `src/skill-state/rows.ts` 헤더가 이것들과 active subskill 없음을 "ralplan 17" 편차 아래에 묶어 적습니다. 루트 README의 ralplan 편차 17 행은 envelope `receipt`·checksum·revision과 stale-skip만 다루고, `thread_id`·`turn_id`·active subskill은 적지 않습니다.
+`source_state_revision`, `thread_id`, `turn_id`는 없습니다. `src/skill-state/rows.ts` 헤더가 이것들과 active subskill 없음을 "ralplan 17" 편차 아래에 묶어 적습니다. `docs/development.md`의 ralplan 편차 17 행은 envelope `receipt`·checksum·revision과 stale-skip만 다루고, `thread_id`·`turn_id`·active subskill은 적지 않습니다.
 
 ```json
 {
@@ -654,7 +654,7 @@ ultragoal에서 나오는 감사 행:
 
 ### deep-interview 행
 
-deep-interview 개정(2026-10-02)부터 deep-interview도 gjc처럼 활성 행을 씁니다. ultragoal → deep-interview 인계는 피호출자 행 `state/active/deep-interview.json`을 `interviewing`으로 쓰므로, 인계 뒤 보이는 주 스킬은 deep-interview입니다(ultragoal 편차 33·ralplan 편차 14 철회, 루트 README "Mandatory follow-up development" 1번 해결). 순위상 ultragoal 행이 활성이 되면 deep-interview 행은 윗단계 행으로 지워집니다. 행의 내용과 수명은 [deep-interview 문서](../deep-interview/state-and-files.md)에 있습니다.
+deep-interview 개정(2026-10-02)부터 deep-interview도 gjc처럼 활성 행을 씁니다. ultragoal → deep-interview 인계는 피호출자 행 `state/active/deep-interview.json`을 `interviewing`으로 쓰므로, 인계 뒤 보이는 주 스킬은 deep-interview입니다(ultragoal 편차 33·ralplan 편차 14 철회, `docs/development.md` "필수 후속 개발" 1번 해결). 순위상 ultragoal 행이 활성이 되면 deep-interview 행은 윗단계 행으로 지워집니다. 행의 내용과 수명은 [deep-interview 문서](../deep-interview/state-and-files.md)에 있습니다.
 
 ## 5. 단계 manifest와 reconcile
 
@@ -760,7 +760,7 @@ seed와 인계 병합은 `status`, `goals`, `counts` 같은 이전 파생 필드
 
 출처: `src/ultragoal-runtime/hud.ts`(gjc `workflow-hud.ts`의 `buildUltragoalHudSummary`, `state-runtime.ts`의 `buildHudForMode` ultragoal 가지; 편차 없음), 공통 도우미와 정규화는 `src/skill-state/hud.ts`(DR-9).
 
-HUD는 활성 행의 `hud` 필드에 **저장만** 합니다. 스냅숏의 `active_skills`에도 행 객체째로 들어갑니다. 이 값을 그리는 코드는 없습니다. TUI 사이드바는 미뤘습니다(R-OD17, 루트 README의 ralplan 편차 9와 후속 과제 6번). 계산하는 곳은 reconcile, seed, `state` op, 인계의 양쪽 행이고, 모두 `buildUltragoalHudFromState(state, at)`를 거칩니다.
+HUD는 활성 행의 `hud` 필드에 **저장만** 합니다. 스냅숏의 `active_skills`에도 행 객체째로 들어갑니다. 이 값을 그리는 코드는 없습니다. TUI 사이드바는 미뤘습니다(R-OD17, `docs/development.md`의 ralplan 편차 9와 "필수 후속 개발" 6번). 계산하는 곳은 reconcile, seed, `state` op, 인계의 양쪽 행이고, 모두 `buildUltragoalHudFromState(state, at)`를 거칩니다.
 
 **입력**(`buildUltragoalHudFromState`): mode-state의 `goals` 중 `id`·`title`·`status`가 모두 문자열인 것, `status`(없으면 `current_phase`, 그것도 없으면 `"pending"`), `latestLedgerEvent`(`event`가 문자열일 때), 그리고 시각 `at`.
 

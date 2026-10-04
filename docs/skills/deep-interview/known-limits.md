@@ -143,6 +143,6 @@
 
 ### 기준치 gate는 SKILL의 판단
 
-- SKILL은 모호도가 기준치 이하이고 closure·restate gate를 지난 뒤에만 스펙을 쓰라고 합니다(DIPP-9, Phase 4). 조기 종료(3라운드부터 경고와 함께)와 100라운드 상한도 SKILL의 규칙입니다.
+- SKILL은 모호도가 기준치 이하이고 closure·restate gate를 지난 뒤에만 스펙을 쓰라고 합니다(DIPP-9, Phase 4). 조기 종료(3라운드부터 경고와 함께)와 100라운드 상한도 SKILL의 규칙입니다. 보통 라운드 뒤에 계속할지 묻지 않고 다음 질문으로 가는 것(`skills/deep-interview/SKILL.md:544`)과, Phase 5의 ultragoal 선택지를 이미 구현 준비가 된 아주 단순한 스펙에만 권하는 것(`:737`)도 SKILL의 규칙입니다. `handoff(to: "ultragoal")`는 활성 인터뷰, phase `handoff`, 스펙 sha256만 봅니다(deep-interview 편차 5).
 - gjc에서 물려받은 고정 종료 문장 둘("All dimensions at 0.9+: Skip to spec generation", 해석 표의 "0.0 - 0.1 … Proceed immediately")은 이 규칙과 충돌해 지웠습니다(deep-interview 편차 39). 두 공식의 가중치 합이 1.0이라 모든 점수가 0.9면 모호도가 10%로, 기본 기준치 5%보다 큽니다.
 - `spec`(`store.ts:471-534`)은 활성 상태만 요구하고 `current_ambiguity`와 `threshold`를 비교하지 않습니다. 넘기기도 phase와 스펙 sha256만 봅니다. gjc에도 코드 gate가 없습니다.

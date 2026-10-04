@@ -4,34 +4,34 @@
 
 - **출처**: 옛 `docs/ultragoal-follow-ups.md`(2026-09-29 작성)에서 아직 열린 항목을 옮겼습니다. 해결된 항목은 맨 아래 대응표에 한 줄씩만 남깁니다.
 - **번호**: U 번호는 옛 문서의 번호를 그대로 씁니다. 다음 곳이 이 번호를 참조합니다.
-  - 루트 `README.md`와 `README.ko.md`: U8(ultragoal 편차 22), U13, U27, 그리고 대응표 범위 U1–U34
-  - `docs/local-install-v2.md`: U27
+  - `docs/development.md`: U8(ultragoal 편차 22), 그리고 대응표 범위 U1–U34
+  - `docs/manual-checks.md`: U27
   - `skills/ultragoal/SKILL.md`: U3, U32
 - **새 항목**: U35–U38은 2026-09-30~10-01 수동 실행에서, U39–U41은 이 폴더의 문서를 쓰면서 새로 찾은 것입니다.
 - **결정 필요**: 이렇게 표시한 항목은 AGENTS.md에 따라 구현 전에 관리자가 정합니다.
 
 기준 코드는 [README.md](README.md) 머리에 적은 커밋입니다.
 
-## 필수 후속 (루트 README "Mandatory follow-up development")
+## 필수 후속 (`docs/development.md` "필수 후속 개발")
 
-### U5. TUI 진행 표시 (README 6)
+### U5. TUI 진행 표시 (필수 후속 6)
 
 - **현재 동작**: ultragoal HUD 칩은 활성 행에 계산해 기록만 하고 그리지 않습니다([state-and-files.md](state-and-files.md)).
-- **이유**: 배포된 OpenCode 2.0.15 바이너리가 TUI 플러그인의 import를 호스트 인스턴스로 연결하지 않습니다. 이는 코드로 확인할 수 없고, 2026-09-29 수동 확인 결과입니다(루트 README 필수 후속 6). 그래서 ralplan 사이드바도 제거됐습니다(R-OD17).
+- **이유**: 배포된 OpenCode 2.0.15 바이너리가 TUI 플러그인의 import를 호스트 인스턴스로 연결하지 않습니다. 이는 코드로 확인할 수 없고, 2026-09-29 수동 확인 결과입니다(`docs/development.md` 필수 후속 6). 그래서 ralplan 사이드바도 제거됐습니다(R-OD17).
 - **해야 할 일**: 호스트가 import를 연결해 주거나, 가상 모듈 우회를 호스트 통합 편차로 기록하면 사이드바와 ultragoal 칩을 함께 그립니다.
 
-### U4. 항상 차단 경로의 대소문자 정규화 (README 5)
+### U4. 항상 차단 경로의 대소문자 정규화 (필수 후속 5)
 
 - **현재 동작**: 항상 차단 검사는 대소문자를 구분합니다([guards.md](guards.md)). 대상은 `.open-gajae/_session-*/state/**`, `plans/ralplan/**`, ultragoal 파일입니다.
 - **증상**: macOS 기본 파일 시스템에서는 `.OPEN-GAJAE/…` 같은 경로가 검사를 빠져나갑니다.
 - **해야 할 일**: 비교 전에 대소문자를 정규화합니다(R-OD13).
 
-### U31. 여러 프로세스 간 직렬화 없음 (README 4, 기록만)
+### U31. 여러 프로세스 간 직렬화 없음 (필수 후속 4, 기록만)
 
 - **현재 동작**: 세션마다 쓰기 큐 하나(`src/state.ts`의 `workflowTransaction`)가 한 프로세스 안의 쓰기를 모두 줄 세웁니다.
 - **한계**: 같은 worktree를 쓰는 여러 OpenCode 프로세스 사이는 직렬화하지 않습니다. GJC는 파일 잠금을 씁니다.
 
-## 기록된 동작 (루트 README 편차·알려진 동작에 있음)
+## 기록된 동작 (`docs/development.md` 편차와 이 절에 있음)
 
 ### U8. 같은 execution의 `skill ultragoal`이 먼저 넘긴 뒤 `ralplan handoff` 거부 (ultragoal 편차 22)
 
@@ -44,12 +44,12 @@
 
 ### U13. 넘겨받은 ralplan은 옛 run을 이어 씀 (PQ-4 A)
 
-루트 README 알려진 동작의 "넘겨받은 ralplan은 옛 run을 이어 씁니다" 행이 U13을 가리킵니다. 그 행의 내용(옛 승인, 예산, `stage_n`이 이어짐)은 그대로 기록된 동작입니다.
+넘겨받은 ralplan은 옛 run을 이어 씁니다. 옛 승인, 예산, `stage_n`이 이어지는 것은 그대로 기록된 동작입니다(근거: gjc `persistActiveRunId`. 대처: 다음 빈 `stage_n`을 쓰거나 첫 `write`에 새 `run_id`를 줌).
 
 - **정상 경로**: ultragoal이나 deep-interview에서 넘겨받은 ralplan run은 `start` 없이 `ralplan write`로 이어 씁니다.
 - **해결된 부분(2026-10-02)**: 예전에는 SKILL 안내를 따르지 않고 `ralplan start`를 부르면 새 seed로 다시 쓰면서 `handoff_from`·`handoff_at`이 사라졌습니다. 이제 `ralplan start`는 ralplan state가 활성이면 run과 인계 메타를 그대로 두고 거부합니다(ralplan 편차 39, `src/ralplan-runtime/tool.ts`). 단 deep-interview 결합 호출 `spec(…, handoff: "ralplan")`은 gjc처럼 시드를 다시 씁니다.
 
-### U22. ultragoal 실행 중 ralplan write의 영향 (README 수용 차이 "One-mode rule partly lifted")
+### U22. ultragoal 실행 중 ralplan write의 영향 (ralplan 수용한 동작 차이 "한 모드 원칙 일부 해제")
 
 - **현재 동작**:
   - ultragoal 실행 중에는 `ralplan start`만 거부되고, `write`는 ralplan을 활성으로 만들 수 있습니다.
@@ -62,7 +62,7 @@
 - **현재 동작**: `ralplan handoff`는 비활성 ralplan을 거부합니다. 그래서 Stop here 뒤 나중에 ultragoal을 불러오면 ralplan에서 왔다는 기록이 없습니다.
 - **GJC와의 관계**: 턴 단위로 인계하는 GJC의 결과와 같습니다.
 
-### U26. 안내는 `open-gajae`에만 (README "Deviations from OMC", R-OD20)
+### U26. 안내는 `open-gajae`에만 (`docs/development.md` "OMC와 v1 플러그인으로부터의 deviation", R-OD20)
 
 옛 문서의 "복원 안내"는 이제 없습니다. `src/hooks.ts`의 `prompt` 훅은 agent에 따라 셋으로 나뉩니다.
 
@@ -72,7 +72,7 @@
   - ralplan·deep-interview·ultragoal 키워드와 멘션 안내는 주지 않습니다.
 - **`open-gajae`**: 위의 일에 더해 안내까지 줍니다. agent가 없는 세션이나 agent 조회에 실패한 경우도 안내를 받습니다.
 
-### U27. continuation이 agent를 확인하지 않음 (README 알려진 동작, PQ-20 A)
+### U27. continuation이 agent를 확인하지 않음 (기록된 동작, PQ-20 A)
 
 - **현재 동작**: goal continuation은 GJC 경로 A처럼 agent를 확인하지 않고, 반복 상한도 없습니다.
 - **증상**: 세션을 `build` 같은 다른 agent로 바꾸면 continuation이 그 agent의 턴에 계속 들어옵니다.
@@ -83,6 +83,28 @@
   - 도구 없는 턴 3회 보류
   - `open-gajae`로 돌아가 `goal drop`
 - **테스트**: `tests/hooks.test.ts` (A2)가 이 동작을 확인합니다.
+
+### 그 밖의 기록된 동작
+
+GJC를 따르거나 관리자가 받아들인 동작입니다. 바꿀 계획 없이 기록만 합니다. U8, U13, U27도 같은 성격입니다. 자세한 동작은 괄호 안 문서에 있습니다.
+
+| 동작 | 근거 | 대처 |
+|---|---|---|
+| `ultragoal handoff` 뒤 reconcile하는 ultragoal op를 부르면 `goals.json`에서 ultragoal이 다시 활성이 되고 ralplan 행이 지워집니다([ops.md](ops.md), [entry-and-handoff.md](entry-and-handoff.md)). | gjc reconcile(spec D-SF1). `reconcileUltragoalTx`(`src/ultragoal-runtime/store.ts:377-385`)가 활성 행을 쓰면 위쪽 파이프라인 행이 지워짐(`src/skill-state/rows.ts:154-157`) | 계획하는 동안 ultragoal op를 부르지 않습니다. 돌아올 때는 `ralplan handoff(to="ultragoal")` |
+| `create` 전의 `status`나 `classify_blocker`는 `goal-planning`을 끝냅니다(계획이 없으면 `missing`, 이전 계획이 있으면 그 상태). `add_pattern`, `validate_gate`, `doctor`는 reconcile하지 않아 끝내지 않습니다([entry-and-handoff.md](entry-and-handoff.md), [ops.md](ops.md)). | gjc reconcile 대상. `add_pattern`은 reconcile 안 함(PQ-25 B). 계획 없는 reconcile은 `missing`(`src/ultragoal-runtime/store.ts:383-385`) | SKILL대로 `create`를 먼저 부릅니다 |
+| `clear`는 goal을 열어 둡니다([ops.md](ops.md)). | gjc `state clear`(plan I-10). `clearStateTx`는 goal을 읽기만 하고(`src/ultragoal-runtime/store.ts:1242`) 결과에 `goalDropNotice` 줄을 붙임(`src/ultragoal-runtime/messages.ts:152-155`) | 결과의 `goal drop` 줄대로, 실행이 끝났으면 goal을 drop합니다 |
+| `failed` 단계의 실행은 `force` 없는 `clear`가 거부합니다([ops.md](ops.md)). | gjc `handleClear`(DR-14). `describeStaleClearTx`(`src/ultragoal-runtime/store.ts:1200-1203`)가 해제 단계(`src/ultragoal-runtime/manifest.ts:60-67`, `inactive` 제외)를 이미 끝난 상태로 봄 | `clear(force: true)` |
+| goal 문맥 메시지는 goal이 끝난 뒤에도 기록에 남고, 기본 `steer` 전달 때문에 모델 스텝이 한 번 더 돌 수 있습니다([goal-loop.md](goal-loop.md)). | 호스트 synthetic 전달, 호스트 Plan 알림과 같음(plan R12). 플러그인은 `resume: false`로 씀(`src/hooks.ts:1136-1143,1167-1172`) | 없음 |
+| `/compact` 뒤에는 보류 중 루프의 `<goal-notice>`가 전달되고, `resume: false`로 넣었는데도 호스트가 모델 스텝을 한두 번 돌립니다. 보류는 남고, 사용자 메시지 전에는 continuation이 없습니다([goal-loop.md](goal-loop.md)). | 호스트 synthetic 전달. 보류 안내는 `resume: false`(`src/goal/hooks.ts:125-130`) | 메시지를 보내 이어 갑니다 |
+| 같은 턴의 ralplan → ultragoal 인계는 한 execution 안에서만 일어납니다. continuation이나 백그라운드 subagent 완료가 연 execution의 `skill ultragoal` 로드는 인계 없이 들어가고 ralplan을 `active: true`로 남기며, 그 ralplan은 주 skill이 아니라 continuation을 받지 않습니다([entry-and-handoff.md](entry-and-handoff.md)). | gjc 턴 표식(PQ-21 A, PQ-7 B). 표식은 execution이 끝날 때마다 지워짐(`src/hooks.ts:1264`) | `final` 뒤에는 먼저 `ralplan handoff(to="ultragoal")` |
+| 수정의 수정 사슬에서 상한 3은 사슬을 멈추지 않습니다. 막힌 목표마다 끝나지 않은 수정 목표를 따로 셉니다([gates-and-receipts.md](gates-and-receipts.md)). | gjc 상한(`gjc-runtime/ultragoal-runtime.ts:4629-4690`). `countUnresolvedReviewBlockerDescents`(`src/ultragoal-runtime/plan.ts:689-697`) | 없음. 마지막 수정 목표가 사슬을 supersede하고(편차 43), 그 final gate가 사슬의 기준을 덮습니다(편차 44) |
+| 완료된 목표는 바꿀 수 없습니다. `active`나 `failed` 목표를 바꾸려면 `checkpoint(pending)`, 변경, `next`가 필요합니다([ops.md](ops.md)). | gjc steering 허용 상태(PQ-14 (1) B′, PQ-26 A; spec E1). `requireStatus`(`src/ultragoal-runtime/store.ts:789-797`) | `checkpoint(status: "pending")`으로 다시 엽니다 |
+| 마지막으로 완료된 목표에 유효한 final 영수증이 없으면(늦은 supersede) 단계와 행은 `complete`이고 체인 가드도 풀리지만 `goal complete`는 거부됩니다([gates-and-receipts.md](gates-and-receipts.md), [state-and-files.md](state-and-files.md)). | gjc는 파일 status를 셈(plan C-7 (라)). 단계는 `deriveRunStatus`(`src/ultragoal-runtime/plan.ts:457`), 실행 완료는 `runCompletion`(`:626`), 거부는 `goalCompleteGuard`(`src/goal/tool.ts:122-124`) | `run_complete: no`와 재오픈 힌트를 따릅니다 |
+| 목표 추가로 밀린 final 영수증은 per-goal 완료로 셉니다. 새 마지막 목표는 자기 final 영수증이 필요합니다([gates-and-receipts.md](gates-and-receipts.md)). | gjc 결과(PQ-14 (3)-b; spec E2). `checkReceipt`·`isValidCompletion`(`src/ultragoal-runtime/receipt.ts:120-150`) | 없음 |
+| `after`로 목표를 맨 앞에 둘 수 없습니다([ops.md](ops.md)). | 계획 변경 op(IQ-1 B). `insertAfter`·`moveAfter`는 `after` 뒤에만 넣음(`src/ultragoal-runtime/plan.ts:373-387`) | 목표를 추가한 뒤 `G001`을 그 뒤로 옮깁니다(호출 두 번) |
+| 다시 연 목표는 `status`에서 이전 영수증 상태를 계속 보이고, 다시 완료되어야 셉니다([gates-and-receipts.md](gates-and-receipts.md)). | gjc는 재오픈 때 영수증을 남김(IQ-2 A). `checkReceipt`는 목표 status를 보지 않음(`src/ultragoal-runtime/receipt.ts:120-145`) | 없음 |
+| 스키마에 맞지 않는 `goal-state.json`은 goal 없음으로 읽히고, 다음 `create`가 덮어씁니다([goal-loop.md](goal-loop.md)). | gjc `normalizeGoal`. `readGoalStateTx`(`src/goal/state.ts:182-189`) | 없음 |
+| `goals.json`이 없으면 `goal complete`는 허용되고(실행 없음), `goal pause`는 `ultragoal/` 폴더가 `goals.json` 없이 있을 때만 거부됩니다([goal-loop.md](goal-loop.md)). | gjc `gjc-runtime/ultragoal-guard.ts:569,703-711`. `goalCompleteGuard`·`goalPauseGuard`(`src/goal/tool.ts:110-113,134-138`) | 없음 |
 
 ## 이 문서에만 기록된 항목
 
@@ -146,7 +168,7 @@
 - test-app `_session-20260930-202416-ses_f0df11fc…`: 모든 역할 `openai/gpt-6-luna-fast`
 - test-app `_session-20260930-234931-ses_f0d35376…`: 모든 역할 `openai/gpt-6-sol-fast`
 
-플러그인 동작 자체의 오류는 두 실행 모두 없었습니다. 두 세션 폴더와 OpenCode 세션 기록은 저장소 밖에 있습니다. 실행 조건과 체크리스트별 결과는 `docs/local-install-v2.md` 6절에 부분 실행으로 기록했습니다.
+플러그인 동작 자체의 오류는 두 실행 모두 없었습니다. 두 세션 폴더와 OpenCode 세션 기록은 저장소 밖에 있습니다. 실행 조건과 체크리스트별 결과는 `docs/manual-checks.md` 6절에 부분 실행으로 기록했습니다.
 
 ### U35. 마지막 목표에서 architect를 몇 번 돌릴지 정해져 있지 않음 (결정 필요)
 
@@ -195,7 +217,7 @@
 
 이 폴더의 문서를 쓰면서 찾은 것들입니다. 각 항목은 검토자가 코드를 읽고 실제로 실행해 확인했습니다. 모두 코드나 문구를 고칠지, 기록만 할지 관리자가 정해야 합니다. 자세한 동작은 괄호 안 문서에 있습니다.
 
-### U39. 결과 문구·SKILL·README가 실제 동작과 다름
+### U39. 결과 문구·SKILL이 실제 동작과 다름
 
 **런타임 문구** (`src/goal/messages.ts`, `src/ultragoal-runtime/messages.ts`)
 - **보류 안내의 원인 줄**: `Cause:` 줄은 "continuation turns"라고 합니다. 하지만 코드는 무엇이 턴을 시작했는지 보지 않고 루트의 성공한 execution을 모두 셉니다. 그래서 사용자 프롬프트로 시작한 턴도 들어가고, 호스트가 백그라운드 자식이 끝난 뒤 루트를 다시 돌리는 경우 그 턴도 들어갑니다(호스트 동작은 확인 못 함; `goalHoldNotice`, `decideContinuation`; [goal-loop.md](goal-loop.md)).
@@ -216,15 +238,15 @@
 - **다시 열 목표**: SKILL은 "the last completed one"을 다시 열라고 합니다. 하지만 "영수증 없음"과 "낡은 영수증" 사유에서는 코드가 영수증이 없거나 낡은 목표 중 파일 순서상 첫 목표를 가리킵니다(`runCompletion`).
 - **마지막 남은 목표를 supersede하는 예**: SKILL("when the last remaining pending goal is superseded after every other goal completed")과 [gates-and-receipts.md](gates-and-receipts.md)는 `pending` 목표를 예로 듭니다. 하지만 마지막 per-goal checkpoint가 남은 목표를 곧바로 `active`로 만들고, `supersede`는 `active` 목표를 거부합니다. 실제로는 `blocked`·`review_blocked`이거나 `checkpoint(status: "pending")`으로 되돌린 목표여야 합니다.
 - **`goal-planning`을 끝내는 op**: SKILL은 `create` 전에 `status`·`classify_blocker`만 조심하라고 합니다. 하지만 이전 `goals.json`이 있으면 `next`, `checkpoint`, 계획 변경 op, `record_*`도 reconcile로 `goal-planning`을 끝냅니다([entry-and-handoff.md](entry-and-handoff.md)).
-- **수정 목표의 cohort 세대**: SKILL은 수정 목표에 "a new cohort generation"이 필요하다고 합니다. README ultragoal 편차 29도 비슷하게 적습니다. 하지만 코드는 세대를 기억하지 않아, 수정 목표의 첫 checkpoint에서 `reviewGeneration: 1`도 통과합니다(U36과 관련).
+- **수정 목표의 cohort 세대**: SKILL은 수정 목표에 "a new cohort generation"이 필요하다고 합니다. ultragoal 편차 29(`docs/development.md`)도 비슷하게 적습니다. 하지만 코드는 세대를 기억하지 않아, 수정 목표의 첫 checkpoint에서 `reviewGeneration: 1`도 통과합니다(U36과 관련).
 
 **프롬프트와 SKILL 사이**
 - **architect 세 상태를 채우는 법**: SKILL(목표별 gate 2단계)은 architect의 각 측면 지적에서 `architectureStatus`·`productStatus`·`codeStatus`를 기록하라고 합니다. `prompts/open-gajae-architect.md`의 출처 주석은 "this prompt's single architectural status"에서 채운다고 하며 ultragoal 편차 13을 인용하지만, 편차 13 행은 이 내용을 다루지 않습니다. 코드는 세 값이 모두 `"CLEAR"`인지만 봅니다([guards.md](guards.md)).
 - **cleaner BLOCKED 뒤의 처리**: cleaner 프롬프트의 `Leader Action`은 executor에게 blocking 지적만 고치게 하고 cleaner를 다시 돌리라고 합니다. SKILL cohort 3단계는 cleaner의 BLOCKING 지적이 따로 수정 루프를 시작하지 않고 cohort 지적에 합쳐진다고 합니다.
 
-**루트 README**
-- `state/ultragoal-state.json`이 "rewritten from `goals.json` and the ledger"라고 합니다. 실제 reconcile은 기존 필드 위에 병합하므로 `handoff_*` 같은 필드가 남습니다.
-- **보류 기록이 새 goal에서 새로 시작한다는 문장**: 보류 항목은 `goal-continuation.json`이 "starts over for a new goal"이라고 합니다. 파일 기록은 맞지만, critic 연속 횟수는 원장에서 마지막 OKAY나 `plan_created`까지 거슬러 셉니다.
+**`8ab6266`의 ultragoal 사용 설명에 있던 문장**
+- `state/ultragoal-state.json`이 "rewritten from `goals.json` and the ledger"라고 했습니다. 실제 reconcile은 기존 필드 위에 병합하므로 `handoff_*` 같은 필드가 남습니다([state-and-files.md](state-and-files.md)).
+- **보류 기록이 새 goal에서 새로 시작한다는 문장**: 보류 문단은 `goal-continuation.json`이 "starts over for a new goal"이라고 했습니다. 파일 기록은 맞지만, critic 연속 횟수는 원장에서 마지막 OKAY나 `plan_created`까지 거슬러 셉니다.
   - `critic_streak` 보류 중에 `goal drop` 뒤 `goal create`로 새 goal을 만들거나 기록 파일이 깨지면, 기록은 새로 시작해도 다음 판단에서 다시 보류됩니다.
   - 같은 goal이 보류 중이면 `held`를 푸는 것은 루트의 실제 사용자 프롬프트뿐입니다. 그 사이 `ultragoal create`나 critic OKAY가 기록돼도 연속 횟수만 끊기고 `held`는 남습니다.
   - 새 goal id와 함께 새 `plan_created`가 생긴 경우(`goal drop` 뒤 `ultragoal create`)에만 다시 보류되지 않습니다.
@@ -242,13 +264,13 @@
 - **`qualityGateHash`**: 원장의 `qualityGateJson`과 다시 대조하지 않습니다. 원장의 gate JSON을 고쳐도 영수증은 `valid`로 남습니다(`checkReceipt`).
 - **깨진 원장**: `create`, 계획 변경 op, `record_review_blockers`, `classify_blocker`, `handoff`는 원장을 엄격하게 읽지 않고 덧붙입니다. 그래서 깨진 `ledger.jsonl`에도 씁니다.
 - **"현재 목표"**: `status`의 `- current:`, 목표를 지정하지 않은 `validate_gate`, mode-state의 `active_goal_id`는 파일 순서상 첫 `pending`/`active`/`failed` 목표를 고릅니다. 앞쪽 목표를 다시 열면 active 목표와 달라집니다(`currentGoal`).
-- **`failed` 단계로 남은 실행**: 활성(`active: true`) 상태로 남습니다. 그런데 `failed`는 종료·해제 단계 집합에도 들어 있어 두 가지가 멈춥니다. 둘 다 루트 README에 적혀 있습니다(`clear`는 알려진 동작, 압축은 "outside `missing`, `failed`, `complete`, and `handoff`" 문장). 결정할 것은 "활성인데 종료 단계"인 이 상태를 그대로 둘지입니다.
+- **`failed` 단계로 남은 실행**: 활성(`active: true`) 상태로 남습니다. 그런데 `failed`는 종료·해제 단계 집합에도 들어 있어 두 가지가 멈춥니다. 둘 다 기록된 동작입니다(`clear`는 위 [그 밖의 기록된 동작](#그-밖의-기록된-동작) 표, 압축은 [goal-loop.md](goal-loop.md)의 `ultragoalCompaction` 조건 `missing`, `failed`, `complete`, `handoff` 제외). 결정할 것은 "활성인데 종료 단계"인 이 상태를 그대로 둘지입니다.
   - `force` 없는 `clear`는 거부합니다.
   - 압축 복구 문맥을 넣지 않습니다.
 - **`ultragoal handoff`의 검사 누락**: ultragoal이 활성인지, 어느 단계인지 보지 않습니다.
   - 그래서 `clear` 뒤나 두 번째 호출도 성공합니다.
   - 이미 활성인 callee도 되돌립니다. 예: ralplan `architect` → `planner`, 이때 `invalid_transition_detected` 감사 행이 남습니다.
-  - `ralplan handoff`는 비활성 ralplan을 거부하므로(R-OD18) 두 방향이 다릅니다. 이 차이를 적은 README 행이 없습니다([entry-and-handoff.md](entry-and-handoff.md)).
+  - `ralplan handoff`는 비활성 ralplan을 거부하므로(R-OD18) 두 방향이 다릅니다. 이 차이를 적은 편차 행(`docs/development.md`)이 없습니다([entry-and-handoff.md](entry-and-handoff.md)).
 - **인계 뒤 SKILL만 막는 호출**: 아직 끝나지 않은 `goals.json`이 있을 때의 ultragoal op는 코드가 허용합니다. 이 op가 ultragoal을 다시 활성으로 만듭니다. (넘겨받은 ralplan에서의 `ralplan start`는 2026-10-02부터 코드가 거부합니다, ralplan 편차 39.)
 
 ### U41. 오류 처리와 복구
@@ -295,7 +317,7 @@
 | U14 | PLANNING-STUCK 거부 안내 | 열림 | 위 |
 | U15 | 인계 실패 경로 | 일부 해결 | 위 |
 | U16 | 계약 자동 회귀 검사 | 일부 해결 | 위 |
-| U17 | 실제 모델 VERDICT 확인 | 해결(대상 없음) | 수동 실행 결과는 `docs/local-install-v2.md` 6절(2026-10-01 부분 실행 기록) |
+| U17 | 실제 모델 VERDICT 확인 | 해결(대상 없음) | 수동 실행 결과는 `docs/manual-checks.md` 6절(2026-10-01 부분 실행 기록) |
 | U18 | ultragoal 저장 구성 | 해결 | [state-and-files.md](state-and-files.md) |
 | U19 | executor 프롬프트의 계획 경로 | 해결 | `prompts/open-gajae-executor.md` |
 | U20 | ultragoal 실행 중 계획 가드 | 해결 | [guards.md](guards.md) |
@@ -317,6 +339,6 @@
 | U36 | blocker 기록·세대당 lane 1회 | 결정 필요 | 위 |
 | U37 | cleaner의 테스트 실행 | 결정 필요 | 위 |
 | U38 | ralplan `invalid_transition_detected` | 기록 | 위 |
-| U39 | 문구·SKILL·README 불일치 | 결정 필요 | 위 |
+| U39 | 문구·SKILL 불일치 | 결정 필요 | 위 |
 | U40 | 검사 순서와 누락 | 결정 필요 | 위 |
 | U41 | 오류 처리와 복구 | 결정 필요 | 위 |

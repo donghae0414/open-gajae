@@ -351,7 +351,7 @@ gjc 출처: `packages/coding-agent/src/defaults/gjc/skills/ultragoal/ai-slop-cle
 
 - `prompts/open-gajae-architect.md`의 source 설명: leader가 "this prompt's single architectural status"에서 `architectureStatus`, `productStatus`, `codeStatus`를 기록한다고 적고 ultragoal 편차 13을 듭니다.
 - ultragoal SKILL의 목표별 gate 2단계: architect는 상태 하나와 권고 하나를 내고, leader는 세 상태를 "from its findings on each side" 기록하라고 적습니다.
-- 루트 README의 ultragoal 편차 13 행은 "모든 목표가 architect 리뷰를 받고 지연 gate가 없다"는 내용뿐이고, 세 상태 채우는 법은 다루지 않습니다.
+- `docs/development.md`의 ultragoal 편차 13 행은 "모든 목표가 architect 리뷰를 받고 지연 gate가 없다"는 내용뿐이고, 세 상태 채우는 법은 다루지 않습니다.
 - 코드(`src/ultragoal-runtime/gate.ts`의 `checkArchitectReview`)는 세 상태가 모두 `"CLEAR"`이고 `recommendation`이 `"APPROVE"`인지만 봅니다. 어떻게 채웠는지는 알 수 없습니다.
 
 `ralplan` 도구를 가지고 있으므로 이 역할들은 ultragoal 실행 중에도 `ralplan write`·`status`·`state`를 부를 수 있습니다. 두 프롬프트는 "Persistence (ralplan runs only)" 절에서 과제가 ralplan 단계나 `stage_n`을 가리킬 때만 `ralplan write`를 부르라고 적어 두었고, 코드는 ultragoal 중의 `ralplan write`를 막지 않습니다([known-limits.md](known-limits.md) U22). terminal critic이 중첩 workflow를 시작하지 않는다는 규칙은 ultragoal SKILL("Invocation and containment")에만 있습니다.

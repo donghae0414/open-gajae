@@ -28,7 +28,7 @@
 //   (`handleClear`), `:1496-1551` (the handoff's spec check)
 // - `gjc-runtime/state-renderer.ts:82-104` (`STATE_FIELD_ALLOWLIST`,
 //   `projectStateFields`)
-// Deviations (README "Deviations from GJC (deep-interview)"): 1 (tool ops on
+// Deviations (docs/development.md "GJC로부터의 deviation (deep-interview)"): 1 (tool ops on
 // the lineage root), 2 (no receipt, checksum, revision or draft), 4 (the
 // floor), 5 (`handoff` needs phase `handoff` and a verified spec), 12 (`start`
 // is refused while ralplan or ultragoal is the visible primary), 19 (the

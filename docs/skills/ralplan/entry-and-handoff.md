@@ -1,6 +1,6 @@
 # 진입과 넘기기
 
-이 문서는 세션이 ralplan에 **들어오는 길**과, ralplan이 다른 workflow(ultragoal, deep-interview)와 **제어를 주고받는 길**을 코드 그대로 적습니다. 다루는 것은 `ralplan` 키워드와 `@ralplan` 멘션 안내, 턴 표식, `skill ralplan` 로드, 진입점인 `ralplan start`와 `start` 없는 `write`, deep-interview와 ultragoal에서 넘겨받기, `ralplan handoff(to)`, 같은 execution의 `skill ultragoal` 게이트, Stop here, 체인 가드와 막지 않는 것입니다. 기준 코드는 [README.md](README.md) 머리에 있습니다. 코드 위치는 `5b92a60` 기준이고, 루트 `README.md`의 줄 번호는 지금 파일(이 폴더와 함께 들어간 링크 문단 두 줄 포함) 기준입니다. 용어(stage, run, 계보 루트, 보이는 주 skill, T, R, known phases, phase lock, 턴 표식, 영수증)는 [README.md](README.md)의 용어 절을 따릅니다.
+이 문서는 세션이 ralplan에 **들어오는 길**과, ralplan이 다른 workflow(ultragoal, deep-interview)와 **제어를 주고받는 길**을 코드 그대로 적습니다. 다루는 것은 `ralplan` 키워드와 `@ralplan` 멘션 안내, 턴 표식, `skill ralplan` 로드, 진입점인 `ralplan start`와 `start` 없는 `write`, deep-interview와 ultragoal에서 넘겨받기, `ralplan handoff(to)`, 같은 execution의 `skill ultragoal` 게이트, Stop here, 체인 가드와 막지 않는 것입니다. 기준 코드는 [README.md](README.md) 머리에 있습니다. 코드 위치는 `5b92a60` 기준입니다. 용어(stage, run, 계보 루트, 보이는 주 skill, T, R, known phases, phase lock, 턴 표식, 영수증)는 [README.md](README.md)의 용어 절을 따릅니다.
 
 이웃 주제는 다른 문서에 있습니다.
 
@@ -62,6 +62,8 @@ G2  프롬프트에 INJECTION_MARKERS(src/injection.ts:17-40) 중 하나가 있�
 | 그 밖(`build`, `general`, 사용자 agent, `open-gajae-explore` 등) | 없음 | 함 |
 
 `open-gajae` 밖의 agent에게는 `ralplan` 도구가 숨겨지고 거부되므로, 안내가 거부로 이어질 뿐이라 보내지 않습니다(R-OD20, `src/hooks.ts:902-906` 주석). 역할 subagent는 받은 지시문에 키워드가 인용될 수 있어 아예 건너뜁니다(`:257-265`).
+
+멘션은 TUI 자동완성으로 고른 것만입니다. 사용자가 `@ralplan`을 입력하고 자동완성 목록에서 고르면 TUI가 skill 첨부를 프롬프트의 `skills`에 넣고(`opencode/packages/tui/src/component/prompt/autocomplete.tsx:216-226,427-435`), 서버는 글의 `@`를 해석하지 않고 받은 `skills`만 훅에 넘깁니다(`opencode/packages/core/src/session/prompt.ts:40-47`). 고르지 않고 글자로만 보낸 `@ralplan`은 멘션이 아니고 skill도 붙지 않으며, 아래 키워드 감지만 받습니다. `@`는 직접 접두사가 아니므로 `@ralplan add a login page`는 감지되지 않고, `run @ralplan on this issue`처럼 다른 호출 문맥이 있을 때만 감지됩니다(실행 확인).
 
 ### 키워드 감지 (`detectRalplanKeyword`)
 
@@ -182,7 +184,7 @@ ultragoal이 주 skill인지는 프롬프트 훅이 행으로 판단합니다(`v
 
 ```
 
-멘션 안내 문구는 open-gajae가 더한 것입니다(OMC는 명시 호출에도 안내를 내지만 문구가 다름, `src/ralplan.ts:73-75` 주석, 루트 README "Deviations from OMC" 표의 `@ralplan` 행).
+멘션 안내 문구는 open-gajae가 더한 것입니다(OMC는 명시 호출에도 안내를 내지만 문구가 다름, `src/ralplan.ts:73-75` 주석, `docs/development.md` "OMC와 v1 플러그인으로부터의 deviation" 표의 "`@ralplan` mention도 안내를 받음" 행).
 
 ### 안내를 쓰는 방식
 
@@ -235,7 +237,7 @@ open-gajae: refusing to chain from "ultragoal" (phase=goal-planning) into "ralpl
 
 ### 로드는 ralplan 상태를 쓰지 않음 (ralplan 편차 36)
 
-gjc는 `/skill:ralplan` 로드가 mode state(phase `planner`, repository binding), 활성 행, 스냅숏을 써서 그때부터 편집 가드와 Stop 훅이 걸립니다(README 편차 36이 적은 gjc 출처 `hooks/skill-state.ts:387-496,641`; 이 문서를 쓰며 gjc 소스로 다시 확인하지 않았습니다). open-gajae의 로드는 아무것도 쓰지 않습니다(spec D-F13, R-O6). 그래서 로드와 `ralplan start` 사이에는 계획 가드도 continuation도 없습니다. SKILL의 첫 지시가 `start`입니다(`skills/ralplan/SKILL.md:17`).
+gjc는 `/skill:ralplan` 로드가 mode state(phase `planner`, repository binding), 활성 행, 스냅숏을 써서 그때부터 편집 가드와 Stop 훅이 걸립니다(ralplan 편차 36이 적은 gjc 출처 `hooks/skill-state.ts:387-496,641`; 이 문서를 쓰며 gjc 소스로 다시 확인하지 않았습니다). open-gajae의 로드는 아무것도 쓰지 않습니다(spec D-F13, R-O6). 그래서 로드와 `ralplan start` 사이에는 계획 가드도 continuation도 없습니다. SKILL의 첫 지시가 `start`입니다(`skills/ralplan/SKILL.md:17`).
 
 예외는 DR-21 게이트입니다. 게이트가 deep-interview → ralplan 인계를 하면 그 인계가 ralplan 상태와 행을 씁니다.
 
@@ -298,7 +300,7 @@ ralplan run ses_e is already active (phase planner); continue it with ralplan wr
 
 ## `start` 없는 `write`
 
-`start`를 부르지 않고 `ralplan write`를 해도 상태가 생깁니다(R-O6, 루트 README "Accepted behavior differences"의 "No seeding; `write` creates state"). 실행 예에서 빈 세션의 `write(stage: "planner", stage_n: 1)` 뒤 상태는 `{active: true, current_phase: "planner", run_id: <루트 세션 id>}`(그리고 `skill`, `version`, `updated_at`)이고 `mode`, `interactive`, `task`, `repository_binding`이 없습니다. 활성 행도 생기므로 이때부터 계획 가드와 continuation의 대상이 됩니다. `write`는 ultragoal이 실행 중이어도 거부하지 않습니다(R-AE1). 단계는 [stages-and-ledger.md](stages-and-ledger.md)에 있습니다.
+`start`를 부르지 않고 `ralplan write`를 해도 상태가 생깁니다(R-O6, `docs/development.md` "GJC로부터의 deviation (ralplan)"의 "수용한 동작 차이" 표 "시딩 없음, `write`가 state 생성" 행). 실행 예에서 빈 세션의 `write(stage: "planner", stage_n: 1)` 뒤 상태는 `{active: true, current_phase: "planner", run_id: <루트 세션 id>}`(그리고 `skill`, `version`, `updated_at`)이고 `mode`, `interactive`, `task`, `repository_binding`이 없습니다. 활성 행도 생기므로 이때부터 계획 가드와 continuation의 대상이 됩니다. `write`는 ultragoal이 실행 중이어도 거부하지 않습니다(R-AE1). 단계는 [stages-and-ledger.md](stages-and-ledger.md)에 있습니다.
 
 ## deep-interview에서 들어오기
 
@@ -390,10 +392,10 @@ ralplan이 받는 것(실행 예: `start` → `final` → `ralplan handoff(to:"u
 그다음:
 
 - `ralplan start`는 거부됩니다. 실제 문구: `ralplan run ses_r2 is already active (phase planner, handed over from ultragoal); continue it with ralplan write. To plan anew, stop it first with ralplan state {"active": false} or ralplan clear.`
-- 옛 run에 이어 쓸 때 이미 쓴 `(stage, stage_n)`을 다른 내용으로 쓰면 거부됩니다(실행 예: `planner` 1 → `refusing to overwrite ralplan planner stage 1 at <session>/plans/ralplan/ses_r2/stage-01-planner.md: an artifact with different content already exists (…). Use a new stage_n to record another pass.`). 다음 빈 `stage_n`(예: `revision` 2)은 통과하고 phase가 그 stage로 갑니다. 옛 final 승인과 반복 예산이 이어집니다(U13, 루트 README 알려진 동작 `README.md:299`).
+- 옛 run에 이어 쓸 때 이미 쓴 `(stage, stage_n)`을 다른 내용으로 쓰면 거부됩니다(실행 예: `planner` 1 → `refusing to overwrite ralplan planner stage 1 at <session>/plans/ralplan/ses_r2/stage-01-planner.md: an artifact with different content already exists (…). Use a new stage_n to record another pass.`). 다음 빈 `stage_n`(예: `revision` 2)은 통과하고 phase가 그 stage로 갑니다. 옛 final 승인과 반복 예산이 이어집니다([ultragoal known-limits.md](../ultragoal/known-limits.md) U13).
 - 첫 `write`에 새 `run_id`를 주면 새 run이 됩니다. 실행 예에서 `run_id: "r2"`의 `planner` 1 뒤 상태는 `run_id: "r2"`, `current_phase: "planner"`이고 `task`, `mode`, `handoff_from`, `handoff_to`는 남습니다(새 run은 `verdict`, `last_review_verdict*`, `planning_stuck`, `auto_handoff`만 지움, `persistActiveRunIdTx` `src/ralplan-runtime/store.ts:513-545`, [stages-and-ledger.md](stages-and-ledger.md)).
 - goal은 인계가 건드리지 않습니다. goal이 활성인 동안은 goal continuation이 턴을 맡고 ralplan continuation은 판단하지 않습니다(D-TL6, [guards-and-continuation.md](guards-and-continuation.md)).
-- 계획하는 동안 `ultragoal` op를 부르면 reconcile이 ultragoal을 `goals.json`에서 다시 활성으로 만들고 ralplan 행을 지웁니다. SKILL이 부르지 말라고 할 뿐 코드는 막지 않습니다(루트 README 알려진 동작, [ultragoal 문서](../ultragoal/entry-and-handoff.md#인계-뒤-1)).
+- 계획하는 동안 `ultragoal` op를 부르면 reconcile이 ultragoal을 `goals.json`에서 다시 활성으로 만들고 ralplan 행을 지웁니다. SKILL이 부르지 말라고 할 뿐 코드는 막지 않습니다(기록된 동작, spec D-SF1, [ultragoal 문서](../ultragoal/entry-and-handoff.md#인계-뒤-1)).
 
 ## `ralplan handoff(to)`
 
@@ -522,7 +524,7 @@ ralplan planning is running; finish it first: choose "Approve execution via ultr
 - **거부된 로드는 표식을 세우지 않습니다.** 같은 execution에서 `final`까지 쓴 뒤 다시 로드하면 표식 `ralplan`이 남아 있으므로 넘깁니다(테스트 "(I)").
 - **게이트 안의 예외**(계보 조회 실패, ultragoal 상태 손상으로 인한 인계 거부 등)는 `execute.before`가 로그만 남기고 로드를 통과시킵니다(`:1094-1096`). 표식은 세우지 않습니다.
 
-**나중 execution의 로드.** 표식은 execution이 끝날 때마다 지워지므로, continuation이나 백그라운드 subagent 완료가 연 execution에서 `skill ultragoal`을 로드하면 ralplan을 보지 않고 시드합니다(ralplan 편차 37, 루트 README 알려진 동작 `README.md:298`). 실행 예(`final`에서 활성인 ralplan):
+**나중 execution의 로드.** 표식은 execution이 끝날 때마다 지워지므로, continuation이나 백그라운드 subagent 완료가 연 execution에서 `skill ultragoal`을 로드하면 ralplan을 보지 않고 시드합니다(ralplan 편차 37, [known-limits.md](known-limits.md) RK24). 실행 예(`final`에서 활성인 ralplan):
 
 | 시점 | ralplan 상태 | ralplan 행 | ultragoal |
 |---|---|---|---|

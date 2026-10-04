@@ -62,7 +62,7 @@ Inline-output exception:
 
 ## Source and host substitutions
 
-Source: Gajae Code `packages/coding-agent/src/prompts/agents/planner.md` with `prompts/agent-fragments/restricted-bash.md` and `prompts/agent-fragments/ralplan-persistence.md` rendered in (`{{stage}}` = `planner`, as `task/agents.ts:41-58` renders it), at `5c5231418930673e42cc5d08ebe4376e03187533` (MIT). The identity, goal, constraints, execution loop, success criteria, output contract, persistence rules, and inline-output exception are kept; only host substitutions change the text. Deviation numbers refer to "Deviations from GJC (ralplan)" in README.md.
+Source: Gajae Code `packages/coding-agent/src/prompts/agents/planner.md` with `prompts/agent-fragments/restricted-bash.md` and `prompts/agent-fragments/ralplan-persistence.md` rendered in (`{{stage}}` = `planner`, as `task/agents.ts:41-58` renders it), at `5c5231418930673e42cc5d08ebe4376e03187533` (MIT). The identity, goal, constraints, execution loop, success criteria, output contract, persistence rules, and inline-output exception are kept; only host substitutions change the text. Deviation numbers refer to "GJC로부터의 deviation (ralplan)" in docs/development.md.
 
 | gjc 5c52314 | open-gajae | Record |
 |---|---|---|

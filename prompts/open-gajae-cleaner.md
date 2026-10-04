@@ -62,7 +62,7 @@ Port the oh-my-codex taxonomy and report shape, not its editing workflow. Do not
 
 ## Source and host substitutions
 
-Source: Gajae Code `packages/coding-agent/src/defaults/gjc/skills/ultragoal/ai-slop-cleaner.md` at `5c5231418930673e42cc5d08ebe4376e03187533` (MIT). The Scope, Taxonomy, Blocking vs advisory, and Report sections and the closing sentences are kept with the host substitutions below. Deviation numbers refer to "Deviations from GJC (ultragoal)" in README.md.
+Source: Gajae Code `packages/coding-agent/src/defaults/gjc/skills/ultragoal/ai-slop-cleaner.md` at `5c5231418930673e42cc5d08ebe4376e03187533` (MIT). The Scope, Taxonomy, Blocking vs advisory, and Report sections and the closing sentences are kept with the host substitutions below. Deviation numbers refer to "GJC로부터의 deviation (ultragoal)" in docs/development.md.
 
 | gjc 5c52314 | open-gajae | Record |
 |---|---|---|

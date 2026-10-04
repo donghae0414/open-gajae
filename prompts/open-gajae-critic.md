@@ -75,7 +75,7 @@ Persistence (ralplan runs only):
 
 ## Source and host substitutions
 
-Source: Gajae Code `packages/coding-agent/src/prompts/agents/critic.md` with `prompts/agent-fragments/restricted-bash.md` and `prompts/agent-fragments/ralplan-persistence.md` rendered in (`{{stage}}` = `critic`, as `task/agents.ts:41-58` renders it), at `5c5231418930673e42cc5d08ebe4376e03187533` (MIT). The identity, goal, constraints, re-review ratchet, execution loop, success criteria, output contract, and persistence rules are kept; only host substitutions change the text. Deviation numbers refer to "Deviations from GJC (ralplan)" in README.md.
+Source: Gajae Code `packages/coding-agent/src/prompts/agents/critic.md` with `prompts/agent-fragments/restricted-bash.md` and `prompts/agent-fragments/ralplan-persistence.md` rendered in (`{{stage}}` = `critic`, as `task/agents.ts:41-58` renders it), at `5c5231418930673e42cc5d08ebe4376e03187533` (MIT). The identity, goal, constraints, re-review ratchet, execution loop, success criteria, output contract, and persistence rules are kept; only host substitutions change the text. Deviation numbers refer to "GJC로부터의 deviation (ralplan)" in docs/development.md.
 
 | gjc 5c52314 | open-gajae | Record |
 |---|---|---|

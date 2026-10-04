@@ -11,7 +11,7 @@ Retain this notice, applicable source notices, and the license texts in [license
 | [oh-my-claudecode (OMC)](https://github.com/Yeachan-Heo/oh-my-claudecode) | OMC-derived roles and retained workflow guidance in `prompts/`, `skills/`; the state payload limits in `src/state.ts` and keyword/continuation logic; the `ultragoal` progress log format (`src/ultragoal-runtime/progress.ts`); AST/LSP tools and JSONC utilities in `src/`. | [MIT](licenses/OMC-MIT.txt), Copyright (c) 2025 Yeachan Heo |
 | [oh-my-openagent (OMO)](https://github.com/code-yeongyu/oh-my-openagent) | Agent/model/permission integration in `src/config.ts`; continuation, in-flight, session-lineage and injection patterns in `src/hooks.ts`. | [Sustainable Use License](licenses/OMO-SUL.txt); incorporated third-party portions retain their original terms. |
 | [gajae-code (GJC)](https://github.com/Yeachan-Heo/gajae-code) | Main-agent prompt in `prompts/open-gajae.md`; the ralplan skill in `skills/ralplan/SKILL.md`, the consensus role prompts in `prompts/open-gajae-planner.md`, `prompts/open-gajae-architect.md` and `prompts/open-gajae-critic.md`, the ralplan runtime in `src/ralplan-runtime/*`, and the shape fixtures in `tests/fixtures/gjc-ralplan/*`; the ultragoal skill in `skills/ultragoal/SKILL.md`, the cleaner prompt in `prompts/open-gajae-cleaner.md`, the ultragoal runtime in `src/ultragoal-runtime/*` (except the OMC progress log format in `progress.ts`), the goal tool, state and loop in `src/goal/*`, and the shared active-row, snapshot, audit, journal, handoff, HUD and doctor modules in `src/skill-state/*`; the deep-interview skill in `skills/deep-interview/SKILL.md`, the lateral-reviewer prompt in `prompts/open-gajae-lateral-reviewer.md` (the deep-interview panel fragment), and the deep-interview runtime in `src/deep-interview-runtime/*`; the planning, goal-planning and deep-interview guards, the deep-interview load gate and continuation, always-blocked paths, continuation stop set, `skill` turn gate and chain guard, and compaction recovery in related portions of `src/hooks.ts`, `src/artifact-guard.ts` and `src/ralplan.ts`; session-directory and ambiguous-match patterns in `src/state.ts`. The ultragoal and goal adaptation draws on these GJC files under `packages/coding-agent/src/`: `gjc-runtime/{ultragoal-runtime,ultragoal-guard,ultragoal-receipt-freshness,workflow-recovery-projection,state-runtime,state-writer,state-renderer,state-validation,workflow-manifest,goal-mode-request,cli-write-receipt,session-layout}.ts`; `goals/{runtime,state}.ts`, `goals/tools/goal-tool.ts`, `prompts/goals/{goal-mode-active,goal-continuation}.md`, `prompts/tools/goal.md`; `session/agent-session.ts` (the path-A continuation wrapper and the recovery rendering and rules); `hooks/skill-state.ts` (the skill-load seed); `skill-state/{active-state,workflow-hud,workflow-mutation-guard,initial-phase}.ts`, `tools/skill.ts`; `defaults/gjc/skills/ultragoal/{SKILL.md,ai-slop-cleaner.md}`; and `prompts/agents/executor.md` (the red-team fragment). The deep-interview adaptation draws on `gjc-runtime/{deep-interview-runtime,deep-interview-stage,deep-interview-state,deep-interview-ambiguity,state-runtime,state-renderer,workflow-manifest}.ts`; `skill-state/{initial-phase,workflow-hud,workflow-mutation-guard}.ts`, `tools/skill.ts`; `session/agent-session.ts` (the deep-interview continuation); and `defaults/gjc/skills/deep-interview/{SKILL.md,lateral-review-panel.md}`. | [MIT](licenses/GJC-MIT.txt), Copyright (c) 2025-2026 Yeachan-Heo and Gajae Code Contributors |
-| [OpenCode](https://github.com/anomalyco/opencode) | Desktop icon used as a visual reference for `assets/branding/open-gajae-banner.png`; [banner provenance](assets/branding/open-gajae-banner.md). Also the host/API reference; no copied host implementation. | [MIT](licenses/OpenCode-MIT.txt), Copyright (c) 2025 opencode |
+| [OpenCode](https://github.com/anomalyco/opencode) | Host/API reference; no copied host implementation. | [MIT](licenses/OpenCode-MIT.txt), Copyright (c) 2025 opencode |
 
 Revisions checked against local references:
 
@@ -46,7 +46,7 @@ active-skill runtime modules under `packages/coding-agent/src/gjc-runtime/` and
 `packages/coding-agent/src/skill-state/` at the GJC pin above;
 `src/ralplan-runtime/review-conflicts.ts` is copied verbatim apart from its
 header. Host substitutions and deviations are listed in each file's source notes
-and in the README's "Deviations from GJC (ralplan)". The fixtures in
+and in `docs/development.md`'s "GJC로부터의 deviation (ralplan)". The fixtures in
 `tests/fixtures/gjc-ralplan/` hold ledger rows, file names, receipts and one
 disposition document from GJC ralplan runs and tests, with absolute paths
 replaced and no stage bodies. The ultragoal skill, the cleaner prompt,
@@ -56,7 +56,8 @@ replaced and no stage bodies. The ultragoal skill, the cleaner prompt,
 `ai-slop-cleaner.md`, the ultragoal, goal and state runtime modules, the goal
 prompts and tool, and the executor red-team fragment listed in the GJC row
 above, at the same pin; their host substitutions and deviations are listed in
-each file's source notes and in the README's "Deviations from GJC (ultragoal)".
+each file's source notes and in `docs/development.md`'s
+"GJC로부터의 deviation (ultragoal)".
 The ultragoal skill keeps two sentences of the earlier OMC-derived skill, and
 the cleaner prompt keeps its read-only sentences from the earlier OMC-based
 cleaner prompt. The deep-interview skill, the lateral-reviewer prompt and
@@ -65,8 +66,8 @@ cleaner prompt. The deep-interview skill, the lateral-reviewer prompt and
 `lateral-review-panel.md` and the deep-interview, state and active-skill runtime
 modules listed in the GJC row above, at the same pin; the lateral-reviewer
 prompt is the panel fragment `lateral-review-panel.md`. Their host
-substitutions and deviations are listed in each file's source notes and in the
-README's "Deviations from GJC (deep-interview)". The explore,
+substitutions and deviations are listed in each file's source notes and in
+`docs/development.md`'s "GJC로부터의 deviation (deep-interview)". The explore,
 document-specialist and executor role prompts remain on their own OMC-derived
 contracts; this is not a full GJC port.
 

@@ -20,7 +20,7 @@
 //   `:633,648` (the spec file and index names)
 // - `defaults/gjc/skills/deep-interview/SKILL.md:530-596` (the scored round
 //   record a `write` carries)
-// Deviations (README "Deviations from GJC (deep-interview)"):
+// Deviations (docs/development.md "GJC로부터의 deviation (deep-interview)"):
 // - 19: the `state` op refuses the runtime-owned fields (spec D-SR9) at both
 //   levels and the nine top-level transcript fields (PQ-20 C).
 // - 36 (PQ-22 D): `write` checks the round records it touches; gjc passes

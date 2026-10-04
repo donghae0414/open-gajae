@@ -1,6 +1,6 @@
 # 가드, continuation, 압축 문맥, 도구 숨김
 
-이 문서는 ralplan이 도는 동안 훅이 **막거나 덧붙이는 일**을 코드 그대로 적습니다. 다루는 것은 `execute.before`의 순서와 차단 방식, ralplan 경로의 항상 차단, 계획 가드(planning guard)와 OS 임시 경로 예외, continuation과 breaker, 중단 표식과 자식 execution 추적, 압축 복구 문맥, 도구 숨김과 역할 권한입니다. 판단과 호스트 호출은 거의 모두 `src/hooks.ts`의 `createHooks`(`:352-1304`) 안에 있고, 순수 판단과 문구는 `src/ralplan.ts`, 경로 판정은 `src/artifact-guard.ts`와 `src/ralplan-runtime/temp-paths.ts`, 압축 투영은 `src/ralplan-runtime/recovery.ts`에 있습니다. 기준 코드는 [README.md](README.md) 머리에 있습니다. 코드 위치는 그 기준 코드(`5b92a60`)의 줄 번호이고, 루트 `README.md`·`README.ko.md`의 줄 번호는 지금 파일 기준입니다.
+이 문서는 ralplan이 도는 동안 훅이 **막거나 덧붙이는 일**을 코드 그대로 적습니다. 다루는 것은 `execute.before`의 순서와 차단 방식, ralplan 경로의 항상 차단, 계획 가드(planning guard)와 OS 임시 경로 예외, continuation과 breaker, 중단 표식과 자식 execution 추적, 압축 복구 문맥, 도구 숨김과 역할 권한입니다. 판단과 호스트 호출은 거의 모두 `src/hooks.ts`의 `createHooks`(`:352-1304`) 안에 있고, 순수 판단과 문구는 `src/ralplan.ts`, 경로 판정은 `src/artifact-guard.ts`와 `src/ralplan-runtime/temp-paths.ts`, 압축 투영은 `src/ralplan-runtime/recovery.ts`에 있습니다. 기준 코드는 [README.md](README.md) 머리에 있습니다. 코드 위치는 그 기준 코드(`5b92a60`)의 줄 번호입니다.
 
 이웃 주제는 다음 문서에 있습니다.
 
@@ -138,8 +138,8 @@ open-gajae: .open-gajae/<session>/state/ralplan-continuation.json: .open-gajae w
 ### 막지 않는 것
 
 - `shell`로 하는 변경. 명령을 해석하지 않습니다. 역할 프롬프트("Workflow persistence and state go through the `ralplan` tool …, not `shell`")와 SKILL의 경계 문장만 금지합니다.
-- 대소문자가 다른 경로. 정규식에 `i` 플래그가 없어, 대소문자를 구분하지 않는 파일 시스템(macOS 기본)에서는 `.OPEN-GAJAE/…` 같은 경로가 빠져나갑니다. 계획 가드가 걸려 있는 동안은 그 경로도 프로젝트 안이라 계획 가드가 막습니다. 루트 README "Mandatory follow-up development" 5번, 결정 R-OD13, ultragoal known-limits U4.
-- 여러 OpenCode 프로세스 사이의 동시 쓰기. 쓰기 큐는 한 프로세스 안에서만 직렬화합니다(README 후속 4번, ultragoal U31).
+- 대소문자가 다른 경로. 정규식에 `i` 플래그가 없어, 대소문자를 구분하지 않는 파일 시스템(macOS 기본)에서는 `.OPEN-GAJAE/…` 같은 경로가 빠져나갑니다. 계획 가드가 걸려 있는 동안은 그 경로도 프로젝트 안이라 계획 가드가 막습니다. `docs/development.md` "필수 후속 개발" 5번, 결정 R-OD13, ultragoal known-limits U4.
+- 여러 OpenCode 프로세스 사이의 동시 쓰기. 쓰기 큐는 한 프로세스 안에서만 직렬화합니다(`docs/development.md` "필수 후속 개발" 4번, ultragoal U31).
 - 프로젝트 안의 심볼릭 링크를 거치는 경로. 글자로만 비교하므로 `.open-gajae/…/state`를 가리키는 링크 폴더 아래 경로는 정규식에 걸리지 않습니다(코드에서 이끌어 냄). 링크를 만들려면 `shell`이 필요하고, 호스트 `write`가 그 링크를 따라 쓰는지는 이 문서를 쓰며 확인하지 않았습니다.
 - `read` 등 파일을 쓰지 않는 도구.
 
@@ -434,7 +434,7 @@ breaker(`breakerMessage()`, `src/ralplan.ts:59-64`). OMC `:2140`이 감싸지 �
 ```
 
 - TUI 줄: `open-gajae: ralplan continuation stopped (breaker limit reached)`.
-- **breaker 알림도 `resume: true`로 들어갑니다.** `continueSession`이 `inject(sessionID, action.text, action.description)`(`:593`)를 `resume` 인자 없이 부르고, `inject`의 기본값이 `true`입니다(`:430-435`). 실제 실행 결과도 `"resume": true`입니다. 그래서 알림 뒤 모델 execution이 한 번 더 돌고, 그 `succeeded`에서는 state가 비활성이라 아무것도 넣지 않습니다. breaker 알림은 `resume: false`로 쓰는 키워드·멘션 안내와 다른 길(continuation 길)로 나갑니다(루트 README "Ralplan" 절, `README.md:125,185`).
+- **breaker 알림도 `resume: true`로 들어갑니다.** `continueSession`이 `inject(sessionID, action.text, action.description)`(`:593`)를 `resume` 인자 없이 부르고, `inject`의 기본값이 `true`입니다(`:430-435`). 실제 실행 결과도 `"resume": true`입니다. 그래서 알림 뒤 모델 execution이 한 번 더 돌고, 그 `succeeded`에서는 state가 비활성이라 아무것도 넣지 않습니다. breaker 알림은 `resume: false`로 쓰는 키워드·멘션 안내와 다른 길(continuation 길)로 나갑니다(`docs/development.md` "안내(synthetic) 삽입 방식").
 - `inject`(`:430-442`)는 `synthetic`이 실패하면 로그(`continuation synthetic failed`)만 남기고 다시 시도하지 않습니다. 카운터는 이미 올라 있으므로 다음 `succeeded`가 다시 시도하는 셈입니다(주석, 테스트 "a rejected synthetic does not escape the event handler"). 키워드·멘션 안내와 달리 프롬프트 텍스트에 덧붙이는 fallback은 없습니다. `continueSession`이 넣는 것은 모두 이 `inject`를 지나므로 같습니다: ralplan continuation과 breaker 알림, deep-interview continuation, goal continuation과 goal 보류 알림(`resume: false`).
 
 ### breaker 소진이 쓰는 것
@@ -447,7 +447,7 @@ breaker(`breakerMessage()`, `src/ralplan.ts:59-64`). OMC `:2140`이 감싸지 �
 {"ts":"…","category":"state","verb":"rebuild-active-snapshot","owner":"open-gajae-hook","mutation_id":"…","forced":false,"paths":["<session>/state/skill-active-state.json"]}
 ```
 
-- 감사 행은 셋입니다: `breaker-exhausted`가 붙은 state 쓰기 행, 활성 행 제거, 스냅숏 재구성(루트 README "Ralplan" 절, `README.md:185`). 계획의 "감사 1행"(`.omc/plans/ralplan-gjc-stage-trail.md:180`, 역사 기록)과 테스트 "the thirty-first succeeded trips the circuit breaker: …"는 `breaker-exhausted` 행만 셉니다.
+- 감사 행은 셋입니다: `breaker-exhausted`가 붙은 state 쓰기 행, 활성 행 제거, 스냅숏 재구성(위 감사 로그). 계획의 "감사 1행"(`.omc/plans/ralplan-gjc-stage-trail.md:180`, 역사 기록)과 테스트 "the thirty-first succeeded trips the circuit breaker: …"는 `breaker-exhausted` 행만 셉니다.
 - state의 `_meta.updatedBy`는 `ralplan_hook`입니다.
 - state가 비활성이고 활성 행도 지워지므로 그 뒤 계획 가드도 풀립니다. 다시 계획하려면 `state {"active": true}`로 재개하거나 새 run을 엽니다. phase가 잠기지 않았으므로 같은 run의 다음 `write`도 state를 다시 켭니다. 어느 쪽이든 카운터가 0이므로 다음은 `1/30`입니다.
 - `patchStateTx`가 거부하면(예: 봉투 검사 실패) 예외가 `continueSession`까지 올라가 로그만 남습니다. 알림도, 카운터 0도 쓰지 않습니다(코드에서 이끌어 냄, 테스트 없음).
@@ -460,7 +460,7 @@ breaker(`breakerMessage()`, `src/ralplan.ts:59-64`). OMC `:2140`이 감싸지 �
 
 ### agent를 보지 않음 (R-OD21)
 
-`decideRalplan`과 `continueSession`은 세션의 agent를 보지 않습니다. 활성 ralplan 세션을 `build` 같은 다른 agent로 바꾸면 그 agent의 턴에 continuation이 들어갈 수 있고, 그 agent에게는 `ralplan` 도구가 숨겨져 있습니다. ralplan 쪽은 breaker에서 멈춥니다. 관리자 결정 R-OD21은 "기록만"입니다(루트 README "Notices go only to the `open-gajae` primary" 행).
+`decideRalplan`과 `continueSession`은 세션의 agent를 보지 않습니다. 활성 ralplan 세션을 `build` 같은 다른 agent로 바꾸면 그 agent의 턴에 continuation이 들어갈 수 있고, 그 agent에게는 `ralplan` 도구가 숨겨져 있습니다. ralplan 쪽은 breaker에서 멈춥니다. 관리자 결정 R-OD21은 "기록만"입니다(`docs/development.md` "OMC와 v1 플러그인으로부터의 deviation" 표의 "안내는 `open-gajae` primary에만" 행).
 
 ### 결과 정리
 
@@ -479,7 +479,7 @@ breaker(`breakerMessage()`, `src/ralplan.ts:59-64`). OMC `:2140`이 감싸지 �
 
 ## 압축 문맥
 
-대화가 압축된 뒤 계획을 이어 갈 수 있게, 지금 run의 계획 요약을 압축 프롬프트의 system 부분에 넣습니다. 출처: gjc `gjc-runtime/workflow-recovery-projection.ts`(투영)와 `session/agent-session.ts:667-703`(`renderWorkflowRecoveryContext`, `gajae-code/`에서 확인. 루트 README 편차 20 행과 `src/hooks.ts:22`·`recovery.ts:13` 머리 주석도 같은 범위), `:745-753`(`sanitizeCompactionStateText`). 투영 쪽 줄 번호는 `src/ralplan-runtime/recovery.ts:7-14` 머리 주석의 값입니다. 결정: spec D-H2, AC19, DR-14. 편차: ralplan 편차 20.
+대화가 압축된 뒤 계획을 이어 갈 수 있게, 지금 run의 계획 요약을 압축 프롬프트의 system 부분에 넣습니다. 출처: gjc `gjc-runtime/workflow-recovery-projection.ts`(투영)와 `session/agent-session.ts:667-703`(`renderWorkflowRecoveryContext`, `gajae-code/`에서 확인. ralplan 편차 20 행과 `src/hooks.ts:22`·`recovery.ts:13` 머리 주석도 같은 범위), `:745-753`(`sanitizeCompactionStateText`). 투영 쪽 줄 번호는 `src/ralplan-runtime/recovery.ts:7-14` 머리 주석의 값입니다. 결정: spec D-H2, AC19, DR-14. 편차: ralplan 편차 20.
 
 ### 순서
 

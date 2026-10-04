@@ -1,6 +1,6 @@
 # 단계 기록과 원장: 예산, PLANNING-STUCK, disposition, 최종 승인 판정
 
-이 문서는 `ralplan write` 한 번이 안에서 하는 일을 코드 그대로 적습니다. 다루는 것은 `writeStageTx`(`src/ralplan-runtime/store.ts:635-880`)의 단계별 순서, 단계 이름과 `stage_n`, 단계 파일 이름과 본문 정규화, 원장 `index.jsonl`의 행과 읽기 규칙, 같은 단계를 다시 쓸 때의 중복 처리·덮어쓰기 거부·원장 복구, `pending-approval.md`, run 식별과 상태 갱신, phase 전진과 잠긴 phase, 전이 감사 행, 반복 상한과 lane 예산, PLANNING-STUCK, lane verdict, 역할 세션 ID와 대체 메타, final의 `auto_handoff` 판정, disposition 단계, 영수증입니다. 기준 코드는 [README.md](README.md) 머리에 있습니다. 코드 위치는 `5b92a60` 기준이고, 루트 `README.md`·`README.ko.md`의 줄 번호는 지금 작업 트리의 파일 기준입니다.
+이 문서는 `ralplan write` 한 번이 안에서 하는 일을 코드 그대로 적습니다. 다루는 것은 `writeStageTx`(`src/ralplan-runtime/store.ts:635-880`)의 단계별 순서, 단계 이름과 `stage_n`, 단계 파일 이름과 본문 정규화, 원장 `index.jsonl`의 행과 읽기 규칙, 같은 단계를 다시 쓸 때의 중복 처리·덮어쓰기 거부·원장 복구, `pending-approval.md`, run 식별과 상태 갱신, phase 전진과 잠긴 phase, 전이 감사 행, 반복 상한과 lane 예산, PLANNING-STUCK, lane verdict, 역할 세션 ID와 대체 메타, final의 `auto_handoff` 판정, disposition 단계, 영수증입니다. 기준 코드는 [README.md](README.md) 머리에 있습니다. 코드 위치는 `5b92a60` 기준입니다.
 
 예시 출력은 기준 코드를 임시 폴더의 `StateStore` 위에서 bun으로 실제로 불러 얻은 것입니다(`tests/ralplan-tool.test.ts`와 같은 방식, 13장). 세션 폴더 절대 경로는 `<session>`으로 줄였고, 시각과 해시는 실행마다 다릅니다. 영수증의 `repository_binding` 객체는 `{…}`로 줄였습니다.
 
@@ -331,11 +331,11 @@ run 폴더는 `tx.paths.runDir(runId)` = `<session>/plans/ralplan/<run_id>`이�
 | 스냅숏 | 다시 만듦 | |
 | 전이 감사 행 | 없음 | 13단계가 상태를 쓰지 않으므로 |
 
-예: Stop here 뒤 planner 역할이 `revision 3`을 쓰면 상태 파일은 바뀌지만(역할 ID 병합으로 `updated_at`이 바뀜) `{"active":false,"current_phase":"final"}`은 그대로이고, 활성 행은 `{"phase":"revision","active":true}`가 됩니다. 감사 행은 `artifact:write`, `ledger:append`, `state:write`, `state:write-active-entry`, `state:rebuild-active-snapshot`입니다. 그 뒤 `ralplan doctor`는 `stale_active_state` 셋을 보고합니다(13.2). 이 보고는 알려진 동작입니다(R-OD8, 루트 `README.md:189` "Known behavior (as in GJC)").
+예: Stop here 뒤 planner 역할이 `revision 3`을 쓰면 상태 파일은 바뀌지만(역할 ID 병합으로 `updated_at`이 바뀜) `{"active":false,"current_phase":"final"}`은 그대로이고, 활성 행은 `{"phase":"revision","active":true}`가 됩니다. 감사 행은 `artifact:write`, `ledger:append`, `state:write`, `state:write-active-entry`, `state:rebuild-active-snapshot`입니다. 그 뒤 `ralplan doctor`는 `stale_active_state` 셋을 보고합니다(13.2). 이 보고는 알려진 동작입니다(R-OD8, [known-limits.md](known-limits.md) RK8).
 
 `ralplan handoff(to: "deep-interview")` 뒤 같은 run에 write하면, ralplan 상태는 `{active: false, current_phase: "handoff", handoff_to: "deep-interview"}`로 남지만 deep-interview의 활성 행이 지워지고 ralplan 행이 `active: true`로 쓰입니다(실행해 확인: 행 파일은 `ralplan.json` 하나만 남고, 스냅숏의 주 skill은 `ralplan`). gjc도 활성 항목을 쓸 때 위쪽 파이프라인 항목을 지웁니다(`skill-state/active-state.ts:886-898`, 확인). 그 결과 보이는 주 skill과 가드·continuation이 어떻게 되는지는 [guards-and-continuation.md](guards-and-continuation.md)를 봅니다.
 
-루트 `README.md:181`("Write semantics (as in GJC)")와 `README.ko.md:181`("write 의미")도 같게 적습니다: 잠긴 phase에서는 `active`와 phase만 그대로이고, 기록한 역할의 세션 ID, lane verdict, `final`의 `auto_handoff`는 상태에 합쳐지며, 활성 행은 방금 쓴 단계로 다시 활성이 됩니다. SKILL의 문구("keeps a locked phase … and does not re-activate the state")도 코드와 맞습니다. 결정 기록인 계획 DR-3(`.omc/plans/ralplan-gjc-stage-trail.md:31`)만 "상태를 전혀 바꾸지 않는다"로 남아 있습니다. 계획 문서는 당시 기록이라 고치지 않았고, 코드가 기준입니다.
+[known-limits.md](known-limits.md) RK8과 [state-and-files.md](state-and-files.md)도 같게 적습니다: 잠긴 phase에서는 `active`와 phase만 그대로이고, 기록한 역할의 세션 ID, lane verdict, `final`의 `auto_handoff`는 상태에 합쳐지며, 활성 행은 방금 쓴 단계로 다시 활성이 됩니다. SKILL의 문구("keeps a locked phase … and does not re-activate the state")도 코드와 맞습니다. 결정 기록인 계획 DR-3(`.omc/plans/ralplan-gjc-stage-trail.md:31`)만 "상태를 전혀 바꾸지 않는다"로 남아 있습니다. 계획 문서는 당시 기록이라 고치지 않았고, 코드가 기준입니다.
 
 ### 6.5 같은 run 병합: `mergeRunStateTx`
 
@@ -356,7 +356,7 @@ run 폴더는 `tx.paths.runDir(runId)` = `<session>/plans/ralplan/<run_id>`이�
 
 넷이 맞으면 `invalid_transition_detected` 감사 행을 하나 붙이고(실패해도 무시), 쓰기는 그대로 합니다(spec D-T11). `write`에서 이 조건이 맞는 것은 13단계뿐입니다. 이전 상태가 비활성(Stop here 뒤 등)이면 3번에서 이전 phase가 없으므로 행이 없습니다. 병합 쓰기는 phase를 바꾸지 않으므로 행이 없습니다. `state` op는 같은 표로 **거부**합니다([ops.md](ops.md)).
 
-전이 표는 gjc ralplan manifest 그대로입니다(`RALPLAN_TRANSITIONS`, `manifest.ts:42-69`). SKILL의 순서가 표에 없는 이동을 늘 만듭니다(루트 `README.md:191` "Known behavior (as in GJC): transition audit rows").
+전이 표는 gjc ralplan manifest 그대로입니다(`RALPLAN_TRANSITIONS`, `manifest.ts:42-69`). SKILL의 순서가 표에 없는 이동을 늘 만듭니다([known-limits.md](known-limits.md) RK9).
 
 | SKILL의 순서 | 이동 | 표에 있나 |
 |---|---|---|
@@ -385,7 +385,7 @@ run 폴더는 `tx.paths.runDir(runId)` = `<session>/plans/ralplan/<run_id>`이�
 | `ralplan.maxReviewPassesPerLane` | 정수 1..10 | 1 | `<파일>.ralplan.maxReviewPassesPerLane: expected an integer between 1 and 10` |
 | `ralplan.autoHandoff` | `"off"` 또는 `"ultragoal"` | `"off"` | `<파일>.ralplan.autoHandoff: expected one of off, ultragoal` |
 
-- 검사는 `load`(`config.ts:103-135`)가 하고, 모르는 키는 `<파일>.ralplan.<키>: unknown setting`입니다. 어느 하나라도 틀리면 `loadSettings`가 예외를 던지고 플러그인 setup이 그 예외로 끝납니다. 그때 호스트가 무엇을 하는지는 이 문서를 쓰며 확인하지 않았습니다. 어느 경우든 틀린 설정으로 도는 write는 없습니다.
+- 검사는 `load`(`config.ts:103-135`)가 하고, 모르는 키는 `<파일>.ralplan.<키>: unknown setting`입니다. 어느 하나라도 틀리면 `loadSettings`가 예외를 던지고 플러그인 setup이 그 예외로 끝납니다. 호스트는 setup이 실패한 플러그인을 `failed` 상태로 두고, 플러그인 정의가 바뀌기 전에는 다시 시도하지 않습니다(OpenCode v2.0.15 `core/src/plugin.ts:23-24,285-290`). 그래서 설정을 고친 뒤에는 OpenCode를 다시 시작해야 합니다. 어느 경우든 틀린 설정으로 도는 write는 없습니다.
 - 우선순위는 키마다 프로젝트 `<worktree>/.open-gajae/open-gajae.jsonc` → 사용자 `~/.open-gajae/open-gajae.jsonc` → 기본값입니다(`config.ts:166-171,197-208`).
 - `source`는 키마다 이긴 파일의 경로(`join`으로 만든 절대 경로) 또는 `default`입니다. PLANNING-STUCK 결과의 `*_source`와 `auto_handoff.source`가 이 값입니다.
 - `evaluateRalplanIterationCap`과 `evaluateRalplanReviewLaneBudget`은 범위 밖 값을 받으면 기본값(5, 1)으로 바꿉니다. 설정 로더가 이미 거르므로 도구 경로에서는 쓰이지 않는 방어 코드입니다.

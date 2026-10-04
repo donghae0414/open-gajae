@@ -4,7 +4,7 @@
 
 다른 문서와는 이렇게 나뉩니다.
 
-- **정책**: `AGENTS.md`와 루트 `README.md`가 정합니다. 루트 README에는 GJC와 다른 점("Deviations from GJC (ultragoal)")과 알려진 동작도 적혀 있습니다.
+- **정책**: `AGENTS.md`와 `docs/development.md`가 정합니다. GJC와 다른 점은 `docs/development.md`의 "GJC로부터의 deviation (ultragoal)" 표에 있고, 알려진 동작은 [known-limits.md](known-limits.md)에 있습니다.
 - **결정 기록**: spec `.omc/specs/deep-interview-ultragoal-gjc-revision.md`, 계획 `.omc/plans/ralplan-ultragoal-gjc-revision.md`, 결정 모음 `.omc/plans/ultragoal-gjc-pq-decisions.md`에 있습니다.
 - **이 폴더**: 현재 구현만 적습니다. 결정 ID(`PQ-…`, `D-…`, `C-…`)와 편차 번호는 근거를 찾아갈 수 있게 달아 둡니다.
 

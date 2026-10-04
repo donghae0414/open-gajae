@@ -56,7 +56,7 @@ G2  프롬프트 글에 주입 표식(INJECTION_MARKERS: <ultragoal-notice> 등)
 
 감지 규칙:
 
-- `@ultragoal` 멘션: 호스트가 넘긴 `event.prompt.skills`에 `{ id: "ultragoal" }`가 있으면 멘션입니다.
+- `@ultragoal` 멘션: 호스트가 넘긴 `event.prompt.skills`에 `{ id: "ultragoal" }`가 있으면 멘션입니다. 이 목록은 사용자가 `@ultragoal`을 입력하고 TUI 자동완성 목록에서 고를 때 채워집니다(`opencode/packages/tui/src/component/prompt/autocomplete.tsx:216-226,427-435`). 서버는 글의 `@`를 해석하지 않고 받은 `skills`만 훅에 넘기므로(`opencode/packages/core/src/session/prompt.ts:40-47`), 고르지 않고 글자로만 보낸 `@ultragoal`은 멘션이 아니고 아래 키워드 감지만 받습니다.
 - `ultragoal` 키워드: `src/ralplan.ts`의 `detectUltragoalKeyword`. 정규식은 `ULTRAGOAL_KEYWORD` = `/\b(ultragoal)\b/i`입니다. 코드 블록·인용·경로 같은 잡음을 지운 뒤, 질문이나 설명 같은 정보성 문맥이면 버리고, 호출 의도가 보이는 문맥만 인정합니다. ralplan 키워드와 같은 검사입니다(`findActionableRalplanMatch`). `ralph`, `랄프`, `ulw`는 ultragoal을 켜지 않습니다(D-R16).
 
 | 프롬프트 | 키워드로 인정 |
@@ -65,6 +65,8 @@ G2  프롬프트 글에 주입 표식(INJECTION_MARKERS: <ultragoal-notice> 등)
 | `ultragoal 로그인 기능 추가해줘` | 예 |
 | `ultragoal로 진행해줘` | 예 |
 | `run ultragoal` | 예 |
+| `use @ultragoal for this` (자동완성을 고르지 않은 글자) | 예 |
+| `@ultragoal build it` (자동완성을 고르지 않은 글자) | 아니오 |
 | `what is ultragoal?` | 아니오 |
 | `ultragoal 이 뭐야?` | 아니오 |
 | `ralph fix src/a.ts` | 아니오 |
@@ -377,7 +379,7 @@ Handed off to ultragoal: ralplan is inactive (phase handoff) and ultragoal is ac
 
 ## `ultragoal handoff(to, reason)`
 
-gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(인계), `skill-state/active-state.ts:969-1015`(행). 편차: ultragoal 39(원장 `workflow_handoff`), 1(`progress.txt`의 `HANDOFF` 메모). deep-interview callee의 단계와 행을 다르게 쓰던 ultragoal 편차 33은 deep-interview 개정에서 철회되었습니다. gjc의 `gjc state ultragoal handoff` 동사가 `ultragoal` 도구의 op가 된 것은 `src/ultragoal-runtime/tool.ts` 헤더가 편차 25로 묶지만, 루트 README의 편차 25 행은 `doctor`, `state`, `clear`만 적습니다.
+gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(인계), `skill-state/active-state.ts:969-1015`(행). 편차: ultragoal 39(원장 `workflow_handoff`), 1(`progress.txt`의 `HANDOFF` 메모). deep-interview callee의 단계와 행을 다르게 쓰던 ultragoal 편차 33은 deep-interview 개정에서 철회되었습니다. gjc의 `gjc state ultragoal handoff` 동사가 `ultragoal` 도구의 op가 된 것은 `src/ultragoal-runtime/tool.ts` 헤더가 편차 25로 묶지만, `docs/development.md`의 편차 25 행은 `doctor`, `state`, `clear`만 적습니다.
 
 ### 입력
 
@@ -400,7 +402,7 @@ gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(인계), `skill-state/activ
 | ultragoal state가 깨짐 | `existing state for ultragoal is corrupt or tampered (<오류>); refusing to hand off` |
 | callee state가 깨짐 | `existing state for <callee> is corrupt or tampered (<오류>); refusing to hand off` |
 
-입력에서는 `to`와 `reason`만 검사하고, ultragoal이 **활성인지, 어느 단계인지는 보지 않습니다**. 파일만 있으면 `clear` 뒤(`complete`), `missing`, 이미 `handoff`인 상태에서도 인계가 진행되고, 두 번 연속 불러도 두 번 모두 성공합니다. callee가 이미 활성이어도 초기 단계로 되돌립니다. 예: `architect` 단계로 활성인 ralplan에 넘기면 `planner`로 돌아가고 `invalid_transition_detected` 감사 행이 하나 남습니다. gjc의 인계 동사도 파일 존재만 봅니다(`src/ralplan-runtime/store.ts`의 `ralplanHandoffTx` 주석). 비활성 ralplan을 거부하는 `ralplan handoff`(R-OD18)와는 이 점이 다르고, 이 비대칭을 적은 루트 README 편차 행은 없습니다.
+입력에서는 `to`와 `reason`만 검사하고, ultragoal이 **활성인지, 어느 단계인지는 보지 않습니다**. 파일만 있으면 `clear` 뒤(`complete`), `missing`, 이미 `handoff`인 상태에서도 인계가 진행되고, 두 번 연속 불러도 두 번 모두 성공합니다. callee가 이미 활성이어도 초기 단계로 되돌립니다. 예: `architect` 단계로 활성인 ralplan에 넘기면 `planner`로 돌아가고 `invalid_transition_detected` 감사 행이 하나 남습니다. gjc의 인계 동사도 파일 존재만 봅니다(`src/ralplan-runtime/store.ts`의 `ralplanHandoffTx` 주석). 비활성 ralplan을 거부하는 `ralplan handoff`(R-OD18)와는 이 점이 다르고, 이 비대칭을 적은 편차 행(`docs/development.md`)은 없습니다.
 
 ### 쓰는 것
 
@@ -466,7 +468,7 @@ SKILL은 "do not call `ultragoal` ops"라고 적어 두었을 뿐 **코드는 �
 
 ## 공통 저널 인계 (`handoffWorkflowTx`)
 
-gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(`handleHandoffUnlocked`), `gjc-runtime/state-writer.ts:1009-1068`(감사용 `invalid_transition_detected`), `skill-state/initial-phase.ts:13-19`, `skill-state/active-state.ts:969-1015`(`applyHandoffToActiveState`), 저널은 `gjc-runtime/state-writer.ts:82-92,1590-1640`. 편차: ultragoal 39, ralplan 17(봉투 영수증·체크섬·`state_revision` 없음), 영수증에 gjc의 state별 영수증 대신 `mutation_id`. "`--force`가 없어 깨진 state는 거부"는 `src/skill-state/handoff.ts` 헤더가 ralplan 17 아래에 함께 적은 것이고, 루트 README의 ralplan 17 행에는 없습니다.
+gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(`handleHandoffUnlocked`), `gjc-runtime/state-writer.ts:1009-1068`(감사용 `invalid_transition_detected`), `skill-state/initial-phase.ts:13-19`, `skill-state/active-state.ts:969-1015`(`applyHandoffToActiveState`), 저널은 `gjc-runtime/state-writer.ts:82-92,1590-1640`. 편차: ultragoal 39, ralplan 17(봉투 영수증·체크섬·`state_revision` 없음), 영수증에 gjc의 state별 영수증 대신 `mutation_id`. "`--force`가 없어 깨진 state는 거부"는 `src/skill-state/handoff.ts` 헤더가 ralplan 17 아래에 함께 적은 것이고, `docs/development.md`의 ralplan 17 행에는 없습니다.
 
 `src/skill-state/handoff.ts`의 `handoffWorkflowTx`는 모든 인계 입구가 함께 쓰는 인계 하나입니다: `ralplan handoff` op, `skill ultragoal` 진입 게이트, `ultragoal handoff` op, 그리고 deep-interview 개정에서 더한 `deep-interview handoff` op, 결합 호출 `deep-interview spec(…, handoff: "ralplan")`, deep-interview 로드 게이트(`skill ralplan`·`skill ultragoal`). 호출하는 쪽이 제 검사를 먼저 합니다(ralplan: T 단계와 `active`, deep-interview: phase와 spec 검증). 이 함수는 goal state를 건드리지 않습니다(D-HE2). 받는 `tx`는 `StateStore.workflowTransaction` 하나의 것이고, 그 트랜잭션은 세션의 쓰기 큐 하나를 잡고 있는 동안 파일을 **바로** 씁니다. 되돌리기(rollback)는 없습니다.
 

@@ -16,7 +16,7 @@
 //   whatever `active`, `undefined` when unreadable)
 // - `tools/skill.ts:42` (`TERMINAL_PHASES`), `:203-222` (the chain guard and
 //   the handoff on a terminal phase)
-// Deviations (README "Deviations from GJC (deep-interview)"):
+// Deviations (docs/development.md "GJC로부터의 deviation (deep-interview)"):
 // - 14: the guard covers `write`/`edit`/`patch` only (the caller).
 // - 15: the compaction context is a host addition.
 // - 16: the continuation is counted in memory, per real user prompt.
