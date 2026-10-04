@@ -1,7 +1,8 @@
 name: Release
 
 # A pushed v* tag publishes to npm and creates a GitHub Release whose notes are
-# the tag message. Running it by hand from the Actions tab only does a dry run.
+# the tag message. Running it by hand from the Actions tab only checks the
+# package contents; it does not contact npm.
 on:
   push:
     tags: ["v*"]
@@ -28,9 +29,9 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - name: Dry run
+      - name: Check the package contents
         if: github.event_name == 'workflow_dispatch'
-        run: npm publish --dry-run
+        run: npm pack --dry-run
 
       - name: Check the tag matches package.json
         if: github.event_name == 'push'
