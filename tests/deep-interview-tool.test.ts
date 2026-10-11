@@ -115,9 +115,9 @@ const scored = (round: number, extra: Record<string, unknown> = {}) => ({
 const writeRounds = (call: Call, ...rounds: Record<string, unknown>[]) =>
   call({ op: "write", input: { state: { rounds } } });
 const seedState = (run: Harness["run"], state: Record<string, unknown>, mode: "deep-interview" | "ralplan" | "ultragoal" = "deep-interview") =>
-  run((tx) => tx.writeModeState(mode, state, mode === "deep-interview" ? "deep_interview_tool" : mode === "ralplan" ? "ralplan_tool" : "ultragoal_tool"));
+  run((tx) => tx.writeModeState(mode, state, mode === "deep-interview" ? "deep_interview_tool" : mode === "ralplan" ? "ralplan_tool" : "ultragoal_tool", { audit: false }));
 const row = (tx: WorkflowTx, entry: Record<string, unknown>) =>
-  tx.writeText(tx.paths.activeRow(String(entry.skill)), JSON.stringify(entry));
+  tx.writeText(tx.paths.activeRow(String(entry.skill)), JSON.stringify(entry), { audit: false });
 
 test("T1: eight ops; open-gajae only; a child session writes the root's state; no settings means 0.05 (AC1, AC31)", async () => {
   await fixture(async ({ store, call, json, root }) => {
@@ -255,7 +255,7 @@ test("T3: write merges by round_key, reports the nine lifecycle keys, derives an
     expect((await json("state", "active", "deep-interview.json")).phase).toBe("handoff");
 
     // reset (PQ-13 A): an empty base, phase interviewing, threshold and spec/handoff fields gone.
-    await run((tx) => tx.readModeState("deep-interview").then((s) => tx.writeModeState("deep-interview", { ...s, handoff_from: "ralplan", handoff_at: "t" }, "deep_interview_tool")));
+    await run((tx) => tx.readModeState("deep-interview").then((s) => tx.writeModeState("deep-interview", { ...s, handoff_from: "ralplan", handoff_at: "t" }, "deep_interview_tool", { audit: false })));
     const reset = ok(await call({ op: "write", reset: true, input: { state: { initial_idea: "again", rounds: [scored(1, { ambiguity: 0.7 })] } } }));
     expect(reset).toMatchObject({ mode: "reset", current_ambiguity: 0.7 });
     const { _meta, updated_at, ...afterReset } = await json("state", DI);
@@ -417,7 +417,7 @@ test("T5: the combined call seeds ralplan deliberate on the spec, hands off, reu
         const state = (await tx.readState())!;
         const { _meta, ...rest } = state;
         const filler = Object.fromEntries(Array.from({ length: 99 - Object.keys(rest).length }, (_, i) => [`f${i}`, i]));
-        await tx.writeState({ ...rest, ...filler }, "ralplan_tool");
+        await tx.writeModeState("ralplan", { ...rest, ...filler }, "ralplan_tool", { audit: false });
         return seeded;
       },
     },
@@ -443,7 +443,7 @@ test("T6: handoff needs phase handoff and a verified spec; results name the next
     ok(await call({ op: "write", input: { spec_path: "/tmp/outside.md" } }));
     expect(await call({ op: "handoff", to: "ralplan" })).toContain("is not in this session's specs/");
     await call({ op: "spec", content: "# s", slug: "h" });
-    await run((tx) => tx.writeText(tx.paths.goalState, '{"goal":1}\n'));
+    await run((tx) => tx.writeText(tx.paths.goalState, '{"goal":1}\n', { audit: false }));
     const text = await call({ op: "handoff", to: "ralplan" });
     expect(text.split("\n")[0]).toBe(handedOffToRalplan(specPath));
     expect(text).toContain("Load the `ralplan` skill now; do not call `ralplan start`");
@@ -544,7 +544,7 @@ test("T8: clear completes, keeps specs, removes the row, needs force when corrup
   await fixture(async ({ call, json, file, run, exists }) => {
     // K1: an active state without a row clears without force.
     await call({ op: "start", idea: "i" });
-    await run((tx) => tx.remove(tx.paths.activeRow("deep-interview")));
+    await run((tx) => tx.remove(tx.paths.activeRow("deep-interview"), { audit: false }));
     ok(await call({ op: "clear" }));
     // A stale row phase needs force; a corrupt state needs force.
     await call({ op: "start", idea: "i" });
@@ -587,7 +587,7 @@ test("T9: refused ops leave every file and the audit log byte for byte (P-AC6)",
       const state = (await tx.readModeState("deep-interview"))!;
       const { _meta, ...rest } = state;
       const filler = Object.fromEntries(Array.from({ length: 97 - Object.keys(rest).length }, (_, i) => [`f${i}`, i]));
-      await tx.writeModeState("deep-interview", { ...rest, ...filler }, "deep_interview_tool");
+      await tx.writeModeState("deep-interview", { ...rest, ...filler }, "deep_interview_tool", { audit: false });
     });
     const before = await tree();
     expect(await call({ op: "spec", content: "s", slug: "big" })).toContain("100 top-level keys");
@@ -649,7 +649,7 @@ test("T11: state {active:false} cancels and keeps the rounds; state {active:true
     // Resume is refused like start while ralplan is the visible primary (deviation 12).
     await run((tx) => row(tx, { skill: "ralplan", active: true, phase: "planner" }));
     expect(await call({ op: "state", patch: { active: true } })).toBe(`Error: ${resumeRefusal("ralplan", "planner")}`);
-    await run((tx) => tx.remove(tx.paths.activeRow("ralplan")));
+    await run((tx) => tx.remove(tx.paths.activeRow("ralplan"), { audit: false }));
     // Resume: active again with its rounds, the row back, one audit row, and writes continue.
     const before = (await audit()).length;
     expect(ok(await call({ op: "state", patch: { active: true } }))).toMatchObject({ active: true, current_phase: "interviewing" });
@@ -687,7 +687,7 @@ test("T12: cancel/resume edges: a refused resume writes nothing; ultragoal refus
     const before = await tree();
     expect(await call({ op: "state", patch: { active: true } })).toBe(`Error: ${resumeRefusal("ultragoal", "active")}`);
     expect(await tree()).toEqual(before);
-    await run((tx) => tx.remove(tx.paths.activeRow("ultragoal")));
+    await run((tx) => tx.remove(tx.paths.activeRow("ultragoal"), { audit: false }));
     // Resume merges the other fields of the same patch and rebuilds the snapshot.
     expect(ok(await call({ op: "state", patch: { active: true, note: "back" } }))).toMatchObject({ active: true, current_phase: "interviewing" });
     expect(await json("state", DI)).toMatchObject({ active: true, note: "back", state: { rounds: [scored(1)] } });
@@ -707,5 +707,22 @@ test("T12: cancel/resume edges: a refused resume writes nothing; ultragoal refus
     expect(ok(await call({ op: "clear" }))).toMatchObject({ active: false, current_phase: "complete" });
     expect(await exists("specs", "deep-interview-t12.md")).toBe(true);
     expect(await call({ op: "state", patch: { active: true } })).toBe(`Error: ${inactiveStateRefusal("state", "complete")}`);
+  });
+});
+
+test("start over an active handoff leaves gjc's transition diagnostic; the start row has no from_phase", async () => {
+  await fixture(async ({ call, audit }) => {
+    ok(await call({ op: "start", idea: "i" }));
+    await call({ op: "spec", content: "# s", slug: "s" });
+    const before = (await audit()).length;
+    ok(await call({ op: "start", idea: "again" }));
+    const rows = (await audit()).slice(before).filter((r) => r.skill === "deep-interview" && r.category === "state");
+    expect(rows.map((r) => [r.verb, r.from_phase, r.to_phase])).toEqual([
+      ["invalid_transition_detected", "handoff", "interviewing"],
+      ["write", undefined, "interviewing"],
+    ]);
+    expect(rows[1].mutation_id).toBe(rows[0].mutation_id);
+    expect(rows[0].mutation_id).toStartWith("deep-interview:start:");
+    expect("from_phase" in rows[1]).toBe(false);
   });
 });

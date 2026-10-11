@@ -91,7 +91,7 @@ const lines = async (path: string) => (await readFile(path, "utf8")).trim().spli
 /** An active ultragoal state (ultragoal revision plan C-3: readable and `active: true`). */
 const runningUltragoal = (store: StateStore) =>
   store.workflowTransaction(ROOT, (tx) =>
-    tx.writeModeState("ultragoal", { skill: "ultragoal", active: true, current_phase: "active", version: 2 }, "ultragoal_tool"),
+    tx.writeModeState("ultragoal", { skill: "ultragoal", active: true, current_phase: "active", version: 2 }, "ultragoal_tool", { audit: false }),
   );
 
 test("AC1: seven ops; primary all, roles write/status/state, everyone else and a failed lineage refused", async () => {
@@ -337,7 +337,7 @@ test("rows follow the stage just written, doctor reports drift, Stop here, clear
     expect(JSON.parse(await call({ op: "doctor" })).summary.by_kind).toEqual({ schema_violation: 1, stale_active_state: 0 });
     expect(await call({ op: "clear" })).toContain("use force: true to overwrite");
     expect(JSON.parse(await call({ op: "clear", force: true })).current_phase).toBe("complete");
-    await store.ralplanTransaction(ROOT, (tx) => tx.writeState({ active: true, current_phase: "ralplan" }, "ralplan_tool"));
+    await store.ralplanTransaction(ROOT, (tx) => tx.writeModeState("ralplan", { active: true, current_phase: "ralplan" }, "ralplan_tool", { audit: false }));
     expect(JSON.parse(await call({ op: "doctor" })).problems[0]).toMatchObject({ type: "schema_violation", message: 'unknown ralplan phase "ralplan"' });
   });
 });
@@ -367,7 +367,7 @@ test("handoff needs a finished phase, then the journaled handoff: an inactive ha
     await write("final", 1, "f");
     // A field of an earlier ultragoal state survives the callee merge.
     await store.workflowTransaction(ROOT, (tx) =>
-      tx.writeModeState("ultragoal", { skill: "ultragoal", active: false, current_phase: "complete", note: "kept" }, "ultragoal_tool"),
+      tx.writeModeState("ultragoal", { skill: "ultragoal", active: false, current_phase: "complete", note: "kept" }, "ultragoal_tool", { audit: false }),
     );
     const out = await call({ op: "handoff", to: "ultragoal" });
     const [line, ...rest] = out.split("\n");
@@ -454,6 +454,7 @@ test("handoff to deep-interview reopens the interview on interviewing over its f
           state: { rounds: [{ round_key: "round-1", round: 1 }] },
         },
         "deep_interview_tool",
+        { audit: false },
       ),
     );
     const out = await call({ op: "handoff", to: "deep-interview" });
@@ -547,7 +548,7 @@ test("RP3: start over an active run is refused by its state file, row or not, an
     expect(await call({ op: "start", task: "again", run_id: "fresh" })).toBe(expected);
     expect(await files()).toEqual(before);
     // U4-1 A: the state file decides; a missing row does not let start through.
-    await store.workflowTransaction(ROOT, (tx) => tx.remove(tx.paths.activeRow("ralplan")));
+    await store.workflowTransaction(ROOT, (tx) => tx.remove(tx.paths.activeRow("ralplan"), { audit: false }));
     expect(await call({ op: "start", task: "again" })).toBe(expected);
     // Stopping the run lets a new plan start.
     await call({ op: "state", patch: { active: false } });
@@ -558,16 +559,16 @@ test("RP3: start over an active run is refused by its state file, row or not, an
 test("RP4: a run handed over to ralplan refuses start and keeps its lineage; a running ultragoal is refused first", async () => {
   await fixture(async ({ call, json, store }) => {
     await store.workflowTransaction(ROOT, (tx) =>
-      tx.writeModeState("ultragoal", { skill: "ultragoal", active: true, current_phase: "active", version: 2 }, "ultragoal_tool"),
+      tx.writeModeState("ultragoal", { skill: "ultragoal", active: true, current_phase: "active", version: 2 }, "ultragoal_tool", { audit: false }),
     );
     // With both active, the ultragoal refusal comes first (E-15).
     await store.workflowTransaction(ROOT, (tx) =>
-      tx.writeState({ skill: "ralplan", active: true, current_phase: "planner", run_id: "r1", handoff_from: "ultragoal", version: 2 }, "ralplan_tool"),
+      tx.writeModeState("ralplan", { skill: "ralplan", active: true, current_phase: "planner", run_id: "r1", handoff_from: "ultragoal", version: 2 }, "ralplan_tool", { audit: false }),
     );
     expect(await call({ op: "start", task: "t" })).toBe(`Error: ${RALPLAN_ACTIVATION_REFUSAL}`);
     // Without the ultragoal, the handed-over run refuses with its lineage.
     await store.workflowTransaction(ROOT, (tx) =>
-      tx.writeModeState("ultragoal", { skill: "ultragoal", active: false, current_phase: "handoff", version: 2 }, "ultragoal_tool"),
+      tx.writeModeState("ultragoal", { skill: "ultragoal", active: false, current_phase: "handoff", version: 2 }, "ultragoal_tool", { audit: false }),
     );
     expect(await call({ op: "start", task: "t" })).toBe(
       'Error: ralplan run r1 is already active (phase planner, handed over from ultragoal); continue it with ralplan write. To plan anew, stop it first with ralplan state {"active": false} or ralplan clear.',

@@ -502,7 +502,7 @@ export function createHooks(
             },
             null,
             2,
-          )}\n`,
+          )}\n`, { audit: false },
         );
       if (decision.kind === "skip") {
         if (decision.resetBreaker && (Number(breaker?.breaker_count) || 0) !== 0)

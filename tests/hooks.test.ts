@@ -201,9 +201,11 @@ async function noState(store: StateStore, sessionID: string) {
  */
 const plan = (store: StateStore, sessionID: string, state: Record<string, unknown> = {}) =>
   store.ralplanTransaction(sessionID, async (tx) => {
-    const written = await tx.writeState(
+    const written = await tx.writeModeState(
+      "ralplan",
       { active: true, current_phase: "planner", run_id: "run-1", ...state },
       "ralplan_tool",
+      { audit: false },
     );
     if (written.active === true)
       await syncActiveRowTx(
@@ -230,6 +232,7 @@ const setGoal = (store: StateStore, sessionID: string, fields: Record<string, un
         updated_at: GOAL_AT,
         ...fields,
       }),
+      { audit: false },
     ),
   );
 
@@ -241,7 +244,7 @@ const goalRecord = (store: StateStore, sessionID: string) =>
   });
 
 const setGoalRecord = (store: StateStore, sessionID: string, record: Record<string, unknown>) =>
-  store.workflowTransaction(sessionID, (tx) => tx.writeText(tx.paths.goalContinuation, JSON.stringify(record)));
+  store.workflowTransaction(sessionID, (tx) => tx.writeText(tx.paths.goalContinuation, JSON.stringify(record), { audit: false }));
 
 /** The hook-only continuation counter (plan R-O3), or `undefined`. */
 async function counter(store: StateStore, sessionID: string) {
@@ -250,7 +253,7 @@ async function counter(store: StateStore, sessionID: string) {
 }
 
 const setCounter = (store: StateStore, sessionID: string, value: Record<string, unknown>) =>
-  store.ralplanTransaction(sessionID, (tx) => tx.writeText(tx.paths.continuationPath, JSON.stringify(value)));
+  store.ralplanTransaction(sessionID, (tx) => tx.writeText(tx.paths.continuationPath, JSON.stringify(value), { audit: false }));
 
 test("a corrupt state file stays byte-identical; the prompt and skill hooks resolve", async () => {
   await fixture(async (context) => {
@@ -1163,7 +1166,7 @@ function finalOkay(): LedgerRow {
 }
 const appendLedger = (store: StateStore, sessionID: string, rows: LedgerRow[]) =>
   store.workflowTransaction(sessionID, async (tx) => {
-    for (const row of rows) await tx.appendLine(tx.paths.ultragoal.ledger, serializeLedgerRow(row));
+    for (const row of rows) await tx.appendLine(tx.paths.ultragoal.ledger, serializeLedgerRow(row), { audit: false });
   });
 
 const user = (text: string) => ({ role: "user", content: [{ type: "text", text }] });
@@ -1208,7 +1211,7 @@ test("(e) a legacy ralplan state is unreadable: no guard, no continuation, `skil
     const { root, store, hooks } = context;
     const id = nextSession("e");
     await store.workflowTransaction(id, (tx) =>
-      tx.writeModeState("ralplan", { active: true, current_phase: "ralplan" }, "ralplan_hook"),
+      tx.writeModeState("ralplan", { active: true, current_phase: "ralplan" }, "ralplan_hook", { audit: false }),
     );
     const before = await raw(store, id);
     expect((await toolCall(hooks, id, "edit", { path: join(root, "src/x.ts") })).input).not.toEqual({});
@@ -1285,7 +1288,7 @@ test("(A) an active goal takes the goal path only; otherwise ralplan continues; 
       let count = 0;
       for (const goal of [{ status: "paused" }, { status: "complete" }, { status: "dropped" }, undefined]) {
         if (goal) await setGoal(store, id, goal);
-        else await store.workflowTransaction(id, (tx) => tx.writeText(tx.paths.goalState, "{"));
+        else await store.workflowTransaction(id, (tx) => tx.writeText(tx.paths.goalState, "{", { audit: false }));
         await succeeded(hooks, id);
         count += 1;
         expect(continuations(context).at(-1)).toContain(`[RALPLAN - CONSENSUS PLANNING | REINFORCEMENT ${count}/30]`);
@@ -1765,7 +1768,7 @@ test("(M, H8) handoff, create, goal, deep-interview ops, the turn gates, a conti
         hooks.prompt({ sessionID: id, prompt: { text: "keep going" } }),
         hooks.context({ sessionID: id, agent: "open-gajae", tools: {}, messages: [user("hi")] }),
         hooks.compaction({ sessionID: id, system: [] }),
-        store.workflowTransaction(id, (tx) => tx.writeModeState("deep-interview", { note: "n" }, "deep_interview_tool")),
+        store.workflowTransaction(id, (tx) => tx.writeModeState("deep-interview", { note: "n" }, "deep_interview_tool", { audit: false })),
         deepInterview(id, { op: "status" }),
         deepInterview(id, { op: "doctor" }),
         load(hooks, id, "deep-interview"),
@@ -1896,7 +1899,7 @@ test("(H2) continuation: interviewing twice per prompt and before the goal; hand
     expect(synthetics.at(-1)!.description).toBe("open-gajae: goal continuation");
     // An unreadable row makes the deep-interview decision fail: the goal path still runs.
     await deepInterview(id, { op: "clear" });
-    await store.workflowTransaction(id, (tx) => tx.writeText(tx.paths.activeRow("deep-interview"), "{"));
+    await store.workflowTransaction(id, (tx) => tx.writeText(tx.paths.activeRow("deep-interview"), "{", { audit: false }));
     const count = synthetics.length;
     await succeeded(hooks, id);
     expect(synthetics).toHaveLength(count + 1);
@@ -1938,7 +1941,7 @@ test("(H3) the load gate in the deep-interview execution: refuse, hand off, link
     expect(cancelled).toContain("clear it with deep-interview clear first");
     for (const [phase, shown] of [["bogus", "bogus"], [undefined, "running"]] as const) {
       await store.workflowTransaction(u, (tx) =>
-        tx.writeModeState(DI_FILE, { skill: DI_FILE, active: true, ...(phase ? { current_phase: phase } : {}) }, "deep_interview_tool"),
+        tx.writeModeState(DI_FILE, { skill: DI_FILE, active: true, ...(phase ? { current_phase: phase } : {}) }, "deep_interview_tool", { audit: false }),
       );
       expect(await refusal(hooks, await load(hooks, u, "ralplan"))).toBe(chainRefusal(shown, "ralplan"));
     }
@@ -2001,7 +2004,7 @@ test("(H3) the load gate in the deep-interview execution: refuse, hand off, link
       const spec = await stateOf(store, r, DEEP_INTERVIEW_MODE);
       const { _meta, ...rest } = spec;
       await store.workflowTransaction(r, (tx) =>
-        tx.writeModeState(DI_FILE, { ...rest, active: false, current_phase: phase }, "deep_interview_tool"),
+        tx.writeModeState(DI_FILE, { ...rest, active: false, current_phase: phase }, "deep_interview_tool", { audit: false }),
       );
       await load(hooks, r, "deep-interview");
       expect((await load(hooks, r, "ralplan")).input).toEqual({ id: "ralplan" });
@@ -2046,10 +2049,10 @@ test("(H3) the load gate in the deep-interview execution: refuse, hand off, link
       .split("\n")
       .map((line) => JSON.parse(line))
       .filter((row) => row.skill === "ralplan");
-    expect(audit.slice(-2).map((row) => [row.verb, row.from_phase, row.to_phase])).toEqual([
-      ["invalid_transition_detected", "architect", "planner"],
-      ["handoff", "architect", "planner"],
-    ]);
+    // The handoff is gjc's unchecked write: no transition diagnostic.
+    expect(audit.filter((row) => row.verb === "invalid_transition_detected")).toEqual([]);
+    const last = audit.at(-1);
+    expect([last.verb, last.from_phase, last.to_phase]).toEqual(["handoff", "architect", "planner"]);
     // An active ultragoal returns to goal-planning: goals.json stays, product edits are refused (C4-1).
     const v = nextSession("H3-v");
     await specced(context, v);
@@ -2063,7 +2066,7 @@ test("(H3) the load gate in the deep-interview execution: refuse, hand off, link
     await newExecution(hooks, v);
     expect((await load(hooks, v, "deep-interview")).input).toEqual({});
     await store.workflowTransaction(v, async (tx) => {
-      await tx.remove(tx.paths.activeRow("ultragoal"));
+      await tx.remove(tx.paths.activeRow("ultragoal"), { audit: false });
       await rebuildSnapshotTx(tx, RUNTIME_OWNER);
     });
     await newExecution(hooks, v);

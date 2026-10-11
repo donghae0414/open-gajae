@@ -30,7 +30,7 @@
 import path from "node:path";
 import { RALPLAN_PHASE_LOCK } from "../ralplan-runtime/manifest.js";
 import type { WorkflowTx } from "../state.js";
-import { type AuditOwner, appendAudit } from "./audit.js";
+import type { AuditOwner } from "./audit.js";
 import { modeStatePhase, readRawJsonTx } from "./doctor.js";
 import { normalizeWorkflowHudSummary, type WorkflowHudSummary } from "./hud.js";
 
@@ -120,12 +120,8 @@ function rowEntry(input: ActiveRowInput, at: string): Json {
 
 async function writeRowTx(tx: WorkflowTx, entry: Json, owner: AuditOwner): Promise<void> {
   const rowPath = tx.paths.activeRow(String(entry.skill));
-  await tx.writeText(rowPath, `${JSON.stringify(entry, null, 2)}\n`);
-  await appendAudit(tx, {
-    category: "state",
-    verb: "write-active-entry",
-    owner,
-    path: rowPath,
+  await tx.writeText(rowPath, `${JSON.stringify(entry, null, 2)}\n`, {
+    audit: { category: "state", verb: "write-active-entry", owner },
   });
 }
 
@@ -136,8 +132,7 @@ async function removeRowTx(
   owner: AuditOwner,
 ): Promise<void> {
   const rowPath = tx.paths.activeRow(skill);
-  if ((await tx.remove(rowPath)) === "deleted")
-    await appendAudit(tx, { category: "state", verb, owner, path: rowPath });
+  await tx.remove(rowPath, { audit: { category: "state", verb, owner } });
 }
 
 /**
@@ -225,12 +220,8 @@ export async function rebuildSnapshotTx(tx: WorkflowTx, owner: AuditOwner): Prom
     active_skills: entries,
     active_subskills: [],
   };
-  await tx.writeText(tx.paths.snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`);
-  await appendAudit(tx, {
-    category: "state",
-    verb: "rebuild-active-snapshot",
-    owner,
-    path: tx.paths.snapshotPath,
+  await tx.writeText(tx.paths.snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, {
+    audit: { category: "state", verb: "rebuild-active-snapshot", owner },
   });
 }
 

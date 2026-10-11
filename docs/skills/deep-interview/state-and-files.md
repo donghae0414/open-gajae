@@ -8,7 +8,7 @@ op별 입력과 결과는 [ops.md](ops.md), 넘기기의 단계는 [entry-and-ha
 
 ### 폴더와 계보 루트
 
-- 폴더 이름은 `_session-<YYYYMMDD-HHMMSS>-<세션 id>`입니다. 시각은 세션 생성 시각(로컬 시간)이고, 한 번 만든 뒤에는 `-<세션 id>` 꼬리로 찾습니다. 꼬리가 같은 폴더가 둘이면 `ambiguous session directories for <id>: …`로 실패합니다(`src/state.ts:311-340`).
+- 폴더 이름은 `_session-<YYYYMMDD-HHMMSS>-<세션 id>`입니다. 시각은 세션 생성 시각(로컬 시간)이고, 한 번 만든 뒤에는 `-<세션 id>` 꼬리로 찾습니다. 꼬리가 같은 폴더가 둘이면 `ambiguous session directories for <id>: …`로 실패합니다(`src/state.ts:381-410`).
 - deep-interview 도구는 호출 세션의 계보 루트를 소유자로 씁니다(`src/deep-interview-runtime/tool.ts:94-103`). 자식 세션(subagent)에서 부른 op도 루트 폴더에 씁니다.
 
 ### 파일
@@ -31,7 +31,7 @@ op별 입력과 결과는 [ops.md](ops.md), 넘기기의 단계는 [entry-and-ha
 | `state/deep-interview-state.json` | `deep-interview` 도구의 `start`·`write`·`spec`·`state`·`clear`, 공통 인계 `handoffWorkflowTx`(deep-interview가 caller일 때와 callee일 때) | 도구의 모든 op, 훅(편집 가드, continuation, 로드 게이트, 압축 문맥), doctor |
 | `state/active/deep-interview.json` | `syncActiveRowTx`(도구 op), `writeHandoffRowsTx`(인계). ralplan·ultragoal의 활성 행 쓰기가 지우기도 함 | `readVisiblePrimaryTx`, `clear`의 낡음 판정, doctor |
 | `state/skill-active-state.json` | `rebuildSnapshotTx`(행이 바뀔 때마다) | `readVisiblePrimaryTx`, `clear`의 낡음 판정, doctor |
-| `state/audit.jsonl` | `appendAudit` | 사람(코드는 읽지 않음) |
+| `state/audit.jsonl` | `WorkflowTx`의 감사하는 쓰기 함수(쓰기 직후 한 줄) | 사람(코드는 읽지 않음) |
 | `state/transactions/<id>.json` | 인계 저널 | 코드는 읽지 않음 |
 | `specs/deep-interview-<slug>.md` | `spec`(결합 호출 포함) | 인계 전 스펙 확인 `verifySpecTx`, 모델 |
 | `specs/deep-interview-index.jsonl` | `spec` | 코드는 읽지 않음 |
@@ -40,16 +40,16 @@ op별 입력과 결과는 [ops.md](ops.md), 넘기기의 단계는 [entry-and-ha
 
 ## 2. 쓰기 큐와 파일 쓰기
 
-- **큐 하나**: `StateStore.workflowTransaction(owner, fn)`(`src/state.ts:476-578`)은 세션마다 큐 하나(`queueKey`, `src/state.ts:446-451`)를 잡고 `fn`을 돕니다. deep-interview·ralplan·ultragoal·goal의 op와 훅 판단이 모두 이 큐를 지납니다. 한 프로세스 안에서만 줄 세웁니다.
+- **큐 하나**: `StateStore.workflowTransaction(owner, fn)`(`src/state.ts:546-709`)은 세션마다 큐 하나(`queueKey`, `src/state.ts:516-521`)를 잡고 `fn`을 돕니다. deep-interview·ralplan·ultragoal·goal의 op와 훅 판단이 모두 이 큐를 지납니다. 한 프로세스 안에서만 줄 세웁니다.
 - **경로 제한**: `tx`의 `readText`·`writeText`·`appendLine`·`list`·`remove`는 세션 폴더 밖 경로를 `workflow path escapes the session directory`로 거부합니다.
 - **원자적 쓰기**: 임시 파일 `.<이름>.<uuid>.tmp`(모드 `0600`)에 쓰고 `rename`합니다. 경로에 심볼릭 링크나 디렉터리가 아닌 것이 끼면 거부합니다. 새 디렉터리는 모드 `0700`입니다.
 - **덧붙이기**: `appendLine`은 줄바꿈이 든 줄을 거부하고, `O_NOFOLLOW`로 엽니다.
-- **상태 읽기 검사** (`readFile`, `src/state.ts:382-405`; `validateStoredState`, `:256-268`). 아래는 모두 예외이고, deep-interview는 이를 "손상(corrupt)"으로 봅니다.
+- **상태 읽기 검사** (`readFile`, `src/state.ts:452-475`; `validateStoredState`, `:326-338`). 아래는 모두 예외이고, deep-interview는 이를 "손상(corrupt)"으로 봅니다.
   - JSON이 아님: `state file is corrupted; it was preserved`
   - 한도 위반: `state file is invalid; it was preserved: <한도 오류>`
   - 소유 세션 불일치(`_meta.sessionId`, 없으면 `session_id`가 루트와 다름): `state scope does not match this session; it was preserved`
   - 일반 파일이 아님: `state file is not a regular file`
-- **`_meta`**: 쓸 때마다 StateStore가 `{mode, sessionId, updatedAt, updatedBy}`로 다시 만듭니다(`writeMerged`, `src/state.ts:453-468`). `updatedBy`는 `deep_interview_tool` 또는 `deep_interview_hook`이고, 인계로 쓰일 때는 caller의 writer입니다. 예: `ralplan handoff(to:"deep-interview")`가 쓴 deep-interview 상태는 `ralplan_tool`.
+- **`_meta`**: 쓸 때마다 StateStore가 `{mode, sessionId, updatedAt, updatedBy}`로 다시 만듭니다(`writeMerged`, `src/state.ts:523-538`). `updatedBy`는 `deep_interview_tool` 또는 `deep_interview_hook`이고, 인계로 쓰일 때는 caller의 writer입니다. 예: `ralplan handoff(to:"deep-interview")`가 쓴 deep-interview 상태는 `ralplan_tool`.
 
 ## 3. 봉투
 
@@ -142,7 +142,7 @@ gjc 시드에서 `resolution`, `intent_contract_required`, trace, 언어 필드�
 - `id`가 없는 사실은 붙이고, JSON이 완전히 같은 것은 건너뜁니다.
 - 델타는 사실을 지우지 못합니다. 반박은 `disputed: true`, 대체는 `superseded_by`로 합니다(SKILL Step 2c).
 
-`write`는 봉투 병합에서 입력의 `established_facts`로 목록을 바꾼 뒤, 기준 상태의 사실 목록과 이 함수로 다시 병합합니다(`store.ts:398-403`). 그래서 사실 하나만 보내도 다른 사실이 남습니다. `reset`에서는 기준이 비어 있어 다시 병합하지 않습니다.
+`write`는 봉투 병합에서 입력의 `established_facts`로 목록을 바꾼 뒤, 기준 상태의 사실 목록과 이 함수로 다시 병합합니다(`store.ts:374-379`). 그래서 사실 하나만 보내도 다른 사실이 남습니다. `reset`에서는 기준이 비어 있어 다시 병합하지 않습니다.
 
 ### 봉투 (`mergeDeepInterviewEnvelope`, `envelope.ts:141-171`)
 
@@ -259,7 +259,7 @@ floor = 0.10 × (해결되지 않은 반박 사실 수) + 0.05 × (확정 topolo
 
 ## 10. StateStore 한도
 
-모든 mode-state 쓰기는 `writeMerged`가 마지막에 검사합니다(`payloadError`, `src/state.ts:119-156`). deep-interview op는 같은 검사를 **첫 쓰기 전에** `assertStatePayload`(`src/state.ts:163-166`)로 먼저 합니다(계획 DR-31, deep-interview 편차 34). 그래서 한도에 걸린 op는 아무것도 쓰지 않고, 파일은 그대로입니다(K6).
+모든 mode-state 쓰기는 `writeMerged`가 마지막에 검사합니다(`payloadError`, `src/state.ts:189-226`). deep-interview op는 같은 검사를 **첫 쓰기 전에** `assertStatePayload`(`src/state.ts:233-236`)로 먼저 합니다(계획 DR-31, deep-interview 편차 34). 그래서 한도에 걸린 op는 아무것도 쓰지 않고, 파일은 그대로입니다(K6).
 
 | 한도 | 값 | 세는 법 | 문구 |
 |---|---|---|---|
@@ -268,7 +268,7 @@ floor = 0.10 × (해결되지 않은 반박 사실 수) + 0.05 × (확정 topolo
 | 크기 | 1,048,576 바이트 | `_meta`를 뺀 봉투의 `JSON.stringify` UTF-8 바이트 | `state exceeds 1048576 bytes` |
 | 직렬화 | — | | `state is not JSON serializable` |
 
-- 검사하는 곳: `start`, `write`, `spec`, `state`의 결과 봉투, 그리고 공통 인계가 저널을 시작하기 전에 callee·caller 두 병합 상태(`src/skill-state/handoff.ts:254-255`). `clear`는 따로 검사하지 않습니다(기존 필드를 그대로 두거나 다섯 필드만 씀).
+- 검사하는 곳: `start`, `write`, `spec`, `state`의 결과 봉투, 그리고 공통 인계가 저널을 시작하기 전에 callee·caller 두 병합 상태(`src/skill-state/handoff.ts:206-207`). `clear`는 따로 검사하지 않습니다(기존 필드를 그대로 두거나 다섯 필드만 씀).
 - 한 번의 `write` 입력은 100,000자 상한에 먼저 걸리므로, 1 MiB는 긴 인터뷰가 라운드를 쌓아 갈 때 걸립니다.
 - 같은 한도는 읽기에도 걸립니다. 손으로 고쳐 한도를 넘은 파일은 손상으로 읽힙니다.
 
@@ -281,7 +281,7 @@ floor = 0.10 × (해결되지 않은 반박 사실 수) + 0.05 × (확정 topolo
   ```
   {"slug":"demo","stage":"final","path":"<session>/specs/deep-interview-demo.md","created_at":"2026-10-02T10:06:02.189Z","sha256":"c3d6…925d"}
   ```
-- **확인** (`verifySpecTx`, `store.ts:572-592`): 넘기기 전에 `spec_path`가 루트 세션 `specs/` 안에 있고, 읽히고, 내용의 sha256이 `spec_sha256`과 같은지 봅니다. 파일을 고치거나 지우면 넘기기가 거부됩니다. 다시 `spec`하면 됩니다.
+- **확인** (`verifySpecTx`, `store.ts:539-559`): 넘기기 전에 `spec_path`가 루트 세션 `specs/` 안에 있고, 읽히고, 내용의 sha256이 `spec_sha256`과 같은지 봅니다. 파일을 고치거나 지우면 넘기기가 거부됩니다. 다시 `spec`하면 됩니다.
 - **지우지 않음**: `start`, `clear`, `reset`, 인계 모두 스펙 파일과 index를 지우지 않습니다.
 
 ## 12. 활성 행, 스냅숏, 순위
@@ -304,11 +304,11 @@ floor = 0.10 × (해결되지 않은 반박 사실 수) + 0.05 × (확정 topolo
 }
 ```
 
-인계로 쓰인 행에는 `handoff_from` 또는 `handoff_to`와 `handoff_at`이 붙습니다. caller 쪽 행은 이전 행의 `handoff_from`을 이어받습니다(`writeHandoffRowsTx`, `rows.ts:170-184`).
+인계로 쓰인 행에는 `handoff_from` 또는 `handoff_to`와 `handoff_at`이 붙습니다. caller 쪽 행은 이전 행의 `handoff_from`을 이어받습니다(`writeHandoffRowsTx`, `rows.ts:165-179`).
 
 | 언제 | 행 |
 |---|---|
-| `start`, `write`, `spec`, 활성 `state` | 씀(`syncActiveRowTx`, `rows.ts:149-162`). phase가 `complete`면(`state` op 제외) 지움 |
+| `start`, `write`, `spec`, 활성 `state` | 씀(`syncActiveRowTx`, `rows.ts:144-157`). phase가 `complete`면(`state` op 제외) 지움 |
 | 비활성으로 만드는 `state` | 지움 |
 | `clear` | 지움 |
 | `handoff`·결합 호출 ③·로드 게이트 넘기기 (caller) | **비활성** 행 `{active: false, phase: "handoff", handoff_to}`로 씀 |
@@ -317,17 +317,17 @@ floor = 0.10 × (해결되지 않은 반박 사실 수) + 0.05 × (확정 topolo
 
 ### 스냅숏
 
-`state/skill-active-state.json`은 행이 바뀔 때마다 행 파일들로 다시 만듭니다(`rebuildSnapshotTx`, `rows.ts:212-235`): `{version: 1, active, skill, phase, updated_at, session_id, active_skills: [모든 행], active_subskills: []}`. 맨 위 `skill`·`phase`는 비활성이 아닌 행 중 순위가 가장 높은 것입니다.
+`state/skill-active-state.json`은 행이 바뀔 때마다 행 파일들로 다시 만듭니다(`rebuildSnapshotTx`, `rows.ts:207-226`): `{version: 1, active, skill, phase, updated_at, session_id, active_skills: [모든 행], active_subskills: []}`. 맨 위 `skill`·`phase`는 비활성이 아닌 행 중 순위가 가장 높은 것입니다.
 
 ### 순위와 보이는 주 skill
 
 - 파이프라인 순위는 `deep-interview`(0) → `ralplan`(1) → `ultragoal`(2)이고, 높은 쪽이 이깁니다(`PIPELINE_RANK`, `rows.ts:51-55`). 활성 행을 쓰면 낮은 순위 행을 지웁니다.
-- 보이는 주 skill(`readVisiblePrimaryTx`, `rows.ts:246-292`)은 스냅숏 항목 위에 행 파일을 덮어(행이 이김) 활성 항목만 남기고, 잠긴 ralplan phase를 반영한 뒤, 파이프라인을 가장 높은 단계 하나로 줄여 고릅니다. 행 파일을 읽을 수 없으면 예외입니다.
+- 보이는 주 skill(`readVisiblePrimaryTx`, `rows.ts:237-283`)은 스냅숏 항목 위에 행 파일을 덮어(행이 이김) 활성 항목만 남기고, 잠긴 ralplan phase를 반영한 뒤, 파이프라인을 가장 높은 단계 하나로 줄여 고릅니다. 행 파일을 읽을 수 없으면 예외입니다.
 - 그래서 deep-interview는 ralplan·ultragoal 행이 활성이 아닐 때만 보이는 주 skill이 됩니다. 편집 가드, continuation, 압축 문맥, `start` 거부가 이 값을 봅니다.
 
 ## 13. 감사 로그
 
-`state/audit.jsonl`, 파일이 바뀔 때마다 한 줄(`appendAudit`, `src/skill-state/audit.ts:37-53`; 계획 C-7):
+`state/audit.jsonl`, 파일이 바뀔 때마다 한 줄. `WorkflowTx`의 쓰기 함수가 쓰기 직후에 남기고(`auditRow`, `src/state.ts:560-566`), 한 줄의 모양은 `auditLine`(`src/skill-state/audit.ts:48-65`)이 만듭니다(계획 C-7):
 
 ```json
 {"ts":"…","skill":"deep-interview","category":"state","verb":"write-incremental","owner":"open-gajae-runtime","mutation_id":"deep-interview:write:2026-10-02T10:06:02.185Z","from_phase":"interviewing","to_phase":"interviewing","forced":false,"paths":["<session>/state/deep-interview-state.json"]}
@@ -339,16 +339,16 @@ floor = 0.10 × (해결되지 않은 반박 사실 수) + 0.05 × (확정 topolo
 
 | 일 | `category/verb` | `mutation_id` |
 |---|---|---|
-| `start` | `state/write` | `deep-interview:start:<at>` |
+| `start` | `state/write`(`from_phase` 없음). 저장된 상태가 활성 `handoff`·`complete`면 그 앞에 `state/invalid_transition_detected` | `deep-interview:start:<at>`(진단 행도 같음) |
 | `write` | `state/write-incremental`, `state/write-reset` | `deep-interview:write:<at>` |
-| `spec` | `artifact/write`(스펙), `ledger/append`(index), `state/write` | `deep-interview:spec:<at>` |
+| `spec` | `artifact/write`(스펙), `ledger/append`(index), `state/write`. 활성 `complete` 위면 `state/write` 바로 앞에 `state/invalid_transition_detected` | `deep-interview:spec:<at>`(진단 행도 같음) |
 | `state` | `state/write` | `deep-interview:<at>` |
 | `clear` | `state/clear` (`forced`) | `deep-interview:clear:<at>` |
-| 인계 | `state/handoff`(callee, caller 순), 필요하면 그 앞에 `state/invalid_transition_detected` | `<caller>:handoff:<callee>:<at>` |
+| 인계 | `state/handoff`(callee, caller 순). 전이 진단 행은 없음 | `<caller>:handoff:<callee>:<at>` |
 | 행·스냅숏 | `state/write-active-entry`, `state/remove-active-entry`, `state/remove-superseded-pipeline-entry`, `state/rebuild-active-snapshot` | uuid |
 | 저널 | `state/write-transaction-journal`, `state/remove-transaction-journal` | 인계의 id |
 
-`invalid_transition_detected`는 인계가 **활성**으로 쓰는 쪽(callee)의 phase가 바뀌고 그 이동이 그 skill의 전이 표에 없을 때만 남는 진단입니다(`src/skill-state/handoff.ts:171-189`). 예: 진행 중인 ralplan `architect` → `planner`. caller는 비활성으로 쓰이므로 남지 않습니다.
+`invalid_transition_detected`는 검사 쓰기(`writeModeStateChecked`, `src/state.ts:629-664`)를 쓰는 deep-interview `start`와 `spec`만 남기는 진단입니다. 저장된 상태가 활성이고 그 phase에서 쓰려는 phase로 가는 간선이 전이 표에 없을 때 상태 쓰기 바로 앞에 남고, `mutation_id`는 그 op의 것입니다(deep-interview 편차 40). `start`는 활성 `handoff`·`complete` 위에서, `spec`은 활성 `complete` 위에서만 남깁니다. 인계는 caller와 callee를 모두 검사 없는 쓰기로 쓰므로 남기지 않습니다(진행 중인 ralplan `architect` → `planner`에도 없음).
 
 ## 14. 인계 저널
 

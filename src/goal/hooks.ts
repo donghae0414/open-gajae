@@ -91,7 +91,7 @@ async function writeContinuationTx(
   record: GoalContinuation,
 ): Promise<void> {
   const text = serializeGoalContinuation(record);
-  if (text !== stored) await tx.writeText(tx.paths.goalContinuation, text);
+  if (text !== stored) await tx.writeText(tx.paths.goalContinuation, text, { audit: false });
 }
 
 export function createGoalHooks(store: StateStore) {

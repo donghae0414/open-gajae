@@ -37,12 +37,15 @@
 // `handoff` and `state` need an active state; `state(patch={"active": true})`
 // resumes a cancelled interview), 34 (StateStore limits), 36
 // (the round-record check), 38 (`spec(…, handoff: "ralplan")` stands for
-// `--deliberate`; no `--force`).
+// `--deliberate`; no `--force`), 40 (the `start` and `spec` state rows keep
+// `mutation_id` and `to_phase`, and `spec`'s keeps `from_phase`: `spec`
+// passes `fromPhase` to the checked write, `start` does not, as gjc's seed;
+// a transition diagnostic carries the op's `mutation_id`).
 
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { type AuditOwner, appendAudit, RUNTIME_OWNER } from "../skill-state/audit.js";
+import { type AuditOwner, RUNTIME_OWNER, writerFor } from "../skill-state/audit.js";
 import {
   activeFlag,
   collectDoctorSummaryTx,
@@ -53,7 +56,7 @@ import {
 } from "../skill-state/doctor.js";
 import { type HandoffReceipt, handoffWorkflowTx } from "../skill-state/handoff.js";
 import { readVisiblePrimaryTx, syncActiveRowTx } from "../skill-state/rows.js";
-import { assertStatePayload, type InterviewState, safeComponent, type StateWriter, type WorkflowTx } from "../state.js";
+import { assertStatePayload, type InterviewState, safeComponent, type WorkflowTx } from "../state.js";
 import { applyAmbiguityFloorToEnvelope, deriveRuntimeAmbiguity } from "./ambiguity.js";
 import {
   assertEnvelopeInputLimits,
@@ -157,11 +160,6 @@ export type StateProjectionField = (typeof STATE_FIELD_ALLOWLIST)[number];
 /** Spec D-SR9: the fields only `write` and `spec` set. */
 const OWNED_FIELDS: ReadonlySet<string> = new Set([...SPEC_FIELDS, ...STATE_OP_REFUSED_STATE_FIELDS]);
 
-const WRITERS: Record<AuditOwner, StateWriter> = {
-  "open-gajae-runtime": "deep_interview_tool",
-  "open-gajae-hook": "deep_interview_hook",
-};
-
 function isRecord(value: unknown): value is Json {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -253,28 +251,6 @@ async function syncRowTx(
   }
 }
 
-async function auditStateTx(
-  tx: WorkflowTx,
-  verb: string,
-  owner: AuditOwner,
-  mutationId: string,
-  fromPhase: string | undefined,
-  toPhase: string | undefined,
-  forced?: boolean,
-): Promise<void> {
-  await appendAudit(tx, {
-    category: "state",
-    verb,
-    owner,
-    skill: SKILL,
-    mutationId,
-    fromPhase,
-    toPhase,
-    forced,
-    path: tx.paths.modeState(SKILL),
-  });
-}
-
 function json(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
@@ -287,10 +263,10 @@ export type StartInput = { idea?: string; threshold?: number };
 
 /**
  * gjc `seedDeepInterviewState`: a whole new envelope on `interviewing` over
- * whatever was there, a corrupt state included (the old phase is read only
- * for the audit row); the threshold is the `start` argument, else the
- * setting (project, user, 0.05). Refused while ralplan or ultragoal is the
- * visible primary skill.
+ * whatever was there, a corrupt state included, through the checked write
+ * with no `fromPhase` (gjc seed); the threshold is the `start` argument, else
+ * the setting (project, user, 0.05). Refused while ralplan or ultragoal is
+ * the visible primary skill.
  */
 export async function startTx(
   tx: WorkflowTx,
@@ -313,7 +289,6 @@ export async function startTx(
   const other = await otherPrimaryTx(tx);
   if (other) throw new Error(startRefusal(other.skill, other.phase));
 
-  const previous = await readDeepInterviewStateTx(tx);
   const at = now();
   const envelope: Json = {
     skill: SKILL,
@@ -334,15 +309,16 @@ export async function startTx(
     },
   };
   assertStatePayload(envelope);
-  await tx.writeModeState(SKILL, envelope, WRITERS[RUNTIME_OWNER]);
-  await auditStateTx(
-    tx,
-    "write",
-    RUNTIME_OWNER,
-    `${SKILL}:start:${at}`,
-    previous.kind === "valid" ? trimmed(previous.value.current_phase) : undefined,
-    DEEP_INTERVIEW_INITIAL_STATE,
-  );
+  await tx.writeModeStateChecked(SKILL, envelope, writerFor(SKILL, RUNTIME_OWNER), {
+    audit: {
+      category: "state",
+      verb: "write",
+      owner: RUNTIME_OWNER,
+      skill: SKILL,
+      mutationId: `${SKILL}:start:${at}`,
+      toPhase: DEEP_INTERVIEW_INITIAL_STATE,
+    },
+  });
   await syncRowTx(tx, root, envelope, RUNTIME_OWNER);
   return json({
     ok: true,
@@ -405,15 +381,17 @@ export async function writeTx(tx: WorkflowTx, root: string, input: WriteInput): 
   assertEnvelopeInputLimits(next);
   assertStatePayload(next);
 
-  await tx.writeModeState(SKILL, next, WRITERS[RUNTIME_OWNER]);
-  await auditStateTx(
-    tx,
-    reset ? "write-reset" : "write-incremental",
-    RUNTIME_OWNER,
-    `${SKILL}:write:${at}`,
-    trimmed(current.current_phase),
-    trimmed(next.current_phase),
-  );
+  await tx.writeModeState(SKILL, next, writerFor(SKILL, RUNTIME_OWNER), {
+    audit: {
+      category: "state",
+      verb: reset ? "write-reset" : "write-incremental",
+      owner: RUNTIME_OWNER,
+      skill: SKILL,
+      mutationId: `${SKILL}:write:${at}`,
+      toPhase: trimmed(next.current_phase),
+    },
+    fromPhase: trimmed(current.current_phase),
+  });
   await syncRowTx(tx, root, next, RUNTIME_OWNER);
   return json({
     ok: true,
@@ -495,30 +473,19 @@ export async function specTx(tx: WorkflowTx, root: string, input: SpecInput): Pr
   assertStatePayload(next);
 
   const mutationId = `${SKILL}:spec:${createdAt}`;
-  await tx.writeText(specPath, content);
-  await appendAudit(tx, {
-    category: "artifact",
-    verb: "write",
-    owner: RUNTIME_OWNER,
-    skill: SKILL,
-    mutationId,
-    path: specPath,
+  await tx.writeText(specPath, content, {
+    audit: { category: "artifact", verb: "write", owner: RUNTIME_OWNER, skill: SKILL, mutationId },
   });
   const indexPath = path.join(specsDir, SPEC_INDEX_FILE);
   await tx.appendLine(
     indexPath,
     JSON.stringify({ slug, stage: "final", path: specPath, created_at: createdAt, sha256 }),
+    { audit: { category: "ledger", verb: "append", owner: RUNTIME_OWNER, skill: SKILL, mutationId } },
   );
-  await appendAudit(tx, {
-    category: "ledger",
-    verb: "append",
-    owner: RUNTIME_OWNER,
-    skill: SKILL,
-    mutationId,
-    path: indexPath,
+  await tx.writeModeStateChecked(SKILL, next, writerFor(SKILL, RUNTIME_OWNER), {
+    audit: { category: "state", verb: "write", owner: RUNTIME_OWNER, skill: SKILL, mutationId, toPhase: "handoff" },
+    fromPhase: trimmed(existing.current_phase),
   });
-  await tx.writeModeState(SKILL, next, WRITERS[RUNTIME_OWNER]);
-  await auditStateTx(tx, "write", RUNTIME_OWNER, mutationId, trimmed(existing.current_phase), "handoff");
   await syncRowTx(tx, root, next, RUNTIME_OWNER, { specStatus: "persisted" });
   return {
     skill: SKILL,
@@ -736,8 +703,10 @@ export async function patchStateTx(tx: WorkflowTx, root: string, patch: Json): P
   assertEnvelopeInputLimits(next);
   assertStatePayload(next);
 
-  await tx.writeModeState(SKILL, next, WRITERS[RUNTIME_OWNER]);
-  await auditStateTx(tx, "write", RUNTIME_OWNER, mutationId, fromPhase, toPhase);
+  await tx.writeModeState(SKILL, next, writerFor(SKILL, RUNTIME_OWNER), {
+    audit: { category: "state", verb: "write", owner: RUNTIME_OWNER, skill: SKILL, mutationId, toPhase },
+    fromPhase,
+  });
   await syncRowTx(tx, root, next, RUNTIME_OWNER, { active: next.active !== false });
   return json({
     ok: true,
@@ -802,8 +771,11 @@ export async function clearStateTx(tx: WorkflowTx, root: string, force: boolean)
     version: WORKFLOW_STATE_VERSION,
   };
   cleared.skill = SKILL;
-  await tx.writeModeState(SKILL, cleared, WRITERS[RUNTIME_OWNER]);
-  await auditStateTx(tx, "clear", RUNTIME_OWNER, mutationId, trimmed(existing.current_phase), "complete", force);
+  await tx.writeModeState(SKILL, cleared, writerFor(SKILL, RUNTIME_OWNER), {
+    audit: { category: "state", verb: "clear", owner: RUNTIME_OWNER, skill: SKILL, mutationId, toPhase: "complete" },
+    fromPhase: trimmed(existing.current_phase),
+    forced: force,
+  });
   try {
     await syncActiveRowTx(tx, { skill: SKILL, active: false, sessionId: root }, RUNTIME_OWNER);
   } catch {

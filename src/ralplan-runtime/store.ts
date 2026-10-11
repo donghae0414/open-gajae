@@ -26,10 +26,11 @@
 //   `describeStaleClearState`), `:826-839`
 //   (`mergeWithNullDelete`), `:973-999` (`syncWorkflowSkillState`),
 //   `:1156-1222` (`handleRead`), `:1235-1400` (`handleWrite`), `:1402-1490`
-//   (`handleClear`), `:1739-1763` (handoff caller state)
-// - `gjc-runtime/state-writer.ts:958-1067` (`readPersistedPhase`,
-//   `recordInvalidWorkflowTransition`, `writeWorkflowEnvelopeAtomic`),
-//   `:1234-1257` (`appendJsonlIdempotent`)
+//   (`handleClear`; both write through the unchecked `writeJsonAtomic`,
+//   `:1351`, `:1453`), `:1739-1763` (handoff caller state)
+// - `gjc-runtime/state-writer.ts:1234-1257` (`appendJsonlIdempotent`); the
+//   checked write (`writeWorkflowEnvelopeAtomic`) lives in `src/state.ts`
+//   (`writeModeStateChecked`)
 // - `gjc-runtime/state-migrations.ts:62-127` (`migrateWorkflowState` v1→v2)
 // - `gjc-runtime/state-renderer.ts:82-190` (`STATE_FIELD_ALLOWLIST`,
 //   `projectStateFields`)
@@ -62,7 +63,7 @@
 
 import path from "node:path";
 import type { Settings } from "../config.js";
-import { type AuditOwner, appendAudit, HOOK_OWNER, RUNTIME_OWNER } from "../skill-state/audit.js";
+import { type AuditOwner, RUNTIME_OWNER, writerFor } from "../skill-state/audit.js";
 import {
   activeFlag,
   collectDoctorSummaryTx,
@@ -175,73 +176,16 @@ function isManifestState(phase: string): boolean {
 // Audit rows and the state envelope
 // ---------------------------------------------------------------------------
 
-type StateWriteAudit = {
-  owner: AuditOwner;
-  verb?: string;
-  mutationId?: string;
-  fromPhase?: string;
-  toPhase?: string;
-  forced?: boolean;
-};
-
 /**
- * gjc `writeWorkflowEnvelopeAtomic`: an unforced active write must name a
- * manifest state, and an edge the table lacks (from the persisted active
- * phase) leaves an `invalid_transition_detected` row but is written anyway
- * (spec D-T11); then the state is replaced and audited.
+ * gjc's ralplan runtime writes (`ralplan-runtime.ts:1030,1285,1333,1389,
+ * 1459,2414`): the checked write (`tx.writeModeStateChecked`, gjc
+ * `writeWorkflowEnvelopeAtomic`), with no `fromPhase`, so an edge the table
+ * lacks from the stored active phase leaves an `invalid_transition_detected`
+ * row and is written anyway (spec D-T11).
  */
-async function writeStateTx(
-  tx: WorkflowTx,
-  prior: Json | undefined,
-  next: Json,
-  audit: StateWriteAudit,
-): Promise<Json> {
-  if (audit.forced !== true && next.active === true) {
-    const toPhase = trimmed(next.current_phase);
-    if (toPhase) {
-      if (!isManifestState(toPhase))
-        throw new Error(
-          `Refusing to write unknown ralplan phase "${toPhase}" to ${tx.paths.statePath}: not a known ralplan manifest state`,
-        );
-      const fromPhase =
-        audit.fromPhase?.trim() ||
-        (prior?.active === true ? trimmed(prior.current_phase) : undefined);
-      if (
-        fromPhase &&
-        fromPhase !== toPhase &&
-        isManifestState(fromPhase) &&
-        !isValidTransition(fromPhase, toPhase)
-      ) {
-        // Audit-only diagnostic, best-effort as in gjc.
-        const at = now();
-        await appendAudit(tx, {
-          category: "state",
-          verb: "invalid_transition_detected",
-          owner: audit.owner,
-          skill: SKILL,
-          mutationId: audit.mutationId ?? `${SKILL}:invalid-transition:${at}`,
-          fromPhase,
-          toPhase,
-          forced: false,
-          path: tx.paths.statePath,
-        }).catch(() => undefined);
-      }
-    }
-  }
-  await tx.writeState(
-    next,
-    audit.owner === HOOK_OWNER ? "ralplan_hook" : "ralplan_tool",
-  );
-  await appendAudit(tx, {
-    category: "state",
-    verb: audit.verb ?? "write",
-    owner: audit.owner,
-    skill: SKILL,
-    mutationId: audit.mutationId,
-    fromPhase: audit.fromPhase,
-    toPhase: audit.toPhase,
-    forced: audit.forced,
-    path: tx.paths.statePath,
+async function writeRunStateTx(tx: WorkflowTx, next: Json, owner: AuditOwner): Promise<Json> {
+  await tx.writeModeStateChecked(SKILL, next, writerFor(SKILL, owner), {
+    audit: { category: "state", verb: "write", owner, skill: SKILL },
   });
   return next;
 }
@@ -341,13 +285,8 @@ async function appendJsonlIdempotentTx(
 ): Promise<{ appended: boolean; duplicate?: unknown }> {
   const duplicate = findJsonlDuplicate(await tx.readText(file), entry, key);
   if (duplicate !== undefined) return { appended: false, duplicate };
-  await tx.appendLine(file, JSON.stringify(entry));
-  await appendAudit(tx, {
-    category: "ledger",
-    verb: "append",
-    owner,
-    skill: SKILL,
-    path: file,
+  await tx.appendLine(file, JSON.stringify(entry), {
+    audit: { category: "ledger", verb: "append", owner, skill: SKILL },
   });
   return { appended: true };
 }
@@ -358,13 +297,8 @@ async function writeArtifactTx(
   content: string,
   owner: AuditOwner,
 ): Promise<void> {
-  await tx.writeText(file, content);
-  await appendAudit(tx, {
-    category: "artifact",
-    verb: "write",
-    owner,
-    skill: SKILL,
-    path: file,
+  await tx.writeText(file, content, {
+    audit: { category: "artifact", verb: "write", owner, skill: SKILL },
   });
 }
 
@@ -541,7 +475,7 @@ async function persistActiveRunIdTx(
   existing.current_phase = nextPhase;
   existing = migrateRalplanState(existing);
   existing.updated_at = now();
-  return writeStateTx(tx, state, existing, { owner });
+  return writeRunStateTx(tx, existing, owner);
 }
 
 /** gjc `applyPersistedRoleStateUpdate` / `applyLaneVerdictUpdate` (shared body). */
@@ -561,7 +495,7 @@ async function mergeRunStateTx(
     existing.current_phase = RALPLAN_INITIAL_STATE;
   existing = migrateRalplanState(existing);
   existing.updated_at = now();
-  return writeStateTx(tx, state, existing, { owner });
+  return writeRunStateTx(tx, existing, owner);
 }
 
 /** gjc `recordRalplanPlanningStuck`: one stuck row per run, then the state flag. */
@@ -587,7 +521,7 @@ async function recordPlanningStuckTx(
   };
   next = migrateRalplanState(next);
   next.updated_at = now();
-  await writeStateTx(tx, state, next, { owner });
+  await writeRunStateTx(tx, next, owner);
 }
 
 /** gjc `persistRalplanFinalAdmission`: only onto the same run. */
@@ -602,7 +536,7 @@ async function persistFinalAdmissionTx(
   let next: Json = { ...payloadOf(state), auto_handoff: admission };
   next = migrateRalplanState(next);
   next.updated_at = now();
-  return writeStateTx(tx, state, next, { owner });
+  return writeRunStateTx(tx, next, owner);
 }
 
 // ---------------------------------------------------------------------------
@@ -935,9 +869,8 @@ export async function startRunTx(
     input.handoff_from !== undefined
       ? { handoff_from: input.handoff_from, handoff_at: input.handoff_at ?? at }
       : {};
-  await writeStateTx(
+  await writeRunStateTx(
     tx,
-    state,
     {
       active: true,
       current_phase: RALPLAN_INITIAL_STATE,
@@ -952,7 +885,7 @@ export async function startRunTx(
       session_id: sessionId,
       ...handoff,
     },
-    { owner },
+    owner,
   );
   await bestEffort(async () =>
     syncActiveRowTx(
@@ -1046,12 +979,9 @@ export async function patchStateTx(
     throw new Error(`invalid ralplan phase transition from ${fromPhase} to ${toPhase}`);
   const postError = workflowEnvelopeError(SKILL, merged);
   if (postError) throw new Error(postError);
-  await writeStateTx(tx, existing, merged, {
-    owner,
-    verb: "write",
-    mutationId,
+  await tx.writeModeState(SKILL, merged, writerFor(SKILL, owner), {
+    audit: { category: "state", verb: "write", owner, skill: SKILL, mutationId, toPhase },
     fromPhase,
-    toPhase,
   });
   const active = merged.active !== false;
   await bestEffort(() =>
@@ -1169,12 +1099,9 @@ export async function clearStateTx(
     version: WORKFLOW_STATE_VERSION,
   };
   cleared.skill = SKILL;
-  await writeStateTx(tx, existing, cleared, {
-    owner,
-    verb: "clear",
-    mutationId,
+  await tx.writeModeState(SKILL, cleared, writerFor(SKILL, owner), {
+    audit: { category: "state", verb: "clear", owner, skill: SKILL, mutationId, toPhase: "complete" },
     fromPhase: trimmed(existing.current_phase),
-    toPhase: "complete",
     forced: force,
   });
   await bestEffort(() => syncActiveRowTx(tx, { skill: SKILL, active: false, sessionId }, owner));

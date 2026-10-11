@@ -271,7 +271,7 @@ If this ralplan run is stale or was started by mistake, stop it with `ralplan st
 
 - `shell`. 파일을 바꾸는 명령도 분류하지 않습니다(편차 11. gjc는 `bash`의 변경 명령을 분류합니다, `:1475-1610`). SKILL의 Planning/Execution Boundary("do not mutate product source, run mutation-oriented shell, …")와 역할 프롬프트가 글로만 금지합니다. SKILL은 큰 산출물을 `write` 도구나 따옴표 heredoc(`cat > /tmp/plan.md <<'EOF' … EOF`)으로 임시 루트에 두라고 합니다. 앞쪽은 가드가 통과시키고, 뒤쪽은 가드가 보지 않습니다.
 - `skill ralplan` 로드와 `ralplan start` 사이. 로드는 state를 쓰지 않으므로 그동안 편집이 막히지 않습니다(편차 36).
-- `final`의 Stop here(`state {"active": false}`), `clear`, `ralplan handoff` 뒤. state가 비활성이므로 통과합니다. 이때 phase가 `final`·`complete`·`handoff`로 잠겨 있어, 같은 run에 다시 `write`해도 state가 다시 켜지지 않습니다(DR-3, R-OD9, 테스트 (c)). 계획 phase(잠기지 않은 phase)에서 `state {"active": false}`로 멈췄다면 다릅니다: 같은 run의 다음 `write`가 state를 다시 켜고 활성 행도 다시 쓰므로 가드가 다시 걸립니다(`persistActiveRunIdTx`, `src/ralplan-runtime/store.ts:513-545`. 실제로 돌려 보면 `planner`에서 멈춘 뒤 편집은 통과하고, 같은 run의 `write` 뒤에는 다시 막힘. [state-and-files.md](state-and-files.md) 3장 "필드"의 `active` 행).
+- `final`의 Stop here(`state {"active": false}`), `clear`, `ralplan handoff` 뒤. state가 비활성이므로 통과합니다. 이때 phase가 `final`·`complete`·`handoff`로 잠겨 있어, 같은 run에 다시 `write`해도 state가 다시 켜지지 않습니다(DR-3, R-OD9, 테스트 (c)). 계획 phase(잠기지 않은 phase)에서 `state {"active": false}`로 멈췄다면 다릅니다: 같은 run의 다음 `write`가 state를 다시 켜고 활성 행도 다시 쓰므로 가드가 다시 걸립니다(`persistActiveRunIdTx`, `src/ralplan-runtime/store.ts:447-479`. 실제로 돌려 보면 `planner`에서 멈춘 뒤 편집은 통과하고, 같은 run의 `write` 뒤에는 다시 막힘. [state-and-files.md](state-and-files.md) 3장 "필드"의 `active` 행).
 - ultragoal이 주 skill인 동안의 활성 ralplan(U22).
 
 ## continuation
@@ -368,7 +368,7 @@ v2 호스트에는 `session.idle`이 없습니다. `onEvent`(`src/hooks.ts:1243-
 
 ### 카운터 파일 `state/ralplan-continuation.json`
 
-훅만 씁니다(R-O3). 경로는 `tx.paths.continuationPath`(`src/state.ts:502`)이고, 항상 차단의 `state/**` 아래라 `write`/`edit`/`patch`로 고칠 수 없습니다. 감사 행을 남기지 않습니다. 실제로 돌린 첫 continuation 뒤의 내용(시각은 실행마다 다름):
+훅만 씁니다(R-O3). 경로는 `tx.paths.continuationPath`(`src/state.ts:607`)이고, 항상 차단의 `state/**` 아래라 `write`/`edit`/`patch`로 고칠 수 없습니다. 감사 행을 남기지 않습니다. 실제로 돌린 첫 continuation 뒤의 내용(시각은 실행마다 다름):
 
 ```json
 {
@@ -392,7 +392,7 @@ v2 호스트에는 `session.idle`이 없습니다. `onEvent`(`src/hooks.ts:1243-
 - **45분은 마지막 continuation부터 잽니다.** 매번 `breaker_updated_at`을 새로 쓰므로, 45분 안에 한 번씩 이어지는 한 30번까지 셉니다. 45분 넘게 쉬었으면 다음은 1부터입니다(테스트 "a counter past the TTL or of another run restarts the count at one").
 - **실제 사용자 프롬프트는 카운트를 되돌리지 않습니다.** `prompt` 훅은 deep-interview 횟수와 goal 보류만 풉니다(`:892-899`). 그래서 30번은 사용자 프롬프트마다가 아니라 run 하나의 45분 연속 구간마다의 상한입니다.
 - **`clear`나 멈춤 뒤에도 카운트가 남습니다.** `clear`와 `state {"active": false}`는 활성 행을 지우므로, 다음 판단은 2단계(주 skill 아님)에서 끝나고 카운터를 0으로 쓰지 않습니다. 실제로 돌려 보면:
-  - 5번 이어 간 뒤 `clear`하고 45분 안에 같은 세션에서 `run_id` 없이 다시 `ralplan start`하면 다음 continuation은 `6/30`입니다. `clear`는 `run_id`를 남기고(`clearStateTx`, `src/ralplan-runtime/store.ts:1133-1139` 주석), `start`는 `run_id`가 없으면 state의 `run_id`를 다시 쓰기 때문입니다(`startRunTx`, `:925`).
+  - 5번 이어 간 뒤 `clear`하고 45분 안에 같은 세션에서 `run_id` 없이 다시 `ralplan start`하면 다음 continuation은 `6/30`입니다. `clear`는 `run_id`를 남기고(`clearStateTx`, `src/ralplan-runtime/store.ts:1063-1069` 주석), `start`는 `run_id`가 없으면 state의 `run_id`를 다시 쓰기 때문입니다(`startRunTx`, `:859`).
   - 계획 phase(`planner`)에서 3번 뒤 `state {"active": false}`로 멈췄다가 `{"active": true}`로 재개하면 다음은 `4/30`입니다.
   - `final`의 Stop here는 그 전에 무엇이 있었는지에 따라 다릅니다. `final`을 쓴 뒤 활성 `final`인 채로 `succeeded`가 한 번이라도 오면 그때 카운터가 0이 됩니다(T). 승인 질문과 Stop here가 `final`을 쓴 execution 안에서 끝나면 카운트가 그대로 남습니다(3 그대로). 그 뒤 `{"active": true}`로 재개하면 활성 `final`이라 continuation은 없고, 다음 `succeeded`에서 0이 됩니다.
   - 새 `run_id`를 주면 1부터입니다.
@@ -439,7 +439,7 @@ breaker(`breakerMessage()`, `src/ralplan.ts:59-64`). OMC `:2140`이 감싸지 �
 
 ### breaker 소진이 쓰는 것
 
-`patchStateTx(tx, sessionID, {active: false}, HOOK_OWNER, "breaker-exhausted")`(`src/ralplan-runtime/store.ts:1001-1079`)는 `ralplan state` op와 같은 런타임 기록자입니다. 병합 패치로 `active: false`를 쓰고 `updated_at`을 갱신하며, phase와 다른 필드는 그대로 둡니다. `deactivated_reason`·`completed_at`은 쓰지 않습니다(R-O3, P-AC8). 실제로 돌린 31번째 뒤의 감사 로그 끝(시각과 id는 실행마다 다름, `<session>`은 세션 폴더):
+`patchStateTx(tx, sessionID, {active: false}, HOOK_OWNER, "breaker-exhausted")`(`src/ralplan-runtime/store.ts:934-1009`)는 `ralplan state` op와 같은 런타임 기록자입니다. 병합 패치로 `active: false`를 쓰고 `updated_at`을 갱신하며, phase와 다른 필드는 그대로 둡니다. `deactivated_reason`·`completed_at`은 쓰지 않습니다(R-O3, P-AC8). 실제로 돌린 31번째 뒤의 감사 로그 끝(시각과 id는 실행마다 다름, `<session>`은 세션 폴더):
 
 ```
 {"ts":"…","skill":"ralplan","category":"state","verb":"write","owner":"open-gajae-hook","mutation_id":"ralplan:breaker-exhausted:…","from_phase":"planner","to_phase":"planner","forced":false,"paths":["<session>/state/ralplan-state.json"]}
@@ -505,7 +505,7 @@ store.ralplanTransaction(event.sessionID) 안에서
 - **주 skill을 보지 않습니다.** 계획 가드·continuation과 달리 활성이고 알려진 phase이기만 하면 넣습니다. 그래서 T의 활성 `final`(승인 대기)에서도 넣고, ultragoal이 주 skill인데 ralplan state가 활성으로 남은 경우(U22)에도 넣습니다. 실제로 돌려 보면, `ralplan start`와 `planner` 쓰기 뒤 나중 execution에 `skill ultragoal`을 불러 `goal-planning`이 된 세션의 압축에는 `<ralplan-compaction-context>` 하나가 들어갔습니다(`goals.json`이 아직 없어 ultragoal 문맥은 없음).
 - **계보 루트를 구하지 않습니다.** ultragoal·deep-interview 단계와 달리 `event.sessionID` 자기 세션 폴더의 state를 봅니다. `ralplan` 도구는 언제나 계보 루트의 폴더에 쓰므로, 자식 세션의 압축에는 보통 아무것도 들어가지 않습니다.
 - 손상된 state, 비활성, 모르는 phase(DR-21)는 없음입니다(테스트 "(f) compaction adds the ralplan recovery contract of an active run only (AC19)").
-- 파일 읽기는 트랜잭션을 거칩니다. 계약 파일 읽기(`readArtifact`, `:1223-1231`)는 run 폴더 밖을 가리키는 경로를 거절하고, `tx.readText`는 세션 폴더 밖 경로, 심볼릭 링크인 성분, 보통 파일이 아닌 대상을 거부합니다(`src/state.ts:342-380,487-497,616-626`). 그런 거부는 계약이 없는 것으로 봅니다. `index.jsonl` 읽기의 예외는 이 단계 전체를 실패(로그 `ralplan compaction context failed`)로 만듭니다.
+- 파일 읽기는 트랜잭션을 거칩니다. 계약 파일 읽기(`readArtifact`, `:1223-1231`)는 run 폴더 밖을 가리키는 경로를 거절하고, `tx.readText`는 세션 폴더 밖 경로, 심볼릭 링크인 성분, 보통 파일이 아닌 대상을 거부합니다(`src/state.ts:412-450,592-602,747-757`). 그런 거부는 계약이 없는 것으로 봅니다. `index.jsonl` 읽기의 예외는 이 단계 전체를 실패(로그 `ralplan compaction context failed`)로 만듭니다.
 
 ### 투영 (`projectRalplanRun`, `recovery.ts:202-305`)
 

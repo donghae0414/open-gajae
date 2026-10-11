@@ -27,7 +27,7 @@
 // file. An unreadable continuation record starts over, as the ralplan
 // breaker does (R-O3).
 
-import { appendAudit, RUNTIME_OWNER } from "../skill-state/audit.js";
+import { RUNTIME_OWNER } from "../skill-state/audit.js";
 import type { WorkflowTx } from "../state.js";
 import {
   GOAL_ALREADY_COMPLETE,
@@ -197,13 +197,8 @@ export async function writeGoalStateTx(
   goal: GoalState,
   skill: "goal" | "ultragoal",
 ): Promise<void> {
-  await tx.writeText(tx.paths.goalState, serializeGoalState(goal));
-  await appendAudit(tx, {
-    category: "state",
-    verb: "write",
-    owner: RUNTIME_OWNER,
-    skill,
-    path: tx.paths.goalState,
+  await tx.writeText(tx.paths.goalState, serializeGoalState(goal), {
+    audit: { category: "state", verb: "write", owner: RUNTIME_OWNER, skill },
   });
 }
 

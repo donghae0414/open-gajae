@@ -402,7 +402,7 @@ gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(인계), `skill-state/activ
 | ultragoal state가 깨짐 | `existing state for ultragoal is corrupt or tampered (<오류>); refusing to hand off` |
 | callee state가 깨짐 | `existing state for <callee> is corrupt or tampered (<오류>); refusing to hand off` |
 
-입력에서는 `to`와 `reason`만 검사하고, ultragoal이 **활성인지, 어느 단계인지는 보지 않습니다**. 파일만 있으면 `clear` 뒤(`complete`), `missing`, 이미 `handoff`인 상태에서도 인계가 진행되고, 두 번 연속 불러도 두 번 모두 성공합니다. callee가 이미 활성이어도 초기 단계로 되돌립니다. 예: `architect` 단계로 활성인 ralplan에 넘기면 `planner`로 돌아가고 `invalid_transition_detected` 감사 행이 하나 남습니다. gjc의 인계 동사도 파일 존재만 봅니다(`src/ralplan-runtime/store.ts`의 `ralplanHandoffTx` 주석). 비활성 ralplan을 거부하는 `ralplan handoff`(R-OD18)와는 이 점이 다르고, 이 비대칭을 적은 편차 행(`docs/development.md`)은 없습니다.
+입력에서는 `to`와 `reason`만 검사하고, ultragoal이 **활성인지, 어느 단계인지는 보지 않습니다**. 파일만 있으면 `clear` 뒤(`complete`), `missing`, 이미 `handoff`인 상태에서도 인계가 진행되고, 두 번 연속 불러도 두 번 모두 성공합니다. callee가 이미 활성이어도 초기 단계로 되돌립니다. 예: `architect` 단계로 활성인 ralplan에 넘기면 `planner`로 돌아갑니다. gjc의 인계 동사도 파일 존재만 봅니다(`src/ralplan-runtime/store.ts`의 `ralplanHandoffTx` 주석). 비활성 ralplan을 거부하는 `ralplan handoff`(R-OD18)와는 이 점이 다르고, 이 비대칭을 적은 편차 행(`docs/development.md`)은 없습니다.
 
 ### 쓰는 것
 
@@ -468,7 +468,7 @@ SKILL은 "do not call `ultragoal` ops"라고 적어 두었을 뿐 **코드는 �
 
 ## 공통 저널 인계 (`handoffWorkflowTx`)
 
-gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(`handleHandoffUnlocked`), `gjc-runtime/state-writer.ts:1009-1068`(감사용 `invalid_transition_detected`), `skill-state/initial-phase.ts:13-19`, `skill-state/active-state.ts:969-1015`(`applyHandoffToActiveState`), 저널은 `gjc-runtime/state-writer.ts:82-92,1590-1640`. 편차: ultragoal 39, ralplan 17(봉투 영수증·체크섬·`state_revision` 없음), 영수증에 gjc의 state별 영수증 대신 `mutation_id`. "`--force`가 없어 깨진 state는 거부"는 `src/skill-state/handoff.ts` 헤더가 ralplan 17 아래에 함께 적은 것이고, `docs/development.md`의 ralplan 17 행에는 없습니다.
+gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(`handleHandoffUnlocked`), `gjc-runtime/state-runtime.ts:688-741`(인계 동사가 두 state를 쓰는 지역 `writeJsonAtomic`: 검사 없는 쓰기라 전이 진단 행이 없음), `skill-state/initial-phase.ts:13-19`, `skill-state/active-state.ts:969-1015`(`applyHandoffToActiveState`), 저널은 `gjc-runtime/state-writer.ts:82-92,1590-1640`. 편차: ultragoal 39, ralplan 17(봉투 영수증·체크섬·`state_revision` 없음), 영수증에 gjc의 state별 영수증 대신 `mutation_id`. "`--force`가 없어 깨진 state는 거부"는 `src/skill-state/handoff.ts` 헤더가 ralplan 17 아래에 함께 적은 것이고, `docs/development.md`의 ralplan 17 행에는 없습니다.
 
 `src/skill-state/handoff.ts`의 `handoffWorkflowTx`는 모든 인계 입구가 함께 쓰는 인계 하나입니다: `ralplan handoff` op, `skill ultragoal` 진입 게이트, `ultragoal handoff` op, 그리고 deep-interview 개정에서 더한 `deep-interview handoff` op, 결합 호출 `deep-interview spec(…, handoff: "ralplan")`, deep-interview 로드 게이트(`skill ralplan`·`skill ultragoal`). 호출하는 쪽이 제 검사를 먼저 합니다(ralplan: T 단계와 `active`, deep-interview: phase와 spec 검증). 이 함수는 goal state를 건드리지 않습니다(D-HE2). 받는 `tx`는 `StateStore.workflowTransaction` 하나의 것이고, 그 트랜잭션은 세션의 쓰기 큐 하나를 잡고 있는 동안 파일을 **바로** 씁니다. 되돌리기(rollback)는 없습니다.
 
@@ -481,7 +481,7 @@ gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(`handleHandoffUnlocked`), `
    callee state 읽기: 깨짐 → 거부, 없음 → {}
    at = 지금(ISO), mutation_id = "<caller>:handoff:<callee>:<at>"
 ② 저널 만들기 (status "pending")                      감사 write-transaction-journal
-③ callee state 쓰기                                     감사 [invalid_transition_detected], handoff
+③ callee state 쓰기                                     감사 handoff
    저널 steps ["callee-mode-state"]                       감사 write-transaction-journal
 ④ caller state 쓰기                                     감사 handoff
    저널 steps [… "caller-mode-state"]                     감사 write-transaction-journal
@@ -513,22 +513,9 @@ gjc 출처: `gjc-runtime/state-runtime.ts:1572-1881`(`handleHandoffUnlocked`), `
 | 그 밖 | 모두 유지 | 모두 유지 |
 | `_meta.updatedBy` | caller의 쓰는 주체 | 같음 |
 
-`_meta.updatedBy`는 caller와 owner로 정합니다(`WRITERS`): ralplan caller는 `ralplan_tool`/`ralplan_hook`, ultragoal caller는 `ultragoal_tool`/`ultragoal_hook`, deep-interview caller는 `deep_interview_tool`/`deep_interview_hook`.
+`_meta.updatedBy`는 caller와 owner로 정합니다(`writerFor(caller, owner)`, `src/skill-state/handoff.ts:179-180`): ralplan caller는 `ralplan_tool`/`ralplan_hook`, ultragoal caller는 `ultragoal_tool`/`ultragoal_hook`, deep-interview caller는 `deep_interview_tool`/`deep_interview_hook`.
 
 지우는 필드가 없으므로 왕복하면 이전 인계 필드가 남습니다. 예: ultragoal → ralplan → ultragoal을 거치면 ultragoal state에 옛 `handoff_to: "ralplan"`과 새 `handoff_from: "ralplan"`이 함께 있습니다.
-
-### 감사용 전이 진단
-
-callee state를 쓸 때 조건이 모두 맞으면, `handoff` 감사 행보다 먼저 `invalid_transition_detected` 행을 하나 남깁니다. 실패해도 무시합니다(best-effort). 쓰기는 그대로 진행됩니다.
-
-- 새 state가 `active: true`이고(callee는 항상 참, caller는 항상 거짓),
-- 전이 표가 있는 skill이고(ralplan과 deep-interview. ultragoal은 없음),
-- 이전 단계가 있고, 새 단계와 다르고, 그 skill의 단계이고,
-- 전이 표에 그 줄이 없을 때.
-
-ultragoal → ralplan 인계에서 이 행이 남는 것은 저장된 ralplan 단계가 `RALPLAN_STATES`(아홉 stage와 `handoff`)에 들고 `planner`가 아닐 때입니다. `RALPLAN_TRANSITIONS`에는 `planner`로 들어가는 줄이 없으므로 이 경우는 항상 남습니다. 예: `final`, `handoff`, `architect`. 반대로 ralplan state가 없거나, `planner`이거나, `RALPLAN_STATES` 밖의 해제 단계(`ralplan clear` 뒤의 `complete` 등)이면 남지 않습니다. (임시 폴더 확인: `complete`에서 0행, `architect`에서 1행.)
-
-deep-interview가 callee일 때도 같습니다. `DEEP_INTERVIEW_TRANSITIONS`에는 `interviewing`으로 들어가는 줄이 없으므로, 저장된 deep-interview phase가 `handoff`나 `complete`이면 이 행이 남고, state가 없거나 `interviewing`이면 남지 않습니다.
 
 ### 활성 행 쓰기 (`writeHandoffRowsTx`)
 
@@ -550,7 +537,7 @@ deep-interview가 callee일 때도 같습니다. `DEEP_INTERVIEW_TRANSITIONS`에
 | 처음 내용 | `{version: 1, mutation_id, status: "pending", created_at, updated_at, caller, callee, paths: [callee state, caller state, 스냅숏], steps: []}` |
 | 만들 때 | 같은 파일이 이미 있으면 덮지 않고 그대로 둡니다(no clobber). |
 | 갱신 | 병합 패치 + 새 `updated_at`. 단계마다 `steps`에 이름을 더함 |
-| 성공 | `pending` → `committed`로 쓴 뒤 → 파일 삭제. 삭제가 실패하면 `committed` 파일이 남고 오류로 치지 않습니다. |
+| 성공 | `pending` → `committed`로 쓴 뒤 → 파일 삭제. 삭제가 실패하면 `committed` 파일이 남고 오류로 치지 않습니다. 파일은 지워졌는데 그 감사 행 쓰기가 실패한 것이면 오류로 올립니다(실패 뒤 저널을 다시 읽어 없으면 다시 던짐, `src/skill-state/journal.ts:126-136`). |
 | 중간 실패 | 예외가 그대로 올라가고 저널은 `pending`과 거기까지의 `steps`로 남습니다. 이미 쓴 state와 행은 되돌리지 않습니다. 이를 알리는 곳은 없습니다([known-limits.md](known-limits.md) U15). |
 
 저널 쓰기와 삭제마다 감사 행(`write-transaction-journal`, `remove-transaction-journal`)을 인계의 `mutation_id`로 남깁니다. gjc는 저널을 감사하지 않습니다(편차, `journal.ts` 헤더). 행·스냅숏·원장·progress 감사 행은 각자 새 `mutation_id`를 씁니다. 감사 로그 형식은 [state-and-files.md](state-and-files.md)에 있습니다.

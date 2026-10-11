@@ -72,7 +72,7 @@
 | `state/goal-continuation.json` | goal 훅 `decideContinuation`, `releaseHold` | 같은 훅, `record_critic_verdict`(critic 재시작 표시) | continuation 카운터·보류 |
 | `state/active/<skill>.json` | `src/skill-state/rows.ts`의 `syncActiveRowTx`, `writeHandoffRowsTx` | `rebuildSnapshotTx`, `readVisiblePrimaryTx`, doctor, `clear`의 stale 검사, 압축 복구(ultragoal 행), 인계(호출자 이전 행의 `handoff_from`) | 활성 행 |
 | `state/skill-active-state.json` | `rebuildSnapshotTx` | `readVisiblePrimaryTx`, doctor, `clear`의 stale 검사(행이 없을 때) | 스냅숏 |
-| `state/audit.jsonl` | `src/skill-state/audit.ts`의 `appendAudit` | 코드 안에 읽는 곳 없음 | 파일 변경마다 한 행 |
+| `state/audit.jsonl` | `WorkflowTx`의 감사하는 쓰기 함수(`src/state.ts`; 행 모양은 `src/skill-state/audit.ts`의 `auditLine`) | 코드 안에 읽는 곳 없음 | 파일 변경마다 한 행 |
 | `state/transactions/<id>.json` | `src/skill-state/journal.ts`(인계 중) | 저널 함수 자신(덮어쓰기 방지, 병합)만. doctor는 읽지 않음 | 인계 저널(증거 전용) |
 
 ## 2. 쓰기 큐: `workflowTransaction`
@@ -96,7 +96,7 @@
 
 ### `WorkflowTx` API
 
-몸체가 받는 `tx`(`src/state.ts`의 `WorkflowTx` = `RalplanTx` + 추가 경로·메서드). 어느 것도 큐를 타지 않습니다.
+몸체가 받는 `tx`(`src/state.ts`의 `WorkflowTx` = `RalplanTx` + 추가 경로·메서드). 어느 것도 큐를 타지 않습니다. 쓰기 함수는 모두 마지막 인자로 감사 옵션 `audit`를 꼭 받습니다. 감사 dict(`WriteAudit`, `src/skill-state/audit.ts:31-39`)를 주면 쓰기가 성공한 바로 뒤 그 행을 `state/audit.jsonl`에 남기고, `false`면 남기지 않습니다. `false`는 continuation 기록 두 파일(`state/ralplan-continuation.json`, `state/goal-continuation.json`)만 씁니다(공통 쓰기 계층 deviation 1).
 
 | 이름 | 내용 |
 |---|---|
@@ -113,14 +113,15 @@
 | `paths.ultragoal` | `{dir, goals, progress, ledger}` = `ultragoal/`, `goals.json`, `progress.txt`, `ledger.jsonl` |
 | `paths.goalState` | `state/goal-state.json` |
 | `paths.goalContinuation` | `state/goal-continuation.json` |
-| `readState()` / `writeState(state, updatedBy)` | ralplan mode-state 읽기·쓰기 |
+| `readState()` | ralplan mode-state 읽기 |
 | `readModeState(mode)` | mode-state 읽기. 없으면 `undefined` |
-| `writeModeState(mode, state, updatedBy)` | mode-state 전체 교체(병합 아님). `_meta` 새로 만듦 |
+| `writeModeState(mode, state, updatedBy, {audit, fromPhase?, forced?})` | mode-state 전체 교체(병합 아님), 전이 검사 없음. `_meta` 새로 만듦. 감사 행의 `from_phase`·`forced`는 넘긴 옵션 그대로. ultragoal의 mode-state 쓰기는 모두 이것 |
+| `writeModeStateChecked(mode, state, updatedBy, {audit, fromPhase?, forced?})` | 전이 검사 뒤 `writeModeState`와 같은 쓰기. 강제가 아닌 활성 쓰기의 단계가 그 mode의 manifest 단계가 아니면 거부하고, 출발 단계(`fromPhase`, 없으면 저장된 활성 단계)에서 표에 없는 이동이면 `invalid_transition_detected` 행을 먼저 남김. ralplan `start`·`write`와 deep-interview `start`·`spec`만 씀 |
 | `readText(file)` | 텍스트 읽기. 없으면 `undefined` |
-| `writeText(file, text)` | 원자적 교체 쓰기 |
-| `appendLine(file, line)` | 한 줄 덧붙이기. `line`에 줄바꿈이 있으면 거부(JSONL) |
+| `writeText(file, text, {audit})` | 원자적 교체 쓰기, 그 뒤 감사 행 |
+| `appendLine(file, line, {audit})` | 한 줄 덧붙이기, 그 뒤 감사 행. `line`에 줄바꿈이 있으면 거부(JSONL) |
 | `list(dir)` | 정렬된 항목 이름. 디렉터리가 없으면 `[]` |
-| `remove(file)` | 삭제. `"deleted"` 또는 `"missing"` |
+| `remove(file, {audit})` | 삭제. `"deleted"` 또는 `"missing"`. 감사 행은 실제로 지웠을 때만 |
 
 경로 규칙:
 
@@ -138,7 +139,7 @@
 
 - `readModeState`는 `readFile` → `validateStoredState`를 거칩니다. JSON 문법 오류는 `state file is corrupted; it was preserved`, 크기 제한 위반은 `state file is invalid; it was preserved: …`로 던집니다. 파일의 `_meta.sessionId`(없으면 `session_id`)가 owner와 다르면 `state scope does not match this session; it was preserved`를 던집니다.
 - 크기 제한(`payloadError`, `_meta` 제외): JSON 객체, 최상위 키 100개 이하, 중첩 깊이 10 이하, UTF-8 1 MiB(1,048,576바이트) 이하.
-- `writeModeState`는 `_meta = {mode, sessionId, updatedAt, updatedBy}`를 매번 새로 붙입니다(`writeMerged`).
+- `writeModeState`(와 그 쓰기를 쓰는 `writeModeStateChecked`)는 `_meta = {mode, sessionId, updatedAt, updatedBy}`를 매번 새로 붙입니다(`writeMerged`).
 
 `updatedBy`는 `StateWriter` 값입니다. 코드에 있는 값은 여섯 개뿐입니다.
 
@@ -146,7 +147,7 @@
 |---|---|
 | `ultragoal_tool` | reconcile(현재 코드의 모든 호출이 기본 owner `open-gajae-runtime`), `state` op, `clear`, ultragoal이 호출자인 `handoff` op |
 | `ultragoal_hook` | `skill ultragoal` 로드 seed(`seedUltragoalTx`, owner `open-gajae-hook`) |
-| `ralplan_tool` | `ralplan handoff(to="ultragoal")` op: 인계는 두 상태를 모두 호출자의 writer로 씁니다(`handoff.ts`의 `WRITERS`) |
+| `ralplan_tool` | `ralplan handoff(to="ultragoal")` op: 인계는 두 상태를 모두 호출자의 writer로 씁니다(`handoff.ts`의 `writerFor(caller, owner)`) |
 | `ralplan_hook` | 같은 execution에서 `skill ultragoal`을 로드해 훅이 ralplan을 인계할 때 |
 | `deep_interview_tool` | `deep-interview handoff(to: "ultragoal")` op |
 | `deep_interview_hook` | 같은 execution에서 `skill deep-interview` 뒤 `skill ultragoal`을 로드해 deep-interview 로드 게이트가 인계할 때 |
@@ -553,7 +554,7 @@ reconcile, seed, 인계, `state`, `clear`는 모두 기존 필드 위에 병합�
 
 ### `state/audit.jsonl` (감사 로그)
 
-출처: `src/skill-state/audit.ts`의 `appendAudit`(gjc `state-writer.ts`의 `maybeAudit`; 편차 ralplan 21). 파일을 하나 바꿀 때마다 한 줄을 덧붙입니다. 코드는 이 파일을 읽지 않습니다.
+출처: `src/state.ts`의 쓰기 계층(`WorkflowTx`의 쓰기 함수가 쓰기 직후 `auditRow`로 남김)과 `src/skill-state/audit.ts`의 `auditLine`(gjc `state-writer.ts`의 `maybeAudit`; 편차 ralplan 21, 공통 쓰기 계층 1~2). 파일을 하나 바꿀 때마다 한 줄을 덧붙입니다. 코드는 이 파일을 읽지 않습니다.
 
 | 필드 | 뜻 |
 |---|---|
@@ -563,7 +564,7 @@ reconcile, seed, 인계, `state`, `clear`는 모두 기존 필드 위에 병합�
 | `verb` | 아래 표 |
 | `owner` | `open-gajae-runtime`(도구) 또는 `open-gajae-hook`(훅). gjc는 `gjc-runtime`/`gjc-hook` |
 | `mutation_id` | 준 값, 없으면 새 UUID |
-| `from_phase`, `to_phase` | 선택. mode-state 쓰기(`reconcile`, seed `write`, `state` op `write`, `clear`, `handoff`, `invalid_transition_detected`)에만. 이 행들에는 단계가 바뀌지 않아도(예: `complete` → `complete`) `to_phase`가 늘 있고, `from_phase`는 이전 상태에 단계가 있을 때만 있습니다 |
+| `from_phase`, `to_phase` | 선택. mode-state 쓰기(`reconcile`, seed `write`, `state` op `write`, `clear`, `handoff`)와 검사 쓰기의 `invalid_transition_detected`(ralplan `start`·`write`, deep-interview `start`·`spec`)에만. 이 행들에는 단계가 바뀌지 않아도(예: `complete` → `complete`) `to_phase`가 늘 있고, `from_phase`는 쓰는 쪽이 이전 단계를 넘겼을 때만 있습니다 |
 | `forced` | 기본 `false`. reconcile은 `true`, `clear`는 `force` 값 |
 | `paths` | 바꾼 파일 경로 하나의 배열 |
 
@@ -582,7 +583,6 @@ ultragoal에서 나오는 감사 행:
 | `write` | `state` | `state/ultragoal-state.json` | `ultragoal` | `ultragoal:<ISO>` | `state` op |
 | `clear` | `state` | `state/ultragoal-state.json` | `ultragoal` | `ultragoal:clear:<ISO>` | `clear`, `to_phase: complete` |
 | `handoff` | `state` | 호출자·피호출자 mode-state | 해당 스킬 | `<caller>:handoff:<callee>:<ISO>` | 인계(`writeHandoffStateTx`) |
-| `invalid_transition_detected` | `state` | ralplan mode-state | `ralplan` | 인계 ID | 인계 중 ralplan 전이표에 없는 active 쓰기. ultragoal에는 manifest를 등록하지 않아 나오지 않습니다 |
 | `write-active-entry` | `state` | `state/active/<skill>.json` | — | UUID | `writeRowTx` |
 | `remove-active-entry` | `state` | 같음 | — | UUID | 비활성 동기화로 실제로 지웠을 때만 |
 | `remove-superseded-pipeline-entry` | `state` | 상위 스킬 행 | — | UUID | 활성 동기화가 상위 행을 실제로 지웠을 때만 |
@@ -695,7 +695,7 @@ deep-interview 개정(2026-10-02)부터 deep-interview도 gjc처럼 활성 행�
 | `active` | `handoff` | `handoff` |
 | `blocked` | `handoff` | `handoff` |
 
-`isValidUltragoalTransition(from, to)`는 같은 단계이거나 표에 있는 칸이면 참입니다. 이 표를 검사하는 곳은 `state` op 하나입니다(`ultragoalPhasePatchError`: 목표 단계가 manifest 단계가 아니면 `unknown ultragoal phase "<p>"`, 저장된 단계도 manifest 단계인데 표에 없는 이동이면 `invalid ultragoal phase transition from <a> to <b>`). reconcile, seed, 인계, `clear`는 표를 보지 않습니다. 인계의 `invalid_transition_detected` 감사 행도 ultragoal에는 나오지 않습니다(ultragoal에 manifest를 등록하지 않음).
+`isValidUltragoalTransition(from, to)`는 같은 단계이거나 표에 있는 칸이면 참입니다. 이 표를 검사하는 곳은 `state` op 하나입니다(`ultragoalPhasePatchError`: 목표 단계가 manifest 단계가 아니면 `unknown ultragoal phase "<p>"`, 저장된 단계도 manifest 단계인데 표에 없는 이동이면 `invalid ultragoal phase transition from <a> to <b>`). reconcile, seed, 인계, `clear`는 표를 보지 않습니다. 인계는 어느 skill에도 전이 진단 행을 남기지 않습니다(검사 없는 쓰기). ultragoal은 검사 쓰기(`writeModeStateChecked`)를 쓰지 않습니다.
 
 ### reconcile이 단계를 정하는 법
 

@@ -12,9 +12,9 @@
 
 | op | 필요한 상태 | 쓰는 것 (순서대로) | 감사 행 `category/verb` | 결과 |
 |---|---|---|---|---|
-| `start` | 없음. ralplan·ultragoal이 보이는 주 skill이면 거부 | 상태 → 행 → 스냅숏 | `state/write` | JSON |
+| `start` | 없음. ralplan·ultragoal이 보이는 주 skill이면 거부 | 상태 → 행 → 스냅숏 | `state/write`(저장된 상태가 활성 `handoff`·`complete`면 그 앞에 `state/invalid_transition_detected`) | JSON |
 | `write` | 활성 | 상태 → 행 → 스냅숏 | `state/write-incremental` 또는 `state/write-reset` | JSON |
-| `spec` | 활성 | 스펙 파일 → index 한 줄 → 상태 → 행 → 스냅숏 | `artifact/write`, `ledger/append`, `state/write` | JSON |
+| `spec` | 활성 | 스펙 파일 → index 한 줄 → 상태 → 행 → 스냅숏 | `artifact/write`, `ledger/append`, `state/write`(활성 `complete` 위면 그 앞에 `state/invalid_transition_detected`) | JSON |
 | `spec(…, handoff:"ralplan")` | 활성 | `spec`의 것 → ralplan 시드 → 저널 인계 | 위 + ralplan `state/write` + 인계 행들 | 결과 줄 + JSON |
 | `handoff` | 활성, phase `handoff`, 확인된 스펙 | 저널 → callee 상태 → deep-interview 상태 → 두 행 → 스냅숏 → 저널 정리 | `state/handoff` 둘 + 저널 행 | 결과 줄 + JSON |
 | `status` | 없음 | 없음 | 없음 | JSON (손상이면 경고 줄 하나 더) |
@@ -29,7 +29,7 @@
 `src/deep-interview-runtime/tool.ts:90-165`의 `deepInterviewTool`이 도구를 만들고, `src/tools.ts:57-63`의 `createTools`가 등록합니다. 등록할 때 넘기는 것은 넷입니다.
 
 - `rootSession`: `src/hooks.ts:626-658`의 `rootSession`(계보 루트, 실패하면 예외)
-- `settings`: `src/config.ts`의 `loadSettings`가 setup 때 한 번 정한 `{ambiguityThreshold, source}`. 없으면 `{0.05, "default"}`(`src/deep-interview-runtime/tool.ts:91`, `store.ts:111-114`)
+- `settings`: `src/config.ts`의 `loadSettings`가 setup 때 한 번 정한 `{ambiguityThreshold, source}`. 없으면 `{0.05, "default"}`(`src/deep-interview-runtime/tool.ts:91`, `store.ts:114-117`)
 - `projectDir`: 상대 `spec(path)`의 기준 디렉터리
 - `seedRalplanTx`: 결합 호출의 ralplan 시드. `startRunTx(tx, root, input, projectDir, owner)`를 감싼 콜백입니다. 두 런타임이 서로 import하지 않게 여기서 주입합니다(계획 E-7).
 
@@ -66,7 +66,7 @@ This is the deep-interview state tool, not the skill: load the `deep-interview` 
 | `force` | boolean | `clear` |
 
 - op가 쓰지 않는 필드는 조용히 무시합니다.
-- `defineTool`이 만든 `execute`는 입력을 다시 파싱하지 않습니다(`src/tools/define.ts`). 그래서 enum 밖의 값이나 객체가 아닌 `input`·`patch`를 스키마가 거르는지는 호스트가 호출 전에 이 스키마를 쓰는지에 달려 있고, 이 문서를 쓰며 호스트로 확인하지 않았습니다. 런타임은 `write`의 `input`(`store.ts:372`)과 `state`의 `patch`(`tool.ts:156`)를 따로 검사합니다. 테스트는 모두 `tool.input.parse`를 먼저 부릅니다.
+- `defineTool`이 만든 `execute`는 입력을 다시 파싱하지 않습니다(`src/tools/define.ts`). 그래서 enum 밖의 값이나 객체가 아닌 `input`·`patch`를 스키마가 거르는지는 호스트가 호출 전에 이 스키마를 쓰는지에 달려 있고, 이 문서를 쓰며 호스트로 확인하지 않았습니다. 런타임은 `write`의 `input`(`store.ts:348`)과 `state`의 `patch`(`tool.ts:156`)를 따로 검사합니다. 테스트는 모두 `tool.input.parse`를 먼저 부릅니다.
 
 ## 소유 세션과 트랜잭션
 
@@ -82,7 +82,7 @@ This is the deep-interview state tool, not the skill: load the `deep-interview` 
 
 ### 트랜잭션 하나
 
-op마다 `store.workflowTransaction(owner, tx => …)` 하나를 열고, 그 안에서 `store.ts`의 op 함수를 부릅니다. `workflowTransaction`(`src/state.ts:476-578`)은 루트 세션의 쓰기 큐 하나를 잡습니다. ralplan·ultragoal·goal의 op와 훅 판단도 같은 큐에서 기다립니다(계획 C-1).
+op마다 `store.workflowTransaction(owner, tx => …)` 하나를 열고, 그 안에서 `store.ts`의 op 함수를 부릅니다. `workflowTransaction`(`src/state.ts:546-709`)은 루트 세션의 쓰기 큐 하나를 잡습니다. ralplan·ultragoal·goal의 op와 훅 판단도 같은 큐에서 기다립니다(계획 C-1).
 
 - **검사 먼저**: op 함수는 다음 상태를 메모리에서 끝까지 만들고, 모든 검사(C-3 허용 상태, 입력 상한, 라운드 검사, StateStore 한도)를 마친 뒤 첫 쓰기를 합니다(`store.ts:1-13` 머리말, 계획 C-7, DR-31). 그래서 거부된 op는 파일과 감사 로그를 한 바이트도 바꾸지 않습니다(테스트 T9).
 - **되돌리기 없음**: 트랜잭션은 줄 세우기일 뿐입니다. 첫 쓰기 뒤의 I/O 실패는 이미 쓴 파일을 남깁니다.
@@ -91,7 +91,7 @@ op마다 `store.workflowTransaction(owner, tx => …)` 하나를 열고, 그 안
 
 ### 결과와 거부의 형식
 
-- **정상 결과**: 대부분 2칸 들여쓰기 JSON입니다(`store.ts:278-280`의 `json`). 키는 gjc `--json` 키를 따릅니다(계획 PQ-24 A, DR-27).
+- **정상 결과**: 대부분 2칸 들여쓰기 JSON입니다(`store.ts:254-256`의 `json`). 키는 gjc `--json` 키를 따릅니다(계획 PQ-24 A, DR-27).
 - **doctor**: gjc의 사람용 텍스트입니다.
 - **handoff와 결합 호출**: 결과 줄 하나, 줄바꿈, 그다음 JSON입니다. 결과 줄은 다음에 할 일을 알립니다(계획 DR-9).
 - **status의 손상 경고**: JSON 뒤에 `WARNING:` 줄 하나가 붙습니다.
@@ -121,15 +121,15 @@ op마다 `store.workflowTransaction(owner, tx => …)` 하나를 열고, 그 안
 
 ## 공통 도우미
 
-### 상태 읽기 (`readDeepInterviewStateTx`, `store.ts:191-198`)
+### 상태 읽기 (`readDeepInterviewStateTx`, `store.ts:189-196`)
 
-gjc `readExistingStateForMutation`입니다. `tx.readModeState("deep-interview")`의 결과를 셋으로 나눕니다. `_meta`는 떼어 냅니다(`payloadOf`, `store.ts:182-186`).
+gjc `readExistingStateForMutation`입니다. `tx.readModeState("deep-interview")`의 결과를 셋으로 나눕니다. `_meta`는 떼어 냅니다(`payloadOf`, `store.ts:180-184`).
 
 - `absent`: 파일이 없음
 - `corrupt`: 읽기가 예외를 던짐. 문구는 StateStore가 정합니다([state-and-files.md](state-and-files.md)). 예: `state file is corrupted; it was preserved`(JSON 아님), `state file is invalid; it was preserved: <한도 오류>`, `state scope does not match this session; it was preserved`(`_meta.sessionId` 또는 `session_id`가 루트와 다름)
 - `valid`: 그 밖
 
-### 활성 요구 (`activeStateTx`, `store.ts:200-215`)
+### 활성 요구 (`activeStateTx`, `store.ts:198-213`)
 
 `write`, `spec`, `handoff`, `state`가 씁니다(deep-interview 편차 30). 차례로 셋을 봅니다. `state`는 패치에 `active: true`가 있으면 비활성 `interviewing`(취소된 인터뷰)도 받습니다([state](#state)). 문구는 `src/deep-interview-runtime/messages.ts:59-82`에 있고, `<op>`는 op 이름입니다.
 
@@ -141,38 +141,34 @@ gjc `readExistingStateForMutation`입니다. `tx.readModeState("deep-interview")
 | 비활성 `interviewing` (취소됨) | ``deep-interview <op>: the interview was cancelled (inactive, phase interviewing). Resume it with `deep-interview state(patch={"active": true})`, or start a new interview with `deep-interview start`.`` |
 | 그 밖의 비활성 | ``deep-interview <op>: the interview is not active (phase <phase \| (none)>). Start a new interview with `deep-interview start`, or reopen it from a finished ralplan with `ralplan handoff(to: "deep-interview")`.`` |
 
-### 행 동기화 (`syncRowTx`, `store.ts:230-254`)
+### 행 동기화 (`syncRowTx`, `store.ts:228-252`)
 
 gjc `syncDeepInterviewHud`입니다. `start`, `write`, `spec`, `state`가 상태를 쓴 뒤 부릅니다.
 
 - phase는 상태의 `current_phase`, 없으면 `interviewing`입니다.
 - 행의 `active`는 `state` op에서는 상태의 `active`(`false`가 아니면 참), 나머지 op에서는 "phase가 `complete`가 아님"입니다. 그래서 활성 `complete` 상태에 `write`하면 행이 지워집니다.
 - HUD 칩은 `deriveDeepInterviewHud(봉투, {phase, specStatus})`로 만듭니다. `spec`만 `specStatus: "persisted"`를 넘깁니다.
-- 실제 쓰기는 공통 `syncActiveRowTx`(`src/skill-state/rows.ts:149-162`)입니다. 활성이면 행을 쓰고, 비활성이면 지우고, 스냅숏을 다시 만듭니다.
+- 실제 쓰기는 공통 `syncActiveRowTx`(`src/skill-state/rows.ts:144-157`)입니다. 활성이면 행을 쓰고, 비활성이면 지우고, 스냅숏을 다시 만듭니다.
 - **best-effort**: 행 쓰기의 예외는 삼킵니다. op 결과는 바뀌지 않습니다.
-
-### 상태 감사 행 (`auditStateTx`, `store.ts:256-276`)
-
-`{category: "state", verb, owner: "open-gajae-runtime", skill: "deep-interview", mutation_id, from_phase, to_phase, forced, paths: [상태 경로]}`를 한 줄 남깁니다.
 
 ## `start`
 
-새 인터뷰를 시드합니다. `startTx`(`store.ts:295-357`)가 맡습니다. gjc 출처는 `seedDeepInterviewState`(`deep-interview-runtime.ts:718-778`)와 시드 요약(`:891-903`)이고, 기준치 우선순위와 범위는 `:498-521`입니다(머리말 기준).
+새 인터뷰를 시드합니다. `startTx`(`store.ts:271-333`)가 맡습니다. gjc 출처는 `seedDeepInterviewState`(`deep-interview-runtime.ts:718-778`)와 시드 요약(`:891-903`)이고, 기준치 우선순위와 범위는 `:498-521`입니다(머리말 기준).
 
 - **입력**: `idea`, `threshold?`
 - **검사 순서**:
   1. `idea`를 trim해서 비었으면 `deep-interview start requires an idea, e.g. idea: "<idea>".`
   2. trim한 `idea`가 NFC 코드 포인트 50,000자를 넘으면 `initial_idea exceeds max length 50000`
   3. `threshold`를 줬으면 유한한 수이고 `0 < threshold ≤ 1`이어야 합니다. 아니면 `invalid threshold: <값>. Expected 0 < threshold <= 1.`
-  4. 보이는 주 skill(`readVisiblePrimaryTx`)이 `ralplan`이나 `ultragoal`이면 거부합니다(계획 D-HL2, deep-interview 편차 12). 행 파일을 읽을 수 없으면 주 skill이 없는 것으로 보고 지나갑니다(`otherPrimaryTx`, `store.ts:217-223`; 재개도 같은 함수를 씀).
+  4. 보이는 주 skill(`readVisiblePrimaryTx`)이 `ralplan`이나 `ultragoal`이면 거부합니다(계획 D-HL2, deep-interview 편차 12). 행 파일을 읽을 수 없으면 주 skill이 없는 것으로 보고 지나갑니다(`otherPrimaryTx`, `store.ts:215-221`; 재개도 같은 함수를 씀).
      ```
      deep-interview start is refused while <skill> is the active workflow (phase <phase>). To interview from here: while ultragoal runs, call `ultragoal handoff(to: "deep-interview", reason)`; once ralplan has finished (final), call `ralplan handoff(to: "deep-interview")`; or stop ralplan first with `ralplan state {"active": false}` or `ralplan clear`, then start.
      ```
      행에 phase가 없으면 ` (phase …)` 부분이 빠집니다(`messages.ts:45-56`).
-- **기준치**: `threshold`를 줬으면 그 값과 출처 `start(threshold)`(`START_THRESHOLD_SOURCE`, `store.ts:106`), 아니면 설정의 값과 출처(`~/.open-gajae/open-gajae.jsonc`, `./.open-gajae/open-gajae.jsonc`, `default`). 정하는 순서는 [entry-and-handoff.md](entry-and-handoff.md)에 있습니다.
-- **이전 상태**: 읽기만 합니다. 손상이어도 거부하지 않고, 유효하면 그 phase를 감사 행의 `from_phase`에 적습니다(계획 DR-3). 활성 인터뷰가 있어도 덮어씁니다. "활성 상태 위에서 `start`하지 말라"는 SKILL Phase 0의 규칙이고 코드는 막지 않습니다.
-- **만드는 봉투** (`store.ts:318-335`): `skill`, `version: 2`, `active: true`, `current_phase: "interviewing"`, `threshold`, `threshold_source`, `session_id`(루트), `updated_at`, 그리고 `state: {initial_idea, rounds: [], established_facts: [], current_ambiguity: 1.0, threshold, threshold_source}`. 이전 상태의 필드는 하나도 남지 않습니다. 스펙 파일과 index는 지우지 않습니다.
-- **쓰기**: `assertStatePayload`로 한도를 확인한 뒤 상태, 감사 행 `state/write`(`mutation_id` `deep-interview:start:<at>`, `to_phase` `interviewing`), 활성 행과 스냅숏.
+- **기준치**: `threshold`를 줬으면 그 값과 출처 `start(threshold)`(`START_THRESHOLD_SOURCE`, `store.ts:109`), 아니면 설정의 값과 출처(`~/.open-gajae/open-gajae.jsonc`, `./.open-gajae/open-gajae.jsonc`, `default`). 정하는 순서는 [entry-and-handoff.md](entry-and-handoff.md)에 있습니다.
+- **이전 상태**: `start`는 이전 상태를 따로 읽지 않고, 손상이어도 거부하지 않으며, 감사 행에 `from_phase`가 없습니다(gjc seed와 같음, deep-interview 편차 40). 검사 쓰기가 저장된 상태를 StateStore로 읽어(`storedActivePhase`, `src/state.ts:586-591`), 활성이고 phase가 `handoff`나 `complete`면 표에 `interviewing`으로 들어가는 간선이 없으므로 `state/invalid_transition_detected`(`from_phase` 그 phase, `to_phase` `interviewing`, `mutation_id`는 이 `start`의 것)를 먼저 남기고 그래도 씁니다. 손상되었거나 다른 세션의 상태, 비활성 상태는 진단 없이 덮어씁니다. 활성 인터뷰가 있어도 덮어씁니다. "활성 상태 위에서 `start`하지 말라"는 SKILL Phase 0의 규칙이고 코드는 막지 않습니다.
+- **만드는 봉투** (`store.ts:293-310`): `skill`, `version: 2`, `active: true`, `current_phase: "interviewing"`, `threshold`, `threshold_source`, `session_id`(루트), `updated_at`, 그리고 `state: {initial_idea, rounds: [], established_facts: [], current_ambiguity: 1.0, threshold, threshold_source}`. 이전 상태의 필드는 하나도 남지 않습니다. 스펙 파일과 index는 지우지 않습니다.
+- **쓰기**: `assertStatePayload`로 한도를 확인한 뒤 검사 쓰기 `tx.writeModeStateChecked`(`store.ts:312-321`, `fromPhase` 없음)로 상태와 감사 행 `state/write`(`mutation_id` `deep-interview:start:<at>`, `to_phase` `interviewing`, `from_phase` 없음; 위의 진단 행이 있으면 그 뒤), 활성 행과 스냅숏.
 - **결과**:
   ```json
   {
@@ -191,7 +187,7 @@ gjc `syncDeepInterviewHud`입니다. `start`, `write`, `spec`, `state`가 상태
 
 ## `write`
 
-인터뷰 내용(라운드, 사실, 그 밖의 필드)을 병합합니다. `writeTx`(`store.ts:371-428`)가 맡습니다. gjc 출처는 `deep-interview-stage.ts:428-474`(`computeMergedEnvelope`), `:830-920`(`handleWrite`), `state-runtime.ts:1232-1400`(deep-interview 쪽 병합 뒤 하한)입니다.
+인터뷰 내용(라운드, 사실, 그 밖의 필드)을 병합합니다. `writeTx`(`store.ts:347-406`)가 맡습니다. gjc 출처는 `deep-interview-stage.ts:428-474`(`computeMergedEnvelope`), `:830-920`(`handleWrite`), `state-runtime.ts:1232-1400`(deep-interview 쪽 병합 뒤 하한)입니다.
 
 - **입력**: `input`(객체), `reset?`
 - **검사와 계산 순서** (모두 메모리에서, 첫 쓰기 전):
@@ -220,7 +216,7 @@ gjc `syncDeepInterviewHud`입니다. `start`, `write`, `spec`, `state`가 상태
   Each scored round needs round, round_key, lifecycle, question_text, answer, ambiguity, scores.goal, scores.constraints, scores.criteria (round_key "round-<round>", lifecycle "scored", scores in 0..1; a brownfield interview also needs scores.context); Round 0 needs round_key "round-0", question_text and answer. See the round record shape in the deep-interview skill, Phase 2.
   ```
 - **쓰기**: 상태, 감사 행 `state/write-incremental`(또는 `reset`이면 `state/write-reset`, `mutation_id` `deep-interview:write:<at>`, `from_phase`는 현재, `to_phase`는 결과), 활성 행과 스냅숏.
-- **결과** (`store.ts:418-427`): 키는 `ok`, `verb: "write"`, `mode`(`incremental`·`reset`), `session_id`, `state_path`, `current_ambiguity`(수일 때만), `ambiguity_floor`, `ignored_runtime_owned_keys`(비어 있지 않을 때만). 최상위 `current_phase`·`active`와 `state.skill`을 넣은 입력의 결과:
+- **결과** (`store.ts:396-405`): 키는 `ok`, `verb: "write"`, `mode`(`incremental`·`reset`), `session_id`, `state_path`, `current_ambiguity`(수일 때만), `ambiguity_floor`, `ignored_runtime_owned_keys`(비어 있지 않을 때만). 최상위 `current_phase`·`active`와 `state.skill`을 넣은 입력의 결과:
   ```json
   {
     "ok": true,
@@ -247,7 +243,7 @@ gjc `syncDeepInterviewHud`입니다. `start`, `write`, `spec`, `state`가 상태
 
 ## `spec`
 
-최종 스펙을 저장하고 phase를 `handoff`로 옮깁니다. 도구 쪽 검사(`tool.ts:131-144`) 뒤 `specTx`(`store.ts:471-534`)가 맡고, 결과는 `writeSpecTx`(`store.ts:537-539`)가 JSON으로 바꿉니다. gjc 출처는 `persistDeepInterviewSpec`(`deep-interview-runtime.ts:612-716`)과 `resolveSpecContent`(`:151-163`)입니다.
+최종 스펙을 저장하고 phase를 `handoff`로 옮깁니다. 도구 쪽 검사(`tool.ts:131-144`) 뒤 `specTx`(`store.ts:449-501`)가 맡고, 결과는 `writeSpecTx`(`store.ts:504-506`)가 JSON으로 바꿉니다. gjc 출처는 `persistDeepInterviewSpec`(`deep-interview-runtime.ts:612-716`)과 `resolveSpecContent`(`:151-163`)입니다.
 
 - **입력**: `content` 또는 `path`, `slug?`, `handoff?`
 - **도구 쪽 검사 순서** (트랜잭션 밖):
@@ -257,7 +253,7 @@ gjc `syncDeepInterviewHud`입니다. `start`, `write`, `spec`, `state`가 상태
      - 빈 문자열이 아닌 `content`면 그대로
      - 빈 문자열이 아닌 `path`면 `resolveSpecContent(path, projectDir)`
      - 그 밖은 `content or path is required for deep-interview spec`
-  3. `resolveSpecContent`(`store.ts:439-450`, 계획 PQ-6 A): 상대 경로는 `projectDir` 기준, 절대 경로는 그대로 `stat`합니다.
+  3. `resolveSpecContent`(`store.ts:417-428`, 계획 PQ-6 A): 상대 경로는 `projectDir` 기준, 절대 경로는 그대로 `stat`합니다.
      - 일반 파일이면 UTF-8로 읽어 본문으로 씁니다.
      - `ENOENT`, `ENOTDIR`, `ENAMETOOLONG`이면 **값 자체**를 본문으로 씁니다. 디렉터리처럼 일반 파일이 아닌 경로도 값 자체가 본문입니다.
      - 그 밖의 오류는 `failed to read path <절대 경로>: <오류>`.
@@ -265,14 +261,14 @@ gjc `syncDeepInterviewHud`입니다. `start`, `write`, `spec`, `state`가 상태
 - **`specTx` 검사 순서**:
   1. 활성 요구(`activeStateTx`). phase는 보지 않습니다. 활성 `interviewing`, `handoff`, `complete`가 모두 받습니다.
   2. 본문이 NFC 코드 포인트 100,000자를 넘으면 `spec content exceeds max length 100000`.
-  3. slug: trim한 `slug`, 없으면 `defaultSpecSlug()`(UTC `YYYY-MM-DD-HHMM-<4 hex>`, `manifest.ts:308-315`). `safeComponent`(`src/state.ts:204-208`) 규칙(첫 글자 `[A-Za-z0-9_-]`, 그 뒤 `[A-Za-z0-9._-]` 63자까지, `..` 없음)에 어긋나면 `invalid path component for slug: <slug>`.
+  3. slug: trim한 `slug`, 없으면 `defaultSpecSlug()`(UTC `YYYY-MM-DD-HHMM-<4 hex>`, `manifest.ts:308-315`). `safeComponent`(`src/state.ts:274-278`) 규칙(첫 글자 `[A-Za-z0-9_-]`, 그 뒤 `[A-Za-z0-9._-]` 63자까지, `..` 없음)에 어긋나면 `invalid path component for slug: <slug>`.
   4. 본문 끝에 줄바꿈이 없으면 붙입니다. sha256은 붙인 뒤의 본문으로 계산합니다.
   5. 다음 상태를 만듭니다: 현재 상태 위에 `active: true`, `current_phase: "handoff"`, `skill`, `version: 2`, `spec_slug`, `spec_path`(절대 경로), `spec_sha256`, `spec_stage: "final"`, `spec_persisted_at`, `updated_at`, `session_id`. 읽기 경계를 거칩니다.
   6. `assertStatePayload`.
 - **쓰기** (gjc 순서, 감사 행은 모두 `mutation_id` `deep-interview:spec:<at>`):
   1. `specs/deep-interview-<slug>.md` + `artifact/write`
   2. `specs/deep-interview-index.jsonl`에 한 줄 `{slug, stage:"final", path, created_at, sha256}` + `ledger/append`
-  3. 상태 + `state/write`(`to_phase` `handoff`)
+  3. 검사 쓰기 `tx.writeModeStateChecked`(`store.ts:485-488`, `fromPhase` = 지금 phase)로 상태 + `state/write`(`from_phase` 지금 phase, `to_phase` `handoff`). 지금 상태가 활성 `complete`면 `complete→handoff`가 표에 없으므로 그 앞에 `state/invalid_transition_detected`(같은 `mutation_id`)가 남습니다. `interviewing`·`handoff`에서는 남지 않습니다
   4. 활성 행(phase `handoff`, `spec` 칩 `persisted`)과 스냅숏
 - **같은 slug**: 파일을 덮어쓰고 index에 줄을 하나 더 붙입니다. 다른 slug면 이전 파일은 남습니다.
 - **결과** (`SpecSummary`, gjc `RT:813-854` 키):
@@ -296,12 +292,12 @@ gjc `syncDeepInterviewHud`입니다. `start`, `write`, `spec`, `state`가 상태
 
 ### 결합 호출 `spec(…, handoff:"ralplan")`
 
-`specHandoffTx`(`store.ts:548-561`)가 한 트랜잭션 안에서 세 단계를 **차례로** 돕니다. gjc `handleSpecWrite`(`deep-interview-runtime.ts:805-871`)를 `--deliberate`로 부른 것과 같습니다(계획 DR-29, PQ-18 A, PQ-23 A, deep-interview 편차 38). 단계마다 자기 검사만 합니다.
+`specHandoffTx`(`store.ts:515-528`)가 한 트랜잭션 안에서 세 단계를 **차례로** 돕니다. gjc `handleSpecWrite`(`deep-interview-runtime.ts:805-871`)를 `--deliberate`로 부른 것과 같습니다(계획 DR-29, PQ-18 A, PQ-23 A, deep-interview 편차 38). 단계마다 자기 검사만 합니다.
 
 | 단계 | 함수 | 자기 검사 | 쓰는 것 |
 |---|---|---|---|
 | ① 스펙 저장 | `specTx` | 위 `spec`과 같음 | 스펙 파일, index, deep-interview 상태(`handoff`, `spec_*`), 행 |
-| ② ralplan 시드 | `seedRalplanTx` → `startRunTx`(`src/ralplan-runtime/store.ts:915-988`) | `startRunTx`의 것만: 손상된 ralplan 상태 거부, `run_id` 경로 성분 | ralplan 상태(새로 씀), ralplan 행, 스냅숏 |
+| ② ralplan 시드 | `seedRalplanTx` → `startRunTx`(`src/ralplan-runtime/store.ts:849-921`) | `startRunTx`의 것만: 손상된 ralplan 상태 거부, `run_id` 경로 성분 | ralplan 상태(새로 씀), ralplan 행, 스냅숏 |
 | ③ 넘기기 | `deepInterviewHandoffTx`(caller deep-interview → ralplan) | 활성, phase `handoff`, 스펙 확인, 저널 전 한도 검사 | 저널, 두 상태, 두 행, 스냅숏 |
 
 ②의 세부:
@@ -343,7 +339,7 @@ SKILL Phase 5b도 같은 복구를 안내합니다("read `deep-interview status`
 
 ## `handoff`
 
-스펙을 저장한 인터뷰를 ralplan이나 ultragoal로 넘깁니다. `handoffTx`(`store.ts:618-628`)가 결과를 만들고, 실제 일은 `deepInterviewHandoffTx`(`store.ts:599-615`)가 합니다. 같은 함수를 결합 호출 ③과 로드 게이트의 활성 `handoff` 분기도 씁니다. gjc 출처는 `state-runtime.ts:1496-1551`(넘기기 전 스펙 확인)과 공통 인계 `:1572-1881`입니다.
+스펙을 저장한 인터뷰를 ralplan이나 ultragoal로 넘깁니다. `handoffTx`(`store.ts:585-595`)가 결과를 만들고, 실제 일은 `deepInterviewHandoffTx`(`store.ts:566-582`)가 합니다. 같은 함수를 결합 호출 ③과 로드 게이트의 활성 `handoff` 분기도 씁니다. gjc 출처는 `state-runtime.ts:1496-1551`(넘기기 전 스펙 확인)과 공통 인계 `:1572-1881`입니다.
 
 - **입력**: `to`(`ralplan` \| `ultragoal`). 없으면 도구가 `to is required for deep-interview handoff ("ralplan" or "ultragoal")`로 거부합니다(`tool.ts:147`).
 - **검사 순서**:
@@ -352,7 +348,7 @@ SKILL Phase 5b도 같은 복구를 안내합니다("read `deep-interview status`
      ```
      deep-interview handoff needs phase handoff (persist the spec with `deep-interview spec` first); the current phase is <phase | (none)>.
      ```
-  3. 스펙 확인 `verifySpecTx`(`store.ts:572-592`). 하나라도 실패하면 그 문구로 거부합니다.
+  3. 스펙 확인 `verifySpecTx`(`store.ts:539-559`). 하나라도 실패하면 그 문구로 거부합니다.
 
      | 조건 | 문구 |
      |---|---|
@@ -395,9 +391,9 @@ SKILL Phase 5b도 같은 복구를 안내합니다("read `deep-interview status`
 
 ## `status`
 
-상태를 읽어 보여 줍니다. 아무것도 쓰지 않습니다. `statusTx`(`store.ts:673-682`), gjc `gjc state read deep-interview`.
+상태를 읽어 보여 줍니다. 아무것도 쓰지 않습니다. `statusTx`(`store.ts:640-649`), gjc `gjc state read deep-interview`.
 
-- **입력**: `fields?`(`STATE_FIELD_ALLOWLIST`, `store.ts:131-153`의 21개: `skill`, `phase`, `current_phase`, `next`, `active`, `status`, `fresh`, `fresh_until`, `receipt`, `artifact_path`, `plan_path`, `spec_path`, `run_id`, `stage`, `stage_n`, `session_id`, `updated_at`, `handoff_to`, `handoff_from`, `counts`, `hud`)
+- **입력**: `fields?`(`STATE_FIELD_ALLOWLIST`, `store.ts:134-156`의 21개: `skill`, `phase`, `current_phase`, `next`, `active`, `status`, `fresh`, `fresh_until`, `receipt`, `artifact_path`, `plan_path`, `spec_path`, `run_id`, `stage`, `stage_n`, `session_id`, `updated_at`, `handoff_to`, `handoff_from`, `counts`, `hud`)
 - **`fields`가 없을 때**: `{skill: "deep-interview", state: <읽기 경계를 거친 봉투>, storage_path}`. 상태가 없으면 `state: {}`입니다. `_meta`는 빠집니다.
   ```json
   {
@@ -406,7 +402,7 @@ SKILL Phase 5b도 같은 복구를 안내합니다("read `deep-interview status`
     "storage_path": "<session>/state/deep-interview-state.json"
   }
   ```
-- **`fields`가 있을 때** (`projectStateFields`, `store.ts:635-666`, gjc `state-renderer.ts:82-104`): 고른 필드만 냅니다.
+- **`fields`가 있을 때** (`projectStateFields`, `store.ts:602-633`, gjc `state-renderer.ts:82-104`): 고른 필드만 냅니다.
   - `skill`은 늘 `deep-interview`.
   - `phase`·`current_phase`는 상태의 `current_phase`, 없으면 `phase`, 그것도 없으면 `interviewing`. 그래서 상태가 없어도 `"phase": "interviewing"`이 나옵니다.
   - `next`는 전이 표에서 그 phase를 출발점으로 하는 행의 도착 phase들(`interviewing` → `["handoff", "complete"]`, `handoff` → `["complete"]`).
@@ -431,7 +427,7 @@ SKILL Phase 5b도 같은 복구를 안내합니다("read `deep-interview status`
 
 ## `doctor`
 
-deep-interview의 상태, 행, 스냅숏을 읽기 전용으로 검사합니다. `doctorTx`(`store.ts:685-687`)가 공통 `collectDoctorSummaryTx(tx, "deep-interview")`와 `renderDoctorText`(`src/skill-state/doctor.ts:149-298`)를 부릅니다. 검사 항목은 [state-and-files.md](state-and-files.md)에 있습니다. 아무것도 고치지 않습니다.
+deep-interview의 상태, 행, 스냅숏을 읽기 전용으로 검사합니다. `doctorTx`(`store.ts:652-654`)가 공통 `collectDoctorSummaryTx(tx, "deep-interview")`와 `renderDoctorText`(`src/skill-state/doctor.ts:149-298`)를 부릅니다. 검사 항목은 [state-and-files.md](state-and-files.md)에 있습니다. 아무것도 고치지 않습니다.
 
 - **입력**: 없음
 - **결과**: gjc 텍스트. `journals_scanned` 줄이 없습니다(deep-interview 편차 21).
@@ -451,7 +447,7 @@ deep-interview의 상태, 행, 스냅숏을 읽기 전용으로 검사합니다.
 
 ## `state`
 
-봉투에 패치를 병합합니다. gjc `gjc state deep-interview write`이고, 런타임 소유 필드를 거부하는 점이 다릅니다(deep-interview 편차 19). `patchStateTx`(`store.ts:700-750`)가 맡습니다.
+봉투에 패치를 병합합니다. gjc `gjc state deep-interview write`이고, 런타임 소유 필드를 거부하는 점이 다릅니다(deep-interview 편차 19). `patchStateTx`(`store.ts:667-719`)가 맡습니다.
 
 - **입력**: `patch`(객체). 없으면 도구가 `patch is required for deep-interview state`로 거부합니다(`tool.ts:156`).
 - **검사 순서**:
@@ -493,12 +489,12 @@ deep-interview의 상태, 행, 스냅숏을 읽기 전용으로 검사합니다.
 
 ## `clear`
 
-인터뷰를 끝냅니다. `clearStateTx`(`store.ts:785-820`), gjc `handleClear`(`state-runtime.ts:1402-1490`)와 `describeStaleClearState`(`:244-270`)입니다(계획 DR-15).
+인터뷰를 끝냅니다. `clearStateTx`(`store.ts:754-792`), gjc `handleClear`(`state-runtime.ts:1402-1490`)와 `describeStaleClearState`(`:244-270`)입니다(계획 DR-15).
 
 - **입력**: `force?`
 - **검사 순서** (`force`면 둘 다 건너뜀):
   1. 상태가 손상이면 `existing state for deep-interview is corrupt or tampered (<error>); use force: true to overwrite`.
-  2. 낡음 판정 `describeStaleClearTx`(`store.ts:757-777`):
+  2. 낡음 판정 `describeStaleClearTx`(`store.ts:726-746`):
      - phase가 release phase이고 `inactive`가 아니면(`complete`, `completed`, `failed`, `cancelled`, `canceled`) 낡음: `mode-state is already terminal (<phase>)`
      - 행 파일을 읽을 수 없으면 바로 거부: `active row <path> is unreadable (<error>); use force: true to clear`
      - 보이는 항목(skill이 `deep-interview`인 행 파일, 없으면 스냅숏의 같은 skill 항목)이 활성인데 phase가 상태와 다르면 낡음: `active-state phase <행 phase> differs from mode-state phase <상태 phase>`

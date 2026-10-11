@@ -48,7 +48,7 @@ async function fixture(body: (h: Harness) => Promise<void>) {
 }
 
 const row = (tx: WorkflowTx, entry: Record<string, unknown>) =>
-  tx.writeText(tx.paths.activeRow(String(entry.skill)), JSON.stringify(entry));
+  tx.writeText(tx.paths.activeRow(String(entry.skill)), JSON.stringify(entry), { audit: false });
 
 test("rows: the snapshot primary follows the pipeline rank, as does the visible primary (DR-13, C-3)", async () => {
   await fixture(async ({ run, json }) => {
@@ -67,7 +67,7 @@ test("rows: the snapshot primary follows the pipeline rank, as does the visible 
     // visible phase is the locked mode-state phase (`withCanonicalRalplanPhase`).
     await run(async (tx) => {
       await row(tx, { skill: "ultragoal", active: false, phase: "handoff", updated_at: "2026-09-30T04:00:00Z" });
-      await tx.writeState({ skill: "ralplan", active: true, current_phase: "final" }, "ralplan_tool");
+      await tx.writeModeState("ralplan", { skill: "ralplan", active: true, current_phase: "final" }, "ralplan_tool", { audit: false });
       await rebuildSnapshotTx(tx, RUNTIME_OWNER);
     });
     expect(await json("state", "skill-active-state.json")).toMatchObject({ skill: "ralplan", phase: "revision" });
@@ -140,8 +140,8 @@ test("journal: pending, then committed and removed; a failed removal leaves it c
 test("handoff ultragoal → ralplan: fields kept, ralplan planner on its run, rows, journal gone, caller records last", async () => {
   await fixture(async ({ run, json, exists, audit, file }) => {
     await run(async (tx) => {
-      await tx.writeModeState("ultragoal", { skill: "ultragoal", active: true, current_phase: "active", kept: "u" }, "ultragoal_tool");
-      await tx.writeModeState("ralplan", { skill: "ralplan", active: false, current_phase: "handoff", run_id: "r1" }, "ralplan_tool");
+      await tx.writeModeState("ultragoal", { skill: "ultragoal", active: true, current_phase: "active", kept: "u" }, "ultragoal_tool", { audit: false });
+      await tx.writeModeState("ralplan", { skill: "ralplan", active: false, current_phase: "handoff", run_id: "r1" }, "ralplan_tool", { audit: false });
     });
     const recorded: unknown[] = [];
     const receipt = await run((tx) =>
@@ -183,18 +183,16 @@ test("handoff ultragoal → ralplan: fields kept, ralplan planner on its run, ro
       ["ralplan", "handoff", "planner", receipt.mutation_id],
       ["ultragoal", "active", "handoff", receipt.mutation_id],
     ]);
-    // gjc's audit-only diagnostic: ralplan has no handoff → planner edge.
-    expect(rows.filter((r) => r.verb === "invalid_transition_detected").map((r) => [r.skill, r.from_phase, r.to_phase])).toEqual([
-      ["ralplan", "handoff", "planner"],
-    ]);
+    // gjc's handoff writes through the unchecked writer (state-runtime.ts:688-741 → state-writer.ts:888-943): no diagnostic.
+    expect(rows.filter((r) => r.verb === "invalid_transition_detected").map((r) => [r.skill, r.from_phase, r.to_phase])).toEqual([]);
   });
 });
 
 test("handoff ultragoal → deep-interview: phase interviewing, fields kept, an active row with chips (DR-10)", async () => {
   await fixture(async ({ run, json, audit }) => {
     await run(async (tx) => {
-      await tx.writeModeState("ultragoal", { skill: "ultragoal", active: true, current_phase: "active" }, "ultragoal_tool");
-      await tx.writeModeState("deep-interview", { active: false, current_phase: "complete", state: { rounds: [{ round_key: "round-1" }] } }, "deep_interview_tool");
+      await tx.writeModeState("ultragoal", { skill: "ultragoal", active: true, current_phase: "active" }, "ultragoal_tool", { audit: false });
+      await tx.writeModeState("deep-interview", { active: false, current_phase: "complete", state: { rounds: [{ round_key: "round-1" }] } }, "deep_interview_tool", { audit: false });
     });
     await run((tx) => handoffWorkflowTx(tx, { caller: "ultragoal", callee: "deep-interview", sessionId: S, owner: RUNTIME_OWNER, reason: "clarify" }));
     expect(await json("state", "deep-interview-state.json")).toMatchObject({
@@ -211,17 +209,15 @@ test("handoff ultragoal → deep-interview: phase interviewing, fields kept, an 
     ]);
     expect(await json("state", "active", "ultragoal.json")).toMatchObject({ active: false, handoff_to: "deep-interview" });
     expect(await json("state", "skill-active-state.json")).toMatchObject({ active: true, skill: "deep-interview", phase: "interviewing" });
-    // complete → interviewing is not a manifest edge: gjc's audit-only diagnostic.
-    expect((await audit()).filter((r) => r.verb === "invalid_transition_detected").map((r) => [r.skill, r.from_phase, r.to_phase])).toEqual([
-      ["deep-interview", "complete", "interviewing"],
-    ]);
+    // gjc's handoff writes through the unchecked writer (state-runtime.ts:688-741 → state-writer.ts:888-943): no diagnostic.
+    expect((await audit()).filter((r) => r.verb === "invalid_transition_detected").map((r) => [r.skill, r.from_phase, r.to_phase])).toEqual([]);
   });
 });
 
 test("handoff ralplan → ultragoal: ultragoal goal-planning, the ralplan row stays inactive with its handoff_from", async () => {
   await fixture(async ({ run, json }) => {
     await run(async (tx) => {
-      await tx.writeModeState("ralplan", { skill: "ralplan", active: true, current_phase: "final", run_id: "r1" }, "ralplan_tool");
+      await tx.writeModeState("ralplan", { skill: "ralplan", active: true, current_phase: "final", run_id: "r1" }, "ralplan_tool", { audit: false });
       await row(tx, { skill: "ralplan", active: true, phase: "final", handoff_from: "ultragoal" });
     });
     await run((tx) => handoffWorkflowTx(tx, { caller: "ralplan", callee: "ultragoal", sessionId: S, owner: RUNTIME_OWNER, reason: "approved" }));
@@ -243,7 +239,7 @@ test("handoff ralplan → ultragoal: ultragoal goal-planning, the ralplan row st
 
 test("handoff: a corrupt callee is refused before the journal; a throw mid-way leaves the journal pending", async () => {
   await fixture(async ({ run, json, file }) => {
-    await run((tx) => tx.writeModeState("ultragoal", { skill: "ultragoal", active: true, current_phase: "active" }, "ultragoal_tool"));
+    await run((tx) => tx.writeModeState("ultragoal", { skill: "ultragoal", active: true, current_phase: "active" }, "ultragoal_tool", { audit: false }));
     await writeFile(file("state", "ralplan-state.json"), "{");
     const input = { caller: "ultragoal", callee: "ralplan", sessionId: S, owner: RUNTIME_OWNER, reason: "r" } as const;
     await expect(run((tx) => handoffWorkflowTx(tx, input))).rejects.toThrow("existing state for ralplan is corrupt or tampered");
@@ -265,13 +261,14 @@ test("handoff: a corrupt callee is refused before the journal; a throw mid-way l
 test("doctor: the ralplan summary is unchanged and renders as gjc's doctor text", async () => {
   await fixture(async ({ run, file }) => {
     await run(async (tx) => {
-      await tx.writeState({ skill: "ralplan", active: true, current_phase: "intent" }, "ralplan_tool");
+      await tx.writeModeState("ralplan", { skill: "ralplan", active: true, current_phase: "intent" }, "ralplan_tool", { audit: false });
       await row(tx, { skill: "ralplan", active: true, phase: "planner" });
       // A skill outside the filter: its row is counted, not checked.
       await row(tx, { skill: "ultragoal", active: true, phase: "active" });
       await tx.writeText(
         tx.paths.snapshotPath,
         JSON.stringify({ active_skills: [{ skill: "ralplan", active: true, phase: "planner" }] }),
+        { audit: false },
       );
     });
     const stateDir = file("state");
@@ -358,9 +355,9 @@ for (const callee of ["ralplan", "ultragoal"] as const)
   test(`handoff deep-interview → ${callee}: journal removed, inactive caller row with chips, active callee row, goal untouched (plan S1 (a))`, async () => {
     await fixture(async ({ run, json, file }) => {
       await run(async (tx) => {
-        await tx.writeModeState("deep-interview", interview, "deep_interview_tool");
+        await tx.writeModeState("deep-interview", interview, "deep_interview_tool", { audit: false });
         await row(tx, { skill: "deep-interview", active: true, phase: "handoff" });
-        await tx.writeText(tx.paths.goalState, GOAL);
+        await tx.writeText(tx.paths.goalState, GOAL, { audit: false });
       });
       const receipt = await run((tx) =>
         handoffWorkflowTx(tx, { caller: "deep-interview", callee, sessionId: S, owner: RUNTIME_OWNER, reason: "spec ready" }),
@@ -391,7 +388,7 @@ for (const callee of ["ralplan", "ultragoal"] as const)
 test("doctor: deep-interview schema violations and stale rows, with the shared fix commands (plan S1 (b), D-SR10)", async () => {
   await fixture(async ({ run, file }) => {
     await run(async (tx) => {
-      await tx.writeModeState("deep-interview", { skill: "deep-interview", active: true, current_phase: "drafting" }, "deep_interview_tool");
+      await tx.writeModeState("deep-interview", { skill: "deep-interview", active: true, current_phase: "drafting" }, "deep_interview_tool", { audit: false });
       await row(tx, { skill: "deep-interview", active: true, phase: "interviewing" });
     });
     const summary = await run((tx) => collectDoctorSummaryTx(tx, "deep-interview"));
@@ -406,7 +403,7 @@ test("doctor: deep-interview schema violations and stale rows, with the shared f
       },
     ]);
     await run(async (tx) => {
-      await tx.writeModeState("deep-interview", { skill: "deep-interview", active: false, current_phase: "complete" }, "deep_interview_tool");
+      await tx.writeModeState("deep-interview", { skill: "deep-interview", active: false, current_phase: "complete" }, "deep_interview_tool", { audit: false });
     });
     expect((await run((tx) => collectDoctorSummaryTx(tx, "deep-interview"))).problems).toEqual([
       {
@@ -431,7 +428,7 @@ test("handoff: a merged caller over the StateStore limits leaves no journal and 
   await fixture(async ({ run, file, exists }) => {
     // 98 keys reads fine; the handoff adds 7 envelope keys, past the 100-key limit.
     const wide = Object.fromEntries(Array.from({ length: 98 }, (_, index) => [`k${index}`, index]));
-    await run((tx) => tx.writeModeState("deep-interview", wide, "deep_interview_tool"));
+    await run((tx) => tx.writeModeState("deep-interview", wide, "deep_interview_tool", { audit: false }));
     await expect(
       run((tx) => handoffWorkflowTx(tx, { caller: "deep-interview", callee: "ralplan", sessionId: S, owner: RUNTIME_OWNER, reason: "r" })),
     ).rejects.toThrow("100 top-level keys");

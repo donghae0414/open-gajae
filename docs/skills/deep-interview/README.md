@@ -2,7 +2,7 @@
 
 이 폴더는 open-gajae `deep-interview`가 **지금 코드에서 어떻게 동작하는지**를 단계별로 적은 문서입니다.
 
-- **기준 코드**: 브랜치 `feat/deep-interview-gjc-revision`(S3c, S4 뒤 Architect 리뷰 반영 커밋, 그리고 2026-10-03 리뷰의 취소·재개와 종료 조건 반영 커밋). 코드 위치는 이 기준 코드의 `path:line`으로 적습니다.
+- **기준 코드**: 브랜치 `feat/deep-interview-gjc-revision`(S3c, S4 뒤 Architect 리뷰 반영 커밋, 그리고 2026-10-03 리뷰의 취소·재개와 종료 조건 반영 커밋). 코드 위치는 이 기준 코드의 `path:line`으로 적습니다. 2026-10-11 감사 쓰기 계층 변경(브랜치 `refactor/audit-writer-layer`, `main` `d88dea5` 위, `docs/development.md`의 "GJC로부터의 deviation (공통 쓰기 계층)")으로 바뀐 파일(`src/state.ts`, `src/skill-state/*`, 세 skill의 `store.ts`, `src/goal/state.ts`, `src/goal/hooks.ts`)의 줄 번호는 그 변경 뒤 기준으로 고쳤습니다.
 - **참조한 gajae-code(gjc)**: `5c5231418930673e42cc5d08ebe4376e03187533`. gjc 줄 번호는 각 open-gajae 파일의 머리말 주석이 적은 값을 옮긴 것이고, 이 문서를 쓰며 gjc 소스로 다시 확인하지는 않았습니다.
 
 다른 문서와는 이렇게 나뉩니다.
@@ -116,7 +116,7 @@ deep-interview가 쓰는 공통 기반:
 | `src/skill-state/handoff.ts` | 세 skill이 함께 쓰는 저널 인계 `handoffWorkflowTx`. deep-interview는 caller이자 callee입니다. | entry-and-handoff |
 | `src/skill-state/rows.ts` | 활성 행 `state/active/<skill>.json`, 스냅숏 `state/skill-active-state.json`, 파이프라인 순위, 보이는 주 skill(`readVisiblePrimaryTx`) | state-and-files |
 | `src/skill-state/doctor.ts` | 읽기 전용 검사(`collectDoctorSummaryTx`)와 gjc 텍스트 형식(`renderDoctorText`). deep-interview phase 셋이 등록되어 있습니다. | state-and-files, ops |
-| `src/skill-state/audit.ts` | 감사 로그 `state/audit.jsonl` 한 줄(`appendAudit`) | state-and-files |
+| `src/skill-state/audit.ts` | 감사 로그 `state/audit.jsonl` 한 줄의 모양(`auditLine`), owner, `_meta.updatedBy` 대응(`writerFor`). 행은 `src/state.ts`의 쓰기 계층이 쓰기 직후 남김 | state-and-files |
 | `src/skill-state/journal.ts`, `hud.ts` | 인계 저널, 칩 도우미 | state-and-files |
 | `src/state.ts` | 세션 폴더 경로, 세션마다 쓰기 큐 하나(`workflowTransaction`), payload 한도(`assertStatePayload`), 경로 성분 검사(`safeComponent`) | state-and-files |
 
@@ -138,7 +138,7 @@ deep-interview가 쓰는 공통 기반:
 - **상태**: `state/deep-interview-state.json`. gjc의 봉투(envelope)이고, 인터뷰 내용은 그 안의 `state` 객체에 있습니다. 이 문서에서 "상태"는 파일 전체, "`state`"는 안쪽 객체입니다.
 - **활성**: 상태를 읽을 수 있고 `active === true`(계획 C-2).
 - **계보 루트(lineage root)**: `parentID`를 따라 올라가 만나는 부모 없는 세션. 자식 세션에서 부른 op도 루트 세션 폴더의 상태를 씁니다.
-- **보이는 주 skill(visible primary)**: 활성 행과 스냅숏에서 고른 하나(`readVisiblePrimaryTx`, `src/skill-state/rows.ts:246-292`). 순위는 ultragoal > ralplan > deep-interview입니다.
+- **보이는 주 skill(visible primary)**: 활성 행과 스냅숏에서 고른 하나(`readVisiblePrimaryTx`, `src/skill-state/rows.ts:237-283`). 순위는 ultragoal > ralplan > deep-interview입니다.
 - **가드 phase**: `interviewing`, `handoff`(`src/deep-interview-runtime/manifest.ts:64`).
 - **release phase**: `complete`, `completed`, `failed`, `cancelled`, `canceled`, `inactive`(`src/deep-interview-runtime/manifest.ts:51-58`). gjc의 기본 `stopReleasingPhases`입니다.
 - **턴 표식**: 이번 execution에서 로드한 workflow skill 이름. 세션마다 메모리에 하나 있고, execution이 끝날 때마다 지워집니다([entry-and-handoff.md](entry-and-handoff.md)).

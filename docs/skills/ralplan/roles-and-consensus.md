@@ -208,7 +208,7 @@ Error: open-gajae-architect must pass the artifact as content; path is for the p
 - 셋째 줄은 역할이 `path`를 넘길 때이고, `stage` 검사보다 먼저 거부합니다(`tool.ts:220-223`, R-O4, ralplan 편차 2). 역할은 산출물 전체를 `content`로 넘깁니다. 프롬프트도 "pass the artifact inline as `content`"라고 적습니다.
 - **역할이 쓰는 단계는 제한하지 않습니다.** architect가 `stage:"critic"`을 쓰면 거부 없이 `stage-01-critic.md`가 생기고, 그 쓰기는 critic lane 예산에 셉니다. 이때 세션 id는 기록되지 않습니다(자기 lane일 때만 기록, 아래). `intent`·`disposition`·`final`도 역할이 쓸 수 있습니다.
 - **역할이 넘기는 `run_id`도 그대로 씁니다.** 새 값이면 run이 바뀌고 판정·stuck·`auto_handoff` 필드가 지워집니다([stages-and-ledger.md](stages-and-ledger.md)). 프롬프트는 과제가 준 `run_id`만 쓰라고 합니다.
-- **`state`로 상태를 병합할 수 있습니다.** phase는 전이 표 안에서만 바뀌지만, `{"active": false}`(Stop here)나 다른 필드도 역할이 쓸 수 있습니다(`patchStateTx`, `store.ts:1001-1079`). 프롬프트는 "Workflow persistence and state go through the `ralplan` tool (`write`, `status`, `state`), not `shell`"이라고만 하고 언제 `state`를 쓰라고 정하지 않습니다. gjc 역할의 restricted bash도 `gjc state …`를 허용합니다(gjc `prompts/agent-fragments/restricted-bash.md`).
+- **`state`로 상태를 병합할 수 있습니다.** phase는 전이 표 안에서만 바뀌지만, `{"active": false}`(Stop here)나 다른 필드도 역할이 쓸 수 있습니다(`patchStateTx`, `store.ts:934-1009`). 프롬프트는 "Workflow persistence and state go through the `ralplan` tool (`write`, `status`, `state`), not `shell`"이라고만 하고 언제 `state`를 쓰라고 정하지 않습니다. gjc 역할의 restricted bash도 `gjc state …`를 허용합니다(gjc `prompts/agent-fragments/restricted-bash.md`).
 
 ### 영수증만 돌려주기와 `lane_verdict`
 
@@ -337,9 +337,9 @@ gjc는 `--planner-id`·`--architect-id`·`--critic-id`와 역할별 `--*-resumab
   Error: resumable is only valid with stage planner, revision, architect, or critic (received intent).
   ```
 
-- 새로 띄운 역할이 쓰면 그 새 세션 id가 이전 id를 덮습니다(상태 병합, `mergeRunStateTx`, `store.ts:548-565`). 그래서 상태에는 늘 마지막에 쓴 세션이 남습니다.
+- 새로 띄운 역할이 쓰면 그 새 세션 id가 이전 id를 덮습니다(상태 병합, `mergeRunStateTx`, `store.ts:482-499`). 그래서 상태에는 늘 마지막에 쓴 세션이 남습니다.
 - 같은 내용의 중복 쓰기(ledger에 이미 있는 행)는 아무것도 바꾸지 않습니다. 그 쓰기에 실은 id·판정도 기록되지 않습니다(`tests/ralplan-tool.test.ts` "write: stage files, ledger rows, receipts, role ids, verdicts, …").
-- 새 `run_id`로 run이 바뀌면 판정·stuck·`auto_handoff`는 지워지지만 역할 id와 fallback 필드는 남습니다(`persistActiveRunIdTx`, `store.ts:513-545`). 넘겨받은 run(`ultragoal handoff(to:"ralplan")` 등)도 공통 인계가 기존 상태 위에 병합하므로(`handoffWorkflowTx`, `src/skill-state/handoff.ts:224-240`) 이전 run의 역할 id가 남아 있을 수 있습니다.
+- 새 `run_id`로 run이 바뀌면 판정·stuck·`auto_handoff`는 지워지지만 역할 id와 fallback 필드는 남습니다(`persistActiveRunIdTx`, `store.ts:447-479`). 넘겨받은 run(`ultragoal handoff(to:"ralplan")` 등)도 공통 인계가 기존 상태 위에 병합하므로(`handoffWorkflowTx`, `src/skill-state/handoff.ts:175-192`) 이전 run의 역할 id가 남아 있을 수 있습니다.
 - 이 값을 읽는 코드는 없습니다. 리더가 `ralplan status`로 읽어 재개에 씁니다. 기록된 id는 재개 가능함을 증명하지 않습니다(SKILL `:201`). `resumable`은 부모 세션이 지속됨이 확실할 때만 `true`, `context_unavailable`을 본 뒤에는 `false`, 그 밖에는 넣지 않습니다(`:209`). 코드는 값만 기록합니다.
 
 planner가 `resumable: true`로 쓴 영수증의 끝(실제 출력):
@@ -363,18 +363,18 @@ planner가 `resumable: true`로 쓴 영수증의 끝(실제 출력):
 
 ## `--interactive`와 `--deliberate`
 
-`ralplan start`의 입력 `interactive`, `deliberate`(boolean, `tool.ts:105-106`)가 gjc 플래그에 해당합니다. `startRunTx`(`store.ts:915-988`)가 저장합니다.
+`ralplan start`의 입력 `interactive`, `deliberate`(boolean, `tool.ts:105-106`)가 gjc 플래그에 해당합니다. `startRunTx`(`store.ts:849-921`)가 저장합니다.
 
 | 입력 | 상태에 남는 것 | 그 밖에 |
 |---|---|---|
-| `deliberate: true` | `mode: "deliberate"`(아니면 `"short"`) (`:931`, `:946`) | `start` 결과의 `mode` |
-| `interactive: true` | `interactive: true`(아니면 `false`) (`:932`, `:947`) | `start` 결과에는 없음 |
+| `deliberate: true` | `mode: "deliberate"`(아니면 `"short"`) (`:865`, `:879`) | `start` 결과의 `mode` |
+| `interactive: true` | `interactive: true`(아니면 `false`) (`:866`, `:880`) | `start` 결과에는 없음 |
 
-둘 다 start 때 활성 행 HUD의 `summary` 문장(`short run · automated` 꼴, `:970`)에도 들어가지만, 다음 `write`가 `persisted <stage> stage <n>`으로 덮습니다(`:860`).
+둘 다 start 때 활성 행 HUD의 `summary` 문장(`short run · automated` 꼴, `:903`)에도 들어가지만, 다음 `write`가 `persisted <stage> stage <n>`으로 덮습니다(`:794`).
 
 이 뒤로 두 값을 읽어 동작을 바꾸는 코드는 없습니다. 이 문서를 쓰며 `src` 전체에서 찾아본 결과, `mode`를 읽는 곳은 상태의 `current_phase`가 문자열이 아닐 때 HUD `stage` 칩의 대체값으로 쓰는 `buildRalplanHudFromState`(`hud.ts:191-197`)뿐이고, `interactive`를 읽는 곳은 없습니다. gjc `gjc-runtime/ralplan-runtime.ts`도 두 값을 seed에서 상태에 쓰고(`:2404-2405`) 결과 줄과 HUD 문장에 적을 뿐입니다(`:2453`, `:2470`). gjc도 `mode`는 같은 HUD 대체값으로만 읽고(`buildHudForMode`의 ralplan 분기, `gjc-runtime/state-runtime.ts:855-860`; open-gajae `hud.ts:191-197`이 이것을 옮긴 것), `interactive`는 gjc의 다른 파일에서 manifest의 kickoff 플래그 선언(`gjc-runtime/workflow-manifest.ts:260`) 말고 읽는 곳을 찾지 못했습니다. 리더는 `ralplan status`로 읽을 수 있습니다.
 
-`start` 없이 생긴 run에는 두 필드가 없습니다: `write`로 생긴 run, `ultragoal handoff(to:"ralplan")`나 `deep-interview handoff(to:"ralplan")`로 넘겨받은 run(이전 상태에 있던 값이 남음). deep-interview의 결합 호출 `spec(…, handoff:"ralplan")`은 `startRunTx`를 `deliberate: true`로 불러 `mode: "deliberate"`, `interactive: false`를 남깁니다(`src/deep-interview-runtime/store.ts:555`).
+`start` 없이 생긴 run에는 두 필드가 없습니다: `write`로 생긴 run, `ultragoal handoff(to:"ralplan")`나 `deep-interview handoff(to:"ralplan")`로 넘겨받은 run(이전 상태에 있던 값이 남음). deep-interview의 결합 호출 `spec(…, handoff:"ralplan")`은 `startRunTx`를 `deliberate: true`로 불러 `mode: "deliberate"`, `interactive: false`를 남깁니다(`src/deep-interview-runtime/store.ts:522`).
 
 SKILL이 바꾸는 것:
 
@@ -433,7 +433,7 @@ final 영수증의 auto_handoff
 코드가 하는 것과 하지 않는 것:
 
 - `auto_handoff`를 읽어 스스로 handoff하는 코드는 없습니다. `effectiveTarget`을 동작을 정하려고 읽는 코드도 없습니다. 읽는 곳은 HUD `handoff` 칩(`hud.ts:94-104`)과, 중복·복구 쓰기의 영수증을 다시 만들 때 index의 final 행에서 admission을 꺼내는 `parseRalplanFinalAdmission`(`ledger.ts:790-817`)뿐입니다. 자동 admission도 리더가 9단계를 실행해야 일어납니다.
-- `ralplan handoff`는 활성 ralplan과 T의 phase만 확인합니다(`ralplanHandoffTx`, `store.ts:1328-1371`). 승인 여부도, `planning_stuck`도 보지 않습니다. 같은 execution의 `skill ultragoal` 게이트(`ultragoalGate`, `src/hooks.ts:796-818`)도 마찬가지입니다. `maxIterations: 1`, `autoHandoff: "ultragoal"`로 `planner` 하나 뒤 `revision`을 열어 PLANNING-STUCK을 받고 `final`을 쓴 뒤 `ralplan handoff(to:"ultragoal")`를 부르면, `final` 영수증은 `"effectiveTarget": "off", "degradationReason": "planning_stuck"`인데 handoff는 그대로 됩니다(실제 실행 결과 첫 줄):
+- `ralplan handoff`는 활성 ralplan과 T의 phase만 확인합니다(`ralplanHandoffTx`, `store.ts:1255-1298`). 승인 여부도, `planning_stuck`도 보지 않습니다. 같은 execution의 `skill ultragoal` 게이트(`ultragoalGate`, `src/hooks.ts:796-818`)도 마찬가지입니다. `maxIterations: 1`, `autoHandoff: "ultragoal"`로 `planner` 하나 뒤 `revision`을 열어 PLANNING-STUCK을 받고 `final`을 쓴 뒤 `ralplan handoff(to:"ultragoal")`를 부르면, `final` 영수증은 `"effectiveTarget": "off", "degradationReason": "planning_stuck"`인데 handoff는 그대로 됩니다(실제 실행 결과 첫 줄):
 
   ```
   Handed off to ultragoal: ralplan is inactive (phase handoff) and ultragoal is active in goal-planning. Load the `ultragoal` skill now and call `ultragoal create` with the approved plan's goals (the approved plan: <session>/plans/ralplan/ses_root/pending-approval.md).

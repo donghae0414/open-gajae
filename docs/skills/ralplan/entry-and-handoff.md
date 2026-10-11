@@ -294,7 +294,7 @@ ralplan run ses_e is already active (phase planner); continue it with ralplan wr
 
 넘겨받은 run이면 `, handed over from <skill>`이 phase 뒤에 붙고, `run_id`가 없으면 `(none)`으로 나옵니다([아래](#그다음-skill이-시키는-일)).
 
-거부를 모두 지나면 `startRunTx`(`src/ralplan-runtime/store.ts:915-988`)가 새 상태를 **통째로** 씁니다(기존 필드 병합이 아님): `active: true`, `current_phase: "planner"`, `skill`, `version: 2`, `mode`(`deliberate`면 `"deliberate"`, 아니면 `"short"`), `interactive`, `task`, `run_id`, `updated_at`, `repository_binding`, `session_id`. `run_id`는 입력 → 기존 상태의 `run_id` → 소유 세션 id 순이고(DR-19, ralplan 편차 31), binding은 같은 run이면 기존 값, 아니면 새로 잡습니다. 그다음 활성 `planner` 행과 스냅숏을 씁니다. 결과는 `{ok: true, session_id, skill, mode, state_path, run_id, handoff: "ralplan", repository_binding}`입니다. 자세한 모양은 [ops.md](ops.md)와 [state-and-files.md](state-and-files.md)에 있습니다.
+거부를 모두 지나면 `startRunTx`(`src/ralplan-runtime/store.ts:849-921`)가 새 상태를 **통째로** 씁니다(기존 필드 병합이 아님): `active: true`, `current_phase: "planner"`, `skill`, `version: 2`, `mode`(`deliberate`면 `"deliberate"`, 아니면 `"short"`), `interactive`, `task`, `run_id`, `updated_at`, `repository_binding`, `session_id`. `run_id`는 입력 → 기존 상태의 `run_id` → 소유 세션 id 순이고(DR-19, ralplan 편차 31), binding은 같은 run이면 기존 값, 아니면 새로 잡습니다. 그다음 활성 `planner` 행과 스냅숏을 씁니다. 결과는 `{ok: true, session_id, skill, mode, state_path, run_id, handoff: "ralplan", repository_binding}`입니다. 자세한 모양은 [ops.md](ops.md)와 [state-and-files.md](state-and-files.md)에 있습니다.
 
 **멈춘 뒤 다시 `start`하면 옛 run 폴더로 돌아갑니다.** Stop here나 `clear` 뒤에는 상태가 비활성이라 `start`가 통과하지만, `run_id`를 주지 않으면 기존 상태의 `run_id`를 다시 씁니다. 실행 예: `start` → `planner` 1 → `final` 1 → Stop here → `start(task: "v2")`는 `run_id`가 같은 값이고, 이어서 다른 내용으로 `planner` 1을 쓰면 `refusing to overwrite ralplan planner stage 1 at … Use a new stage_n to record another pass.`로 거부됩니다. 옛 반복 예산과 `pending-approval.md`도 그 run에 남습니다. SKILL은 새 run에는 새 `run_id`를 주라고 하지만(`skills/ralplan/SKILL.md:17`), 활성 run 거부 문구의 "To plan anew, stop it first …"는 이 점을 말하지 않습니다.
 
@@ -308,8 +308,8 @@ deep-interview가 스펙을 저장한 뒤(phase `handoff`) ralplan으로 넘기�
 
 | 길 | 함수 | ralplan 상태 결과 | 결과 줄 |
 |---|---|---|---|
-| `deep-interview handoff(to:"ralplan")` | `handoffTx` → `deepInterviewHandoffTx` → `handoffWorkflowTx`(`src/deep-interview-runtime/store.ts:599-628`) | 기존 필드 위에 `active: true`, `planner`, `handoff_from`, `handoff_at` | 있음 |
-| `deep-interview spec(…, handoff:"ralplan")` | `specHandoffTx`(`:548-561`): `specTx` → `seedRalplanTx`(= `startRunTx`, `src/tools.ts:61-62`) → `deepInterviewHandoffTx` | `startRunTx`의 새 상태(`mode: "deliberate"`, `task` = 스펙 경로) 위에 `handoff_from`, `handoff_at` | 있음 |
+| `deep-interview handoff(to:"ralplan")` | `handoffTx` → `deepInterviewHandoffTx` → `handoffWorkflowTx`(`src/deep-interview-runtime/store.ts:566-595`) | 기존 필드 위에 `active: true`, `planner`, `handoff_from`, `handoff_at` | 있음 |
+| `deep-interview spec(…, handoff:"ralplan")` | `specHandoffTx`(`:515-528`): `specTx` → `seedRalplanTx`(= `startRunTx`, `src/tools.ts:61-62`) → `deepInterviewHandoffTx` | `startRunTx`의 새 상태(`mode: "deliberate"`, `task` = 스펙 경로) 위에 `handoff_from`, `handoff_at` | 있음 |
 | 같은 execution의 `skill ralplan` | `gateTx`([위](#dr-21-로드-게이트)) | 첫 줄과 같음 | 없음 |
 
 이전 ralplan 상태가 없을 때 `deep-interview handoff(to:"ralplan")` 뒤의 `state/ralplan-state.json`(실행 예):
@@ -351,13 +351,13 @@ Handed off to ralplan: deep-interview is inactive (phase handoff) and ralplan is
   ```
   ralplan run (none) is already active (phase planner, handed over from deep-interview); continue it with ralplan write. To plan anew, stop it first with ralplan state {"active": false} or ralplan clear.
   ```
-- `ralplan write`로 이어 갑니다. 첫 `write`의 `run_id`는 입력 → 상태의 `run_id` → 루트 세션 id입니다. 실행 예에서 `run_id` 없이 넘겨받은 run의 첫 `planner` 1 뒤 상태는 `run_id: <루트 세션 id>`, `handoff_from: "deep-interview"`는 그대로입니다. 활성 행은 `handoff_from` 없이 다시 쓰이고, 아래 순위의 deep-interview 행은 지워집니다(`syncActiveRowTx`, `src/skill-state/rows.ts:149-162`).
+- `ralplan write`로 이어 갑니다. 첫 `write`의 `run_id`는 입력 → 상태의 `run_id` → 루트 세션 id입니다. 실행 예에서 `run_id` 없이 넘겨받은 run의 첫 `planner` 1 뒤 상태는 `run_id: <루트 세션 id>`, `handoff_from: "deep-interview"`는 그대로입니다. 활성 행은 `handoff_from` 없이 다시 쓰이고, 아래 순위의 deep-interview 행은 지워집니다(`syncActiveRowTx`, `src/skill-state/rows.ts:144-157`).
 - 이전 ralplan run을 이어받았으면 옛 반복 예산과 `stage_n`이 이어집니다. 새 예산이 필요하면 첫 `write`에 새 `run_id`를 줍니다(K7, [stages-and-ledger.md](stages-and-ledger.md)).
 - 스펙은 결과 줄의 `spec:` 경로나 `deep-interview status`의 `spec_path`에서 읽습니다. 결합 호출이면 `task`도 스펙 경로입니다.
 
 ## ultragoal에서 들어오기
 
-`ultragoal handoff(to:"ralplan", reason)`(`handoffTx`, `src/ultragoal-runtime/store.ts:1097-1117`). 입력은 `to`와 비어 있지 않은 `reason`만 검사하고 ultragoal의 활성·phase는 보지 않습니다. 원장 `workflow_handoff`와 `progress.txt` `HANDOFF`를 남기는 점을 포함한 ultragoal 쪽 내용은 [ultragoal 문서](../ultragoal/entry-and-handoff.md#ultragoal-handoffto-reason)에 있습니다.
+`ultragoal handoff(to:"ralplan", reason)`(`handoffTx`, `src/ultragoal-runtime/store.ts:1092-1112`). 입력은 `to`와 비어 있지 않은 `reason`만 검사하고 ultragoal의 활성·phase는 보지 않습니다. 원장 `workflow_handoff`와 `progress.txt` `HANDOFF`를 남기는 점을 포함한 ultragoal 쪽 내용은 [ultragoal 문서](../ultragoal/entry-and-handoff.md#ultragoal-handoffto-reason)에 있습니다.
 
 ralplan이 받는 것(실행 예: `start` → `final` → `ralplan handoff(to:"ultragoal")` → `ultragoal create` → `ultragoal handoff(to:"ralplan")` 뒤의 상태, `_meta`와 binding 생략):
 
@@ -386,14 +386,14 @@ ralplan이 받는 것(실행 예: `start` → `final` → `ralplan handoff(to:"u
 ```
 
 - 기존 필드를 모두 지킵니다: `run_id`, `task`, `mode`, binding, 옛 `final`의 `auto_handoff`, 지난 인계의 `handoff_to: "ultragoal"`(PQ-4 A, PQ-6 A; ralplan 편차 24 철회).
-- 저장된 ralplan phase가 `RALPLAN_STATES`에 있고 `planner`가 아니면(왕복에서는 `handoff`) 감사 로그에 `invalid_transition_detected`가 먼저 남습니다. `RALPLAN_TRANSITIONS`에 `planner`로 들어가는 줄이 없기 때문입니다([아래](#공통-저널-인계-ralplan-쪽-요약)).
+- 저장된 ralplan phase가 `planner`가 아니어도(왕복에서는 `handoff`) 감사 로그에 전이 진단 행은 남지 않습니다. 공통 인계는 검사 없는 쓰기를 쓰기 때문입니다([아래](#공통-저널-인계-ralplan-쪽-요약)).
 - ultragoal 행이 비활성 `handoff_to` 행이 되므로 체인 가드가 풀려 `skill ralplan`을 로드할 수 있습니다(테스트 "(F)").
 
 그다음:
 
 - `ralplan start`는 거부됩니다. 실제 문구: `ralplan run ses_r2 is already active (phase planner, handed over from ultragoal); continue it with ralplan write. To plan anew, stop it first with ralplan state {"active": false} or ralplan clear.`
 - 옛 run에 이어 쓸 때 이미 쓴 `(stage, stage_n)`을 다른 내용으로 쓰면 거부됩니다(실행 예: `planner` 1 → `refusing to overwrite ralplan planner stage 1 at <session>/plans/ralplan/ses_r2/stage-01-planner.md: an artifact with different content already exists (…). Use a new stage_n to record another pass.`). 다음 빈 `stage_n`(예: `revision` 2)은 통과하고 phase가 그 stage로 갑니다. 옛 final 승인과 반복 예산이 이어집니다([ultragoal known-limits.md](../ultragoal/known-limits.md) U13).
-- 첫 `write`에 새 `run_id`를 주면 새 run이 됩니다. 실행 예에서 `run_id: "r2"`의 `planner` 1 뒤 상태는 `run_id: "r2"`, `current_phase: "planner"`이고 `task`, `mode`, `handoff_from`, `handoff_to`는 남습니다(새 run은 `verdict`, `last_review_verdict*`, `planning_stuck`, `auto_handoff`만 지움, `persistActiveRunIdTx` `src/ralplan-runtime/store.ts:513-545`, [stages-and-ledger.md](stages-and-ledger.md)).
+- 첫 `write`에 새 `run_id`를 주면 새 run이 됩니다. 실행 예에서 `run_id: "r2"`의 `planner` 1 뒤 상태는 `run_id: "r2"`, `current_phase: "planner"`이고 `task`, `mode`, `handoff_from`, `handoff_to`는 남습니다(새 run은 `verdict`, `last_review_verdict*`, `planning_stuck`, `auto_handoff`만 지움, `persistActiveRunIdTx` `src/ralplan-runtime/store.ts:447-479`, [stages-and-ledger.md](stages-and-ledger.md)).
 - goal은 인계가 건드리지 않습니다. goal이 활성인 동안은 goal continuation이 턴을 맡고 ralplan continuation은 판단하지 않습니다(D-TL6, [guards-and-continuation.md](guards-and-continuation.md)).
 - 계획하는 동안 `ultragoal` op를 부르면 reconcile이 ultragoal을 `goals.json`에서 다시 활성으로 만들고 ralplan 행을 지웁니다. SKILL이 부르지 말라고 할 뿐 코드는 막지 않습니다(기록된 동작, spec D-SF1, [ultragoal 문서](../ultragoal/entry-and-handoff.md#인계-뒤-1)).
 
@@ -405,17 +405,17 @@ ralplan 쪽의 나가는 op입니다. 결정: DR-7, DR-12(op 하나로, ralplan 
 
 - `to`: `z.enum(["ultragoal", "deep-interview"]).optional()`(`src/ralplan-runtime/tool.ts:156`). 생략하면 `to must be "ultragoal" or "deep-interview"`(`:297`), 다른 값은 입력 스키마에서 막힙니다.
 - `open-gajae`만 부를 수 있습니다. 역할 agent는 `<agent> may only use write, status and state`로 거부됩니다(`:177-178`).
-- `ralplanHandoff`(`src/ralplan-runtime/store.ts:1378-1394`)가 루트의 ralplan 트랜잭션 하나에서 `ralplanHandoffTx(tx, root, RUNTIME_OWNER, "ralplan handoff to <to>", to)`를 부릅니다. 이유 문자열은 `handoffWorkflowTx`의 `reason`으로 가지만, ralplan caller에는 `recordCaller`가 없어 어디에도 저장되지 않습니다.
+- `ralplanHandoff`(`src/ralplan-runtime/store.ts:1305-1321`)가 루트의 ralplan 트랜잭션 하나에서 `ralplanHandoffTx(tx, root, RUNTIME_OWNER, "ralplan handoff to <to>", to)`를 부릅니다. 이유 문자열은 `handoffWorkflowTx`의 `reason`으로 가지만, ralplan caller에는 `recordCaller`가 없어 어디에도 저장되지 않습니다.
 
 ### 검사 순서 (`ralplanHandoffTx`)
 
-`src/ralplan-runtime/store.ts:1328-1371`. op와 `skill ultragoal` 게이트가 함께 씁니다.
+`src/ralplan-runtime/store.ts:1255-1298`. op와 `skill ultragoal` 게이트가 함께 씁니다.
 
 ```
-① readStateForMutation (:250-260)   손상 → 거부
+① readStateForMutation (:194-204)   손상 → 거부
 ② 상태 없음                          → 거부
 ③ trim한 current_phase ∉ T           → 거부            ← active보다 먼저 봄
-④ pendingApprovalPathTx (:1298-1304) run 폴더에 pending-approval.md가 있으면 그 경로
+④ pendingApprovalPathTx (:1225-1231) run 폴더에 pending-approval.md가 있으면 그 경로
                                      (run_id가 경로 성분 검사에 걸리면 그 오류로 거부)
 ⑤ active !== true                    → RalplanNotActiveError
      phase == "handoff"              → "already handed off" 문구
@@ -435,12 +435,12 @@ ralplan 쪽의 나가는 op입니다. 결정: DR-7, DR-12(op 하나로, ralplan 
 | 그 밖 비활성(Stop here의 `final`, `clear`의 `complete`), `to: "ultragoal"` | ``ralplan is not active (phase final), so there is nothing to hand off: Stop here or `clear` ended the run. To execute the plan, load the `ultragoal` skill, then call `ultragoal create` with the plan's goals (the approved plan: <session>/plans/ralplan/ses_b/pending-approval.md).`` (괄호 부분은 `pending-approval.md`가 있을 때만) |
 | 그 밖 비활성, `to: "deep-interview"` | ``ralplan is not active (phase final), so there is nothing to hand off: Stop here or `clear` ended the run. To interview again, load the `deep-interview` skill and call `deep-interview start`; to continue an existing interview, call `deep-interview status`.`` |
 
-공통 인계에서 나오는 거부도 있습니다. callee 상태가 손상이면 `existing state for <callee> is corrupt or tampered (<오류>); refusing to hand off`(`src/skill-state/handoff.ts:146`), 병합한 상태가 StateStore 한도를 넘으면 그 오류입니다(DR-31). 둘 다 저널을 만들기 전이라 아무것도 쓰지 않습니다.
+공통 인계에서 나오는 거부도 있습니다. callee 상태가 손상이면 `existing state for <callee> is corrupt or tampered (<오류>); refusing to hand off`(`src/skill-state/handoff.ts:117`), 병합한 상태가 StateStore 한도를 넘으면 그 오류입니다(DR-31). 둘 다 저널을 만들기 전이라 아무것도 쓰지 않습니다.
 
 세부:
 
-- **`to: "ultragoal"`의 "already handed off"는 언제나 `ultragoal`을 적습니다.** 문자열이 고정이라(`store.ts:1355-1358`), deep-interview로 넘긴 ralplan에 `handoff(to:"ultragoal")`을 불러도 ``continue in the `ultragoal` skill.``이 나옵니다(실행 예). `to: "deep-interview"` 쪽만 상태의 `handoff_to`를 읽습니다.
-- `RalplanNotActiveError`(`store.ts:1295`)는 `Error`의 하위 클래스일 뿐이고, 이 클래스를 따로 가려 보는 코드는 없습니다. 도구 결과는 다른 거부와 같은 `Error: <문구>`입니다.
+- **`to: "ultragoal"`의 "already handed off"는 언제나 `ultragoal`을 적습니다.** 문자열이 고정이라(`store.ts:1282-1285`), deep-interview로 넘긴 ralplan에 `handoff(to:"ultragoal")`을 불러도 ``continue in the `ultragoal` skill.``이 나옵니다(실행 예). `to: "deep-interview"` 쪽만 상태의 `handoff_to`를 읽습니다.
+- `RalplanNotActiveError`(`store.ts:1222`)는 `Error`의 하위 클래스일 뿐이고, 이 클래스를 따로 가려 보는 코드는 없습니다. 도구 결과는 다른 거부와 같은 `Error: <문구>`입니다.
 
 ### 쓰는 것
 
@@ -460,11 +460,11 @@ write-transaction-journal                       (committed)
 remove-transaction-journal
 ```
 
-ralplan caller는 비활성으로 쓰므로 `invalid_transition_detected`가 남지 않습니다. ultragoal callee는 전이 표가 없어 남지 않습니다.
+공통 인계는 caller와 callee를 모두 검사 없는 쓰기로 쓰므로 전이 진단 행이 없습니다(gjc 인계 동사의 지역 `writeJsonAtomic`과 같음).
 
 ### 결과
 
-첫 줄 뒤에 인계 영수증을 2칸 들여쓰기 JSON으로 붙입니다(`ralplanHandoff`, `store.ts:1387-1393`). 실행의 `pending-approval.md`가 있으면 ` (the approved plan: <경로>)`가 마지막 마침표 앞에 붙습니다. 계획 경로는 이 글에만 실려 갑니다(D-HE1, U6). 실제 결과입니다.
+첫 줄 뒤에 인계 영수증을 2칸 들여쓰기 JSON으로 붙입니다(`ralplanHandoff`, `store.ts:1314-1320`). 실행의 `pending-approval.md`가 있으면 ` (the approved plan: <경로>)`가 마지막 마침표 앞에 붙습니다. 계획 경로는 이 글에만 실려 갑니다(D-HE1, U6). 실제 결과입니다.
 
 ```
 Handed off to ultragoal: ralplan is inactive (phase handoff) and ultragoal is active in goal-planning. Load the `ultragoal` skill now and call `ultragoal create` with the approved plan's goals (the approved plan: <session>/plans/ralplan/ses_a/pending-approval.md).
@@ -514,7 +514,7 @@ seedUltragoalTx(tx, root, HOOK_OWNER) → 로드
 거부가 아니면 턴 표식 "ultragoal" (:1056)
 ```
 
-거부 문구(`RALPLAN_RUNNING_REFUSAL`, `src/ralplan-runtime/store.ts:143-144`), 실제 결과입니다.
+거부 문구(`RALPLAN_RUNNING_REFUSAL`, `src/ralplan-runtime/store.ts:144-145`), 실제 결과입니다.
 
 ```
 ralplan planning is running; finish it first: choose "Approve execution via ultragoal" at its approval step, or stop ralplan (`ralplan state` with {"active": false}) and try again.
@@ -535,7 +535,7 @@ ralplan이 활성 `final`로 남아 있는 동안 op는 여전히 통과하므�
 
 ## Stop here
 
-SKILL 9단계의 **Stop here**는 `ralplan state(patch={"active": false})`입니다. `patchStateTx`(`src/ralplan-runtime/store.ts:1001-1079`)가 `active`를 `false`로 바꾸고 phase는 그대로(`final`) 둡니다(spec D-F12). 비활성이므로 활성 행을 지웁니다(R-OD10). `pending-approval.md`와 단계 파일은 남습니다.
+SKILL 9단계의 **Stop here**는 `ralplan state(patch={"active": false})`입니다. `patchStateTx`(`src/ralplan-runtime/store.ts:934-1009`)가 `active`를 `false`로 바꾸고 phase는 그대로(`final`) 둡니다(spec D-F12). 비활성이므로 활성 행을 지웁니다(R-OD10). `pending-approval.md`와 단계 파일은 남습니다.
 
 그 뒤:
 
@@ -547,7 +547,7 @@ SKILL 9단계의 **Stop here**는 `ralplan state(patch={"active": false})`입니
 
 ## 공통 저널 인계 (ralplan 쪽 요약)
 
-`handoffWorkflowTx`(`src/skill-state/handoff.ts:212-322`)는 세 skill의 모든 넘기기가 함께 쓰는 하나입니다(ultragoal 계획 C-5, PQ-6 A). gjc 출처는 `gjc-runtime/state-runtime.ts:1572-1881`(`handleHandoffUnlocked`, 머리말 기준)입니다. 단계는 이렇습니다.
+`handoffWorkflowTx`(`src/skill-state/handoff.ts:163-274`)는 세 skill의 모든 넘기기가 함께 쓰는 하나입니다(ultragoal 계획 C-5, PQ-6 A). gjc 출처는 `gjc-runtime/state-runtime.ts:1572-1881`(`handleHandoffUnlocked`, 머리말 기준)입니다. 단계는 이렇습니다.
 
 ```
 0  callee == caller → 거부
@@ -565,10 +565,10 @@ SKILL 9단계의 **Stop here**는 `ralplan state(patch={"active": false})`입니
 
 ralplan에 해당하는 것:
 
-- **시작 phase**: ralplan이 callee면 `planner`(`HANDOFF_SKILLS`, `handoff.ts:75-92`). 이미 활성인 ralplan(예: `architect`)도 `planner`로 돌아갑니다. 단계 파일은 남습니다.
-- **전이 진단**: callee를 활성으로 쓰면서 저장된 ralplan phase가 `RALPLAN_STATES`에 있고 `planner`와 다르면, `RALPLAN_TRANSITIONS`에 `planner`로 들어가는 줄이 없으므로 `invalid_transition_detected` 행이 `handoff` 행보다 먼저 남습니다(best-effort, `handoff.ts:172-189`). 상태가 없거나 `planner`이거나 R의 phase(`clear` 뒤 `complete`)면 남지 않습니다. ralplan이 caller면 비활성으로 쓰므로 남지 않습니다.
+- **시작 phase**: ralplan이 callee면 `planner`(`HANDOFF_SKILLS`, `handoff.ts:64-70`). 이미 활성인 ralplan(예: `architect`)도 `planner`로 돌아갑니다. 단계 파일은 남습니다.
+- **전이 진단 없음**: 공통 인계는 callee와 caller를 모두 검사 없는 `tx.writeModeState`로 씁니다(`writeHandoffStateTx`, `handoff.ts:129-152`). 그래서 저장된 ralplan phase가 `planner`가 아니어도(예: 활성 `architect`) 전이 진단 행은 남지 않고 `handoff` 행만 남습니다. gjc 인계 동사의 지역 `writeJsonAtomic`과 같습니다.
 - **HUD**: 두 행의 칩은 병합한 상태로 다시 계산합니다(ralplan `buildRalplanHudFromState`).
-- **쓰는 주체**: `_meta.updatedBy`는 caller와 owner로 정합니다(`WRITERS`, `handoff.ts:95-99`). ralplan이 callee일 때는 caller의 값(`deep_interview_tool`, `deep_interview_hook`, `ultragoal_tool`)이 적힙니다.
+- **쓰는 주체**: `_meta.updatedBy`는 caller와 owner로 정합니다(`writerFor(caller, owner)`, `handoff.ts:179-180`). ralplan이 callee일 때는 caller의 값(`deep_interview_tool`, `deep_interview_hook`, `ultragoal_tool`)이 적힙니다.
 - **goal**: 어떤 인계도 goal 상태를 건드리지 않습니다(D-HE2).
 
 ## 체인 가드와 막지 않는 것
@@ -598,7 +598,7 @@ ralplan 쪽 체인은 **ultragoal 방향으로만** 지킵니다(ralplan 편차 
 | `ultragoal create` | ralplan 계획 중 | 통과. ultragoal 행이 생기고 ralplan 행이 지워짐, ralplan은 활성 `planner`로 남음 |
 | `ralplan write` | ultragoal 실행 중 | 통과, ralplan을 활성으로 만들 수 있음(R-AE1, U22; `tests/ralplan-tool.test.ts` "… runs beside ultragoal (P-AC4, P-AC11)") |
 | 결합 호출 `spec(…, handoff:"ralplan")` | ralplan 활성 | 다시 시드. 실행 예: `task: "old"`, `mode: "short"`이던 활성 run이 같은 `run_id`로 `task` = 스펙 경로, `mode: "deliberate"`가 됨(K12, K14) |
-| `ultragoal handoff(to:"ralplan")` | ralplan 계획 중 활성 | 통과. 실행 예: 활성 `architect`가 `planner`로 돌아가고 `invalid_transition_detected`(`architect`→`planner`)가 남음 |
+| `ultragoal handoff(to:"ralplan")` | ralplan 계획 중 활성 | 통과. 활성 `architect`가 `planner`로 돌아감. 공통 인계는 검사 없는 쓰기라 전이 진단 행은 남지 않음 |
 
 `deep-interview start`가 ralplan 계획 중에 낸 실제 거부입니다(deep-interview 쪽 문구).
 

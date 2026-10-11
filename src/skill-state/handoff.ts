@@ -10,8 +10,10 @@
 // `packages/coding-agent/src/`:
 // - `gjc-runtime/state-runtime.ts:1572-1881` (`handleHandoffUnlocked`: the
 //   caller and callee reads, the merges, the journal steps, the receipt)
-// - `gjc-runtime/state-writer.ts:1009-1068` (`writeWorkflowEnvelopeAtomic`:
-//   the audit-only `invalid_transition_detected` row of an active write)
+// - `gjc-runtime/state-runtime.ts:688-741` (the local `writeJsonAtomic`
+//   behind every handoff state write → `state-writer.ts:888-943`
+//   `writeGuardedWorkflowEnvelopeAtomic`): the unchecked write, so no
+//   transition diagnostic
 // - `skill-state/initial-phase.ts:13-19` (`initialPhaseForSkill`)
 // - `skill-state/active-state.ts:969-1015` (`applyHandoffToActiveState`, via
 //   `./rows.ts`); both rows carry gjc `buildHudForMode` of their merged
@@ -29,21 +31,13 @@
 //   would refuse leaves no journal and no callee write behind.
 
 import { buildDeepInterviewHudFromState } from "../deep-interview-runtime/hud.js";
-import {
-  DEEP_INTERVIEW_INITIAL_STATE,
-  isDeepInterviewPhase,
-  isValidDeepInterviewTransition,
-} from "../deep-interview-runtime/manifest.js";
+import { DEEP_INTERVIEW_INITIAL_STATE } from "../deep-interview-runtime/manifest.js";
 import { buildRalplanHudFromState } from "../ralplan-runtime/hud.js";
-import {
-  isValidTransition,
-  RALPLAN_INITIAL_STATE,
-  RALPLAN_STATES,
-} from "../ralplan-runtime/manifest.js";
+import { RALPLAN_INITIAL_STATE } from "../ralplan-runtime/manifest.js";
 import { assertStatePayload, type InterviewState, type StateWriter, type WorkflowTx } from "../state.js";
 import { buildUltragoalHudFromState } from "../ultragoal-runtime/hud.js";
 import { ULTRAGOAL_INITIAL_STATE } from "../ultragoal-runtime/manifest.js";
-import { type AuditOwner, appendAudit, HOOK_OWNER, RUNTIME_OWNER } from "./audit.js";
+import { type AuditOwner, writerFor } from "./audit.js";
 import type { WorkflowHudSummary } from "./hud.js";
 import {
   beginWorkflowTransactionJournalTx,
@@ -63,39 +57,16 @@ export type HandoffCallee = HandoffCaller;
 type HandoffSkill = {
   /** gjc `initialPhaseForSkill`. */
   initialPhase: string;
-  /** The manifest behind gjc's audit-only transition diagnostic. */
-  manifest?: {
-    isState(phase: string): boolean;
-    isValidTransition(from: string, to: string): boolean;
-  };
   /** gjc `buildHudForMode`: the row's HUD from the merged state. */
   hud?(state: Json, at: string): WorkflowHudSummary;
 };
 
 const HANDOFF_SKILLS: Record<HandoffCallee, HandoffSkill> = {
-  ralplan: {
-    initialPhase: RALPLAN_INITIAL_STATE,
-    manifest: {
-      isState: (phase) => (RALPLAN_STATES as readonly string[]).includes(phase),
-      isValidTransition,
-    },
-    hud: buildRalplanHudFromState,
-  },
+  ralplan: { initialPhase: RALPLAN_INITIAL_STATE, hud: buildRalplanHudFromState },
   ultragoal: { initialPhase: ULTRAGOAL_INITIAL_STATE, hud: buildUltragoalHudFromState },
   // Deep-interview revision plan DR-10: gjc's `interviewing` and row; the
   // callee is not normalized here (the deep-interview reads are).
-  "deep-interview": {
-    initialPhase: DEEP_INTERVIEW_INITIAL_STATE,
-    manifest: { isState: isDeepInterviewPhase, isValidTransition: isValidDeepInterviewTransition },
-    hud: buildDeepInterviewHudFromState,
-  },
-};
-
-/** `_meta.updatedBy` for both states: the caller's tool or hook writer. */
-const WRITERS: Record<HandoffCaller, Record<AuditOwner, StateWriter>> = {
-  ralplan: { [RUNTIME_OWNER]: "ralplan_tool", [HOOK_OWNER]: "ralplan_hook" },
-  ultragoal: { [RUNTIME_OWNER]: "ultragoal_tool", [HOOK_OWNER]: "ultragoal_hook" },
-  "deep-interview": { [RUNTIME_OWNER]: "deep_interview_tool", [HOOK_OWNER]: "deep_interview_hook" },
+  "deep-interview": { initialPhase: DEEP_INTERVIEW_INITIAL_STATE, hud: buildDeepInterviewHudFromState },
 };
 
 export type HandoffInput = {
@@ -150,9 +121,10 @@ async function readForHandoff(tx: WorkflowTx, skill: HandoffCallee): Promise<Jso
 }
 
 /**
- * One merged state, as gjc's `writeJsonAtomic(…, "handoff", …)`: an active
- * write whose manifest lacks the edge leaves an `invalid_transition_detected`
- * row first (best-effort), then the state and its `handoff` audit row.
+ * One merged state, as gjc's `writeJsonAtomic(…, "handoff", …)`: the
+ * unchecked write (no transition diagnostic) and its `handoff` audit row.
+ * `mode` and the audit's `skill` are the same variable: for the union
+ * `skill` the type check cannot bind them, so the shared variable does.
  */
 async function writeHandoffStateTx(
   tx: WorkflowTx,
@@ -166,37 +138,16 @@ async function writeHandoffStateTx(
     toPhase: string;
   },
 ): Promise<void> {
-  const file = tx.paths.modeState(skill);
-  const manifest = HANDOFF_SKILLS[skill].manifest;
-  const { fromPhase, toPhase } = write;
-  if (
-    next.active === true &&
-    manifest &&
-    fromPhase &&
-    fromPhase !== toPhase &&
-    manifest.isState(fromPhase) &&
-    !manifest.isValidTransition(fromPhase, toPhase)
-  )
-    await appendAudit(tx, {
+  await tx.writeModeState(skill, next, write.writer, {
+    audit: {
       category: "state",
-      verb: "invalid_transition_detected",
+      verb: "handoff",
       owner: write.owner,
       skill,
       mutationId: write.mutationId,
-      fromPhase,
-      toPhase,
-      path: file,
-    }).catch(() => undefined);
-  await tx.writeModeState(skill, next, write.writer);
-  await appendAudit(tx, {
-    category: "state",
-    verb: "handoff",
-    owner: write.owner,
-    skill,
-    mutationId: write.mutationId,
-    fromPhase,
-    toPhase,
-    path: file,
+      toPhase: write.toPhase,
+    },
+    fromPhase: write.fromPhase,
   });
 }
 
@@ -225,7 +176,8 @@ export async function handoffWorkflowTx(
 
   const at = new Date().toISOString();
   const mutationId = `${caller}:handoff:${callee}:${at}`;
-  const writer = WRITERS[caller][owner];
+  // `_meta.updatedBy` for both states: the caller's tool or hook writer.
+  const writer = writerFor(caller, owner);
   const calleeSkill = HANDOFF_SKILLS[callee];
   const calleeState: Json = {
     ...existingCallee,

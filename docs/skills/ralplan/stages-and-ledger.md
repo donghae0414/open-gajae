@@ -1,6 +1,6 @@
 # 단계 기록과 원장: 예산, PLANNING-STUCK, disposition, 최종 승인 판정
 
-이 문서는 `ralplan write` 한 번이 안에서 하는 일을 코드 그대로 적습니다. 다루는 것은 `writeStageTx`(`src/ralplan-runtime/store.ts:635-880`)의 단계별 순서, 단계 이름과 `stage_n`, 단계 파일 이름과 본문 정규화, 원장 `index.jsonl`의 행과 읽기 규칙, 같은 단계를 다시 쓸 때의 중복 처리·덮어쓰기 거부·원장 복구, `pending-approval.md`, run 식별과 상태 갱신, phase 전진과 잠긴 phase, 전이 감사 행, 반복 상한과 lane 예산, PLANNING-STUCK, lane verdict, 역할 세션 ID와 대체 메타, final의 `auto_handoff` 판정, disposition 단계, 영수증입니다. 기준 코드는 [README.md](README.md) 머리에 있습니다. 코드 위치는 `5b92a60` 기준입니다.
+이 문서는 `ralplan write` 한 번이 안에서 하는 일을 코드 그대로 적습니다. 다루는 것은 `writeStageTx`(`src/ralplan-runtime/store.ts:569-814`)의 단계별 순서, 단계 이름과 `stage_n`, 단계 파일 이름과 본문 정규화, 원장 `index.jsonl`의 행과 읽기 규칙, 같은 단계를 다시 쓸 때의 중복 처리·덮어쓰기 거부·원장 복구, `pending-approval.md`, run 식별과 상태 갱신, phase 전진과 잠긴 phase, 전이 감사 행, 반복 상한과 lane 예산, PLANNING-STUCK, lane verdict, 역할 세션 ID와 대체 메타, final의 `auto_handoff` 판정, disposition 단계, 영수증입니다. 기준 코드는 [README.md](README.md) 머리에 있습니다. 코드 위치는 `5b92a60` 기준입니다.
 
 예시 출력은 기준 코드를 임시 폴더의 `StateStore` 위에서 bun으로 실제로 불러 얻은 것입니다(`tests/ralplan-tool.test.ts`와 같은 방식, 13장). 세션 폴더 절대 경로는 `<session>`으로 줄였고, 시각과 해시는 실행마다 다릅니다. 영수증의 `repository_binding` 객체는 `{…}`로 줄였습니다.
 
@@ -46,27 +46,27 @@
 
 | 순서 | 코드 (`store.ts`) | 하는 일 | 거부 문구 또는 쓰는 것 |
 |---|---|---|---|
-| 1 | `:642` `readStateForMutation` (`:250-260`) | 상태 파일을 읽습니다. 없으면 `undefined`. | 읽기 실패: ``existing ralplan state is corrupt or tampered (<오류>); refusing to overwrite <state 경로>. Reset it with `ralplan clear` and force: true.`` |
-| 2 | `:643-644` | `run_id` 결정과 run 폴더 경로 (6.1) | `invalid path component for run_id: <값>` |
-| 3 | `:647-648` | 영수증용 바인딩: 상태의 `repository_binding`, 없으면 지금 캡처(`captureRepositoryBinding`) | 없음 (검사하지 않음, 편차 12) |
-| 4 | `:651` `loadIndexTx` (`:324-332`) | 원장을 한 번 읽습니다. 중복 확인, 두 예산, disposition 출처 검사가 모두 이 읽기 결과를 씁니다(gjc `:2075`). | 없음 (읽을 수 없으면 "있지만 못 믿음", 3.3) |
-| 5 | `:652-655` | `disposition`이면 `normalizeDispositionArtifact`로 검사하고 다시 직렬화 (11장) | `invalid ralplan disposition artifact: <사유>` |
-| 6 | `:656-657` | 끝 개행 정규화, sha256 (2.3) | 없음 |
-| 7 | `:668-692` | **원장 중복**: 같은 `(stage, stage_n)` 행이 있으면 (4.2) | sha256이 다르면 덮어쓰기 거부(4.4). 같으면 final만 `pending-approval.md` 확인(5장), 그리고 중복 영수증을 돌려주고 끝 |
-| 8 | `:695-759` | **원장 복구**: 행은 없고 단계 파일이 있으면 (4.3) | sha256이 다르면 덮어쓰기 거부. 같으면 final만 `pending-approval.md` 확인, 원장 행 추가, 같은 run이면 역할 메타·lane verdict 병합, 중복 영수증을 돌려주고 끝 |
-| 9 | `:762` | run 폴더 목록(`tx.list`, 이름순). 폴더가 없으면 빈 목록 | 폴더가 심볼릭 링크이거나 폴더가 아니면 `state path contains a symlink or non-directory` |
-| 10 | `:763-781` | **반복 상한** (7.2) | 넘으면 막힘 기록 후 PLANNING-STUCK 결과를 돌려주고 끝 |
-| 11 | `:782-800` | **lane 예산** (7.3) | 넘으면 막힘 기록 후 PLANNING-STUCK 결과를 돌려주고 끝 |
-| 12 | `:803-810` | final이면 승인 판정 `resolveRalplanAutoHandoffTarget` (10장). 파일을 쓰기 전에 정합니다(gjc `:2191-2203`). | 없음 |
-| 13 | `:812` `persistActiveRunIdTx` (`:513-545`) | 상태 만들기, run 전환, phase 전진, 다시 활성화. 잠긴 phase면 아무것도 쓰지 않음 (6.2) | `state/write` 감사 행. 그 앞에 `invalid_transition_detected` 행이 붙을 수 있음(6.6) |
-| 14 | `:813-822` `persistArtifactTx` (`:372-405`) | 단계 파일 → 원장 행 → final이면 `pending-approval.md` | `artifact/write`, `ledger/append`, (final) `artifact/write` |
-| 15 | `:823-830` | 역할 메타 병합 `mergeRunStateTx` (9장) | `state/write` |
-| 16 | `:831-838` | lane verdict 병합 (8장) | `state/write` |
-| 17 | `:839-840` | final이면 승인 판정을 상태에 (`persistFinalAdmissionTx`, 같은 run일 때만) | `state/write` |
-| 18 | `:842-866` | 활성 행과 스냅숏(최선 노력, 실패해도 결과는 그대로). 행의 `phase`는 방금 쓴 단계(DR-8, R-OD5) | `state/write-active-entry`, `state/rebuild-active-snapshot` (위쪽 파이프라인 행을 지우면 `state/remove-superseded-pipeline-entry`도) |
-| 19 | `:867-879` | 새 기록 영수증 `buildWriteReceipt` (12장) | — |
+| 1 | `:576` `readStateForMutation` (`:194-204`) | 상태 파일을 읽습니다. 없으면 `undefined`. | 읽기 실패: ``existing ralplan state is corrupt or tampered (<오류>); refusing to overwrite <state 경로>. Reset it with `ralplan clear` and force: true.`` |
+| 2 | `:577-578` | `run_id` 결정과 run 폴더 경로 (6.1) | `invalid path component for run_id: <값>` |
+| 3 | `:581-582` | 영수증용 바인딩: 상태의 `repository_binding`, 없으면 지금 캡처(`captureRepositoryBinding`) | 없음 (검사하지 않음, 편차 12) |
+| 4 | `:585` `loadIndexTx` (`:268-276`) | 원장을 한 번 읽습니다. 중복 확인, 두 예산, disposition 출처 검사가 모두 이 읽기 결과를 씁니다(gjc `:2075`). | 없음 (읽을 수 없으면 "있지만 못 믿음", 3.3) |
+| 5 | `:586-589` | `disposition`이면 `normalizeDispositionArtifact`로 검사하고 다시 직렬화 (11장) | `invalid ralplan disposition artifact: <사유>` |
+| 6 | `:590-591` | 끝 개행 정규화, sha256 (2.3) | 없음 |
+| 7 | `:602-626` | **원장 중복**: 같은 `(stage, stage_n)` 행이 있으면 (4.2) | sha256이 다르면 덮어쓰기 거부(4.4). 같으면 final만 `pending-approval.md` 확인(5장), 그리고 중복 영수증을 돌려주고 끝 |
+| 8 | `:629-693` | **원장 복구**: 행은 없고 단계 파일이 있으면 (4.3) | sha256이 다르면 덮어쓰기 거부. 같으면 final만 `pending-approval.md` 확인, 원장 행 추가, 같은 run이면 역할 메타·lane verdict 병합, 중복 영수증을 돌려주고 끝 |
+| 9 | `:696` | run 폴더 목록(`tx.list`, 이름순). 폴더가 없으면 빈 목록 | 폴더가 심볼릭 링크이거나 폴더가 아니면 `state path contains a symlink or non-directory` |
+| 10 | `:697-715` | **반복 상한** (7.2) | 넘으면 막힘 기록 후 PLANNING-STUCK 결과를 돌려주고 끝 |
+| 11 | `:716-734` | **lane 예산** (7.3) | 넘으면 막힘 기록 후 PLANNING-STUCK 결과를 돌려주고 끝 |
+| 12 | `:737-744` | final이면 승인 판정 `resolveRalplanAutoHandoffTarget` (10장). 파일을 쓰기 전에 정합니다(gjc `:2191-2203`). | 없음 |
+| 13 | `:746` `persistActiveRunIdTx` (`:447-479`) | 상태 만들기, run 전환, phase 전진, 다시 활성화. 잠긴 phase면 아무것도 쓰지 않음 (6.2) | `state/write` 감사 행. 그 앞에 `invalid_transition_detected` 행이 붙을 수 있음(6.6) |
+| 14 | `:747-756` `persistArtifactTx` (`:306-339`) | 단계 파일 → 원장 행 → final이면 `pending-approval.md` | `artifact/write`, `ledger/append`, (final) `artifact/write` |
+| 15 | `:757-764` | 역할 메타 병합 `mergeRunStateTx` (9장) | `state/write` |
+| 16 | `:765-772` | lane verdict 병합 (8장) | `state/write` |
+| 17 | `:773-774` | final이면 승인 판정을 상태에 (`persistFinalAdmissionTx`, 같은 run일 때만) | `state/write` |
+| 18 | `:776-800` | 활성 행과 스냅숏(최선 노력, 실패해도 결과는 그대로). 행의 `phase`는 방금 쓴 단계(DR-8, R-OD5) | `state/write-active-entry`, `state/rebuild-active-snapshot` (위쪽 파이프라인 행을 지우면 `state/remove-superseded-pipeline-entry`도) |
+| 19 | `:801-813` | 새 기록 영수증 `buildWriteReceipt` (12장) | — |
 
-상태 쓰기(8, 10, 11, 13, 15~17단계)는 모두 `writeStateTx`(`:193-247`)를 거칩니다. `writeStateTx`는 `active: true`인 상태를 manifest에 없는 phase로 쓰려 하면 `Refusing to write unknown ralplan phase "<phase>" to <state 경로>: not a known ralplan manifest state`로 거부합니다. 13단계는 manifest 밖의 phase를 방금 쓴 단계로 바꾸므로(잠긴 phase가 아니므로) 새 기록 경로에서는 이 거부가 나지 않습니다. 8단계의 병합과 10·11단계의 막힘 기록은 phase를 바꾸지 않으므로, 상태가 이미 manifest 밖의 phase(예: OMC 시절의 `"ralplan"`, `version: 2`)로 `active: true`이면 거부됩니다. 막힘 기록에서 이 거부가 나면 막힘 행은 이미 붙은 뒤이고, 결과는 PLANNING-STUCK이 아니라 `Error:`입니다(실행해 확인).
+상태 쓰기(8, 10, 11, 13, 15~17단계)는 모두 `writeRunStateTx`(`store.ts:186-191`)로 검사 쓰기 `writeModeStateChecked`(`src/state.ts:629-664`)를 거칩니다. 검사 쓰기는 `active: true`인 상태를 manifest에 없는 phase로 쓰려 하면 `Refusing to write unknown ralplan phase "<phase>" to <state 경로>: not a known ralplan manifest state`로 거부합니다. 13단계는 manifest 밖의 phase를 방금 쓴 단계로 바꾸므로(잠긴 phase가 아니므로) 새 기록 경로에서는 이 거부가 나지 않습니다. 8단계의 병합과 10·11단계의 막힘 기록은 phase를 바꾸지 않으므로, 상태가 이미 manifest 밖의 phase(예: OMC 시절의 `"ralplan"`, `version: 2`)로 `active: true`이면 거부됩니다. 막힘 기록에서 이 거부가 나면 막힘 행은 이미 붙은 뒤이고, 결과는 PLANNING-STUCK이 아니라 `Error:`입니다(실행해 확인).
 
 ### 1.3 쓰는 순서: 실제 감사 행
 
@@ -159,7 +159,7 @@ invalid stage_n: <값>. Expected integer 1..999.
 
 ### 3.2 멱등 추가
 
-원장에 행을 붙이는 곳은 `appendJsonlIdempotentTx`(`store.ts:335-353`, gjc `appendJsonlIdempotent`) 하나입니다. 지금 원장을 읽고, `findJsonlDuplicate`(`ledger.ts:186-205`)가 키가 같은 행을 찾으면 붙이지 않습니다. 붙였을 때만 `ledger/append` 감사 행을 남깁니다.
+원장에 행을 붙이는 곳은 `appendJsonlIdempotentTx`(`store.ts:279-292`, gjc `appendJsonlIdempotent`) 하나입니다. 지금 원장을 읽고, `findJsonlDuplicate`(`ledger.ts:186-205`)가 키가 같은 행을 찾으면 붙이지 않습니다. 붙였을 때만 `ledger/append` 감사 행을 남깁니다.
 
 | 키 함수 | 키 | 결과 |
 |---|---|---|
@@ -170,7 +170,7 @@ invalid stage_n: <값>. Expected integer 1..999.
 
 ### 3.3 원장 읽기
 
-`loadIndexTx`(`store.ts:324-332`)는 원장을 텍스트로 읽어 `loadRalplanIndexForCap`(`ledger.ts:238-257`)에 넘깁니다. 결과 `RalplanIndexLoad`는 `rows`, `indexPresent`, `parseableLines`, `rawLineCount`, `rawText`입니다.
+`loadIndexTx`(`store.ts:268-276`)는 원장을 텍스트로 읽어 `loadRalplanIndexForCap`(`ledger.ts:238-257`)에 넘깁니다. 결과 `RalplanIndexLoad`는 `rows`, `indexPresent`, `parseableLines`, `rawLineCount`, `rawText`입니다.
 
 - 줄 나누기는 `\r?\n`, 공백만 있는 줄은 버립니다(`rawLineCount`에서도 빠짐).
 - `parseRalplanIndexLine`(`:208-223`)은 JSON 객체이고 `stage`가 문자열인 줄만 행으로 받습니다. `{stage, stageN?}`만 남깁니다(`stage_n`이 숫자일 때만 `stageN`). 막힘 행과 망가진 줄은 `rows`에 없습니다.
@@ -209,7 +209,7 @@ invalid stage_n: <값>. Expected integer 1..999.
 
 ### 4.2 원장 중복
 
-같은 `(stage, stage_n)`의 행이 있으면(`store.ts:668-692`):
+같은 `(stage, stage_n)`의 행이 있으면(`store.ts:602-626`):
 
 1. 새 본문의 sha256이 행의 것과 다르면 덮어쓰기 거부(4.4).
 2. 같으면, final만 `ensureFinalPendingApprovalTx`로 `pending-approval.md`를 확인합니다(5장).
@@ -221,11 +221,11 @@ invalid stage_n: <값>. Expected integer 1..999.
 
 ### 4.3 원장 복구
 
-행은 없는데 `stage-NN-<stage>.md`가 디스크에 있으면(`store.ts:695-759`, gjc `:2103-2135`) 파일을 쓴 뒤 원장 행을 붙이기 전에 멈춘 것으로 봅니다.
+행은 없는데 `stage-NN-<stage>.md`가 디스크에 있으면(`store.ts:629-693`, gjc `gjc-runtime/ralplan-runtime.ts:2103-2135`) 파일을 쓴 뒤 원장 행을 붙이기 전에 멈춘 것으로 봅니다.
 
 1. 디스크 파일의 sha256이 새 본문과 다르면 덮어쓰기 거부(4.4).
 2. 같으면, final만 `pending-approval.md`를 확인합니다(5장).
-3. `repairLedgerTx`(`:440-491`)가 원장 행을 붙입니다. `created_at`은 지금 시각입니다. final이면 행의 `auto_handoff`는 늘 `unavailableRalplanFinalAdmission()`입니다(10.4). 같은 `(stage, stage_n, sha256)` 키의 행이 이미 있으면(4.1이 `path`가 없어 건너뛴 행) 붙이지 않고, 영수증은 디스크 경로와 지금 시각을 씁니다. 이때 원장은 고쳐지지 않습니다. `path`와 `sha256`이 다 있는 같은 키의 행이었다면 4.2에서 이미 걸렸으므로, 코드의 "기존 행 값을 쓰는" 분기(`:464-482`)에는 도구 경로로 닿지 않습니다.
+3. `repairLedgerTx`(`:374-425`)가 원장 행을 붙입니다. `created_at`은 지금 시각입니다. final이면 행의 `auto_handoff`는 늘 `unavailableRalplanFinalAdmission()`입니다(10.4). 같은 `(stage, stage_n, sha256)` 키의 행이 이미 있으면(4.1이 `path`가 없어 건너뛴 행) 붙이지 않고, 영수증은 디스크 경로와 지금 시각을 씁니다. 이때 원장은 고쳐지지 않습니다. `path`와 `sha256`이 다 있는 같은 키의 행이었다면 4.2에서 이미 걸렸으므로, 코드의 "기존 행 값을 쓰는" 분기(`:398-416`)에는 도구 경로로 닿지 않습니다.
 4. 역할 메타와 lane verdict는 상태의 `run_id`가 이번 `run_id`와 같을 때만 병합합니다(`mergeRunStateTx`의 `expectedRunId`, DR-20). 적용한 것만 영수증에 넣습니다. 상태가 없거나 다른 run이면 아무것도 병합하지 않습니다.
 5. 중복 영수증을 돌려줍니다. 13단계의 상태 갱신(phase 전진, 다시 활성화), final 승인 판정의 상태 기록, 활성 행 갱신은 하지 않습니다.
 
@@ -257,8 +257,8 @@ Error: refusing to overwrite ralplan final stage 2 at <session>/plans/ralplan/se
 
 run 폴더의 `pending-approval.md`는 최신 final의 바이트 사본입니다(`RALPLAN_PENDING_APPROVAL_FILE`, `ledger.ts:58`).
 
-- **새 final**: `persistArtifactTx`(`store.ts:372-405`)가 단계 파일, 원장 행 다음에 같은 내용으로 덮어씁니다(`artifact/write` 감사 행). 앞 final의 단계 파일은 그대로입니다. 막힌 run의 final, 잠긴 phase 위의 final도 씁니다.
-- **final의 중복·복구**: `ensureFinalPendingApprovalTx`(`store.ts:408-437`, gjc `ensureFinalPendingApproval`, `:1776-1823`)가 확인합니다.
+- **새 final**: `persistArtifactTx`(`store.ts:306-339`)가 단계 파일, 원장 행 다음에 같은 내용으로 덮어씁니다(`artifact/write` 감사 행). 앞 final의 단계 파일은 그대로입니다. 막힌 run의 final, 잠긴 phase 위의 final도 씁니다.
+- **final의 중복·복구**: `ensureFinalPendingApprovalTx`(`store.ts:342-371`, gjc `ensureFinalPendingApproval`, `gjc-runtime/ralplan-runtime.ts:1776-1823`)가 확인합니다.
   1. 단계 파일을 읽습니다. 없으면 거부.
   2. 단계 파일의 sha256이 기록(원장 행 또는 디스크)의 것과 다르면 거부.
   3. 사본이 없으면 단계 파일 내용으로 새로 씁니다(`artifact/write`).
@@ -279,19 +279,19 @@ refusing to deduplicate ralplan final stage <n>: pending approval content mismat
 
 ### 6.1 `run_id` 정하기
 
-`writeStageTx`(`store.ts:643`)와 `startRunTx`(`:925`)는 같은 순서를 씁니다(gjc `:1565-1570`, DR-19).
+`writeStageTx`(`store.ts:577`)와 `startRunTx`(`:859`)는 같은 순서를 씁니다(gjc `gjc-runtime/ralplan-runtime.ts:1565-1570`, DR-19).
 
 1. 입력 `run_id`를 trim한 값. 비어 있으면 다음으로.
-2. 상태의 `run_id`(`activeRunId`, `:498-503`, gjc `readActiveRunId`). trim한 값이 비어 있지 않으면 경로 성분 검사를 거칩니다. 이름은 "active"지만 상태의 `active` 값은 보지 않습니다. 그래서 Stop here나 `clear` 뒤에도 같은 run이 이어집니다.
+2. 상태의 `run_id`(`activeRunId`, `:432-437`, gjc `readActiveRunId`). trim한 값이 비어 있지 않으면 경로 성분 검사를 거칩니다. 이름은 "active"지만 상태의 `active` 값은 보지 않습니다. 그래서 Stop here나 `clear` 뒤에도 같은 run이 이어집니다.
 3. 소유 세션 ID(계보 루트의 native ID).
 
-run 폴더는 `tx.paths.runDir(runId)` = `<session>/plans/ralplan/<run_id>`이고, `safeComponent`(`src/state.ts:204-208`, gjc `assertSafePathComponent`)가 검사합니다. 첫 글자는 `A-Z a-z 0-9 _ -`, 나머지는 거기에 `.`을 더한 글자, 전체 1~64자이고 `..`을 포함하면 안 됩니다. 어기면 `invalid path component for run_id: <값>`입니다. 입력 `run_id`가 있으면 상태의 `run_id`는 검사하지 않습니다.
+run 폴더는 `tx.paths.runDir(runId)` = `<session>/plans/ralplan/<run_id>`이고, `safeComponent`(`src/state.ts:274-278`, gjc `assertSafePathComponent`)가 검사합니다. 첫 글자는 `A-Z a-z 0-9 _ -`, 나머지는 거기에 `.`을 더한 글자, 전체 1~64자이고 `..`을 포함하면 안 됩니다. 어기면 `invalid path component for run_id: <값>`입니다. 입력 `run_id`가 있으면 상태의 `run_id`는 검사하지 않습니다.
 
-바인딩은 `start`와 다릅니다. `start`는 같은 run일 때만 상태의 바인딩을 씁니다. `write`는 run이 바뀌어도 상태에 `repository_binding`이 있으면 그것을 영수증에 씁니다(`:647-648`). 어느 쪽이든 기록만 하고 강제하지 않습니다(편차 12).
+바인딩은 `start`와 다릅니다. `start`는 같은 run일 때만 상태의 바인딩을 씁니다. `write`는 run이 바뀌어도 상태에 `repository_binding`이 있으면 그것을 영수증에 씁니다(`:581-582`). 어느 쪽이든 기록만 하고 강제하지 않습니다(편차 12).
 
 ### 6.2 상태 갱신: `persistActiveRunIdTx`
 
-`persistActiveRunIdTx`(`store.ts:513-545`, gjc `persistActiveRunId` `:986-1059`, DR-3)는 새 기록(13단계)에서만 불립니다. 중복, 복구, 막힘 경로는 부르지 않습니다.
+`persistActiveRunIdTx`(`store.ts:447-479`, gjc `persistActiveRunId` `:986-1059`, DR-3)는 새 기록(13단계)에서만 불립니다. 중복, 복구, 막힘 경로는 부르지 않습니다.
 
 `isNewRun`은 상태의 `run_id`가 이번 `run_id`와 다를 때 참입니다(상태가 없을 때 포함). 다음 phase는 새 run이면 방금 쓴 단계, 같은 run이면 `advanceCurrentPhase`(`manifest.ts:158-166`)의 결과입니다. `advanceCurrentPhase`는 지금 phase(trim)가 `RALPLAN_PHASE_LOCK`(`manifest.ts:72-81`: `final`, `handoff`, `complete`, `completed`, `failed`, `cancelled`, `canceled`, `inactive`)에 있으면 그대로 두고, 아니면 방금 쓴 단계를 돌려줍니다. 이 여덟 개는 T와 같은 집합입니다.
 
@@ -308,7 +308,7 @@ run 폴더는 `tx.paths.runDir(runId)` = `<session>/plans/ralplan/<run_id>`이�
 
 ### 6.3 새 run으로 바꿀 때
 
-새 run이면 상태에서 이 필드를 지웁니다(`store.ts:523-529`, gjc 그대로).
+새 run이면 상태에서 이 필드를 지웁니다(`store.ts:457-463`, gjc 그대로).
 
 - `verdict`
 - 이름이 `last_review_verdict`로 시작하는 모든 키 (`last_review_verdict`, `_lane`, `_stage_n`)
@@ -326,8 +326,8 @@ run 폴더는 `tx.paths.runDir(runId)` = `<session>/plans/ralplan/<run_id>`이�
 | 단계 파일, 원장 행 | 씀 | 보통과 같음. final이면 `pending-approval.md`도 덮어씀 |
 | 상태의 `active`, `current_phase` | 쓰지 않음 | 13단계가 조기 반환 |
 | 상태의 다른 필드 | 씀 | 역할 메타(역할이 자기 단계를 쓰면 늘 있음), lane verdict, final의 `auto_handoff`가 `updated_at`과 함께 병합됨. `active`는 `false`로 남음 |
-| 활성 행 `state/active/ralplan.json` | 씀 | `active: true`, `phase: <방금 쓴 단계>`. `handoff_to`는 없어짐. 이것은 파일에 쓰인 원본이고, 보이는 주 skill을 읽는 쪽(`readVisiblePrimaryTx`, `src/skill-state/rows.ts:254-283`, gjc `withCanonicalRalplanPhase`)은 상태 phase가 잠겨 있으면 행의 `phase`와 `stage` 칩을 그 phase로 바꿔 봅니다(DR-8, R-OD15) |
-| 위쪽 파이프라인 행 | 지움 | `deep-interview` 행이 있으면 지움(`syncActiveRowTx`, `src/skill-state/rows.ts:149-162`) |
+| 활성 행 `state/active/ralplan.json` | 씀 | `active: true`, `phase: <방금 쓴 단계>`. `handoff_to`는 없어짐. 이것은 파일에 쓰인 원본이고, 보이는 주 skill을 읽는 쪽(`readVisiblePrimaryTx`, `src/skill-state/rows.ts:245-274`, gjc `withCanonicalRalplanPhase`)은 상태 phase가 잠겨 있으면 행의 `phase`와 `stage` 칩을 그 phase로 바꿔 봅니다(DR-8, R-OD15) |
+| 위쪽 파이프라인 행 | 지움 | `deep-interview` 행이 있으면 지움(`syncActiveRowTx`, `src/skill-state/rows.ts:144-157`) |
 | 스냅숏 | 다시 만듦 | |
 | 전이 감사 행 | 없음 | 13단계가 상태를 쓰지 않으므로 |
 
@@ -339,22 +339,22 @@ run 폴더는 `tx.paths.runDir(runId)` = `<session>/plans/ralplan/<run_id>`이�
 
 ### 6.5 같은 run 병합: `mergeRunStateTx`
 
-역할 메타와 lane verdict는 `mergeRunStateTx`(`store.ts:548-565`, gjc `applyPersistedRoleStateUpdate`/`applyLaneVerdictUpdate`의 공통 몸체)로 상태에 붙습니다.
+역할 메타와 lane verdict는 `mergeRunStateTx`(`store.ts:482-499`, gjc `applyPersistedRoleStateUpdate`/`applyLaneVerdictUpdate`의 공통 몸체)로 상태에 붙습니다.
 
 - `expectedRunId`가 주어지고(복구 경로) 상태의 `run_id`와 다르면 아무것도 하지 않고 `undefined`를 돌려줍니다. 새 기록 경로는 `undefined`를 넘기므로 늘 병합합니다(13단계가 이미 같은 run으로 맞춰 둠).
 - 필드를 `Object.assign`으로 덮고, `skill`이 문자열이 아니면 `"ralplan"`, `active`가 boolean이 아니면 `true`, `current_phase`가 문자열이 아니면 `"planner"`로 채운 뒤 `migrateRalplanState`, `updated_at`을 씁니다.
-- 막힘 기록(`recordPlanningStuckTx`, 7.5)과 final 승인 기록(`persistFinalAdmissionTx`, `:594-606`)은 상태의 `run_id`가 이번 run일 때만, 지금 상태에 그 필드 하나를 얹고 `migrateRalplanState`, `updated_at`을 씁니다. `skill`, `active`, `current_phase`를 채우는 기본값 처리는 없습니다.
+- 막힘 기록(`recordPlanningStuckTx`, 7.5)과 final 승인 기록(`persistFinalAdmissionTx`, `:528-540`)은 상태의 `run_id`가 이번 run일 때만, 지금 상태에 그 필드 하나를 얹고 `migrateRalplanState`, `updated_at`을 씁니다. `skill`, `active`, `current_phase`를 채우는 기본값 처리는 없습니다.
 
 ### 6.6 전이 감사 행
 
-`writeStateTx`(`store.ts:193-247`, gjc `writeWorkflowEnvelopeAtomic`)는 쓰기 전에 전이를 봅니다. 조건은 넷입니다.
+`writeRunStateTx`(`store.ts:186-191`)가 부르는 검사 쓰기 `writeModeStateChecked`(`src/state.ts:629-664`, gjc `writeWorkflowEnvelopeAtomic`)는 쓰기 전에 전이를 봅니다. 조건은 넷입니다.
 
 1. `force`가 아니고 새 상태가 `active: true`
 2. 새 phase(`current_phase` trim)가 있음. manifest 밖이면 1.2의 거부
-3. 이전 phase: 감사 입력의 `fromPhase`, 없으면 이전 상태가 `active: true`일 때만 그 `current_phase`
+3. 이전 phase: 쓰기 옵션의 `fromPhase`(ralplan은 넘기지 않음), 없으면 저장된 상태를 StateStore로 읽어 `active: true`이고 `current_phase`가 문자열일 때만 그 값(trim, `storedActivePhase` `src/state.ts:586-591`). 읽을 수 없는 상태(손상, 다른 세션, 한도 초과)에는 이전 phase가 없음
 4. 이전 phase가 manifest 상태이고, 새 phase와 다르고, `isValidTransition`(`manifest.ts:147-152`)이 거짓
 
-넷이 맞으면 `invalid_transition_detected` 감사 행을 하나 붙이고(실패해도 무시), 쓰기는 그대로 합니다(spec D-T11). `write`에서 이 조건이 맞는 것은 13단계뿐입니다. 이전 상태가 비활성(Stop here 뒤 등)이면 3번에서 이전 phase가 없으므로 행이 없습니다. 병합 쓰기는 phase를 바꾸지 않으므로 행이 없습니다. `state` op는 같은 표로 **거부**합니다([ops.md](ops.md)).
+넷이 맞으면 `invalid_transition_detected` 감사 행(`mutation_id`는 `ralplan:invalid-transition:<at>`)을 하나 붙이고(실패해도 무시), 쓰기는 그대로 합니다(spec D-T11). `write`에서 이 조건이 맞는 것은 13단계뿐입니다. 이전 상태가 비활성(Stop here 뒤 등)이면 3번에서 이전 phase가 없으므로 행이 없습니다. 병합 쓰기는 phase를 바꾸지 않으므로 행이 없습니다. `state`·`clear` op와 공통 인계는 검사 없는 `writeModeState`로 써서 이 행을 남기지 않고, `state` op는 쓰기 전에 같은 표로 **거부**합니다([ops.md](ops.md)).
 
 전이 표는 gjc ralplan manifest 그대로입니다(`RALPLAN_TRANSITIONS`, `manifest.ts:42-69`). SKILL의 순서가 표에 없는 이동을 늘 만듭니다([known-limits.md](known-limits.md) RK9).
 
@@ -461,7 +461,7 @@ PLANNING-STUCK: <reason> (run_id=<run>, stage=<stage>, stage_n=<n>, source=<maxR
 
 ### 7.5 막혔을 때 기록하는 것: `recordPlanningStuckTx`
 
-`recordPlanningStuckTx`(`store.ts:568-591`, gjc `recordRalplanPlanningStuck`)는 두 가지를 씁니다.
+`recordPlanningStuckTx`(`store.ts:502-525`, gjc `recordRalplanPlanningStuck`)는 두 가지를 씁니다.
 
 1. 막힘 행을 멱등 추가합니다(3.2). run에 막힘 행이 이미 있으면 붙이지 않으므로 원장에는 **첫** 막힘의 사유만 남습니다.
 2. 상태가 있고 그 `run_id`가 이번 run이면 상태에 `planning_stuck: {marker: "PLANNING-STUCK", reason}`을 씁니다. 막힐 때마다 다시 쓰므로 상태에는 **마지막** 막힘의 사유가 남습니다(13.3: 반복 상한 뒤 lane 예산으로 막히자 상태의 `reason`이 lane 사유로 바뀜).
@@ -511,7 +511,7 @@ invalid lane_verdict for <stage>: <원래 값>. Expected one of: <받는 값, �
 
 lane마다 따로 두지 않고 마지막 하나만 남습니다. 새 run이면 지웁니다(6.3). 영수증에는 `lane_verdict: {lane, verdict}`가 붙습니다. 원장 중복 경로는 적용하지 않습니다(4.2).
 
-이 값을 읽는 코드는 둘입니다. 활성 행의 `verdict` 칩(write 뒤에는 `store.ts:856-859`, `state` op와 ralplan이 callee인 공통 인계 뒤에는 `buildRalplanHudFromState`의 `hud.ts:198`, `src/skill-state/handoff.ts:82`), 그리고 압축 문맥의 다음 행동(`recovery.ts:281-285`: 원장의 마지막 행이 `critic`일 때 verdict가 critic의 `OKAY`면 `reconcile-intent`, 아니면 `revise-plan`)입니다. verdict로 쓰기를 거부하거나 합의를 판정하는 코드는 없습니다.
+이 값을 읽는 코드는 둘입니다. 활성 행의 `verdict` 칩(write 뒤에는 `store.ts:790-793`, `state` op와 ralplan이 callee인 공통 인계 뒤에는 `buildRalplanHudFromState`의 `hud.ts:198`, `src/skill-state/handoff.ts:65`), 그리고 압축 문맥의 다음 행동(`recovery.ts:281-285`: 원장의 마지막 행이 `critic`일 때 verdict가 critic의 `OKAY`면 `reconcile-intent`, 아니면 `revise-plan`)입니다. verdict로 쓰기를 거부하거나 합의를 판정하는 코드는 없습니다.
 
 ## 9. 역할 세션 ID와 대체 메타
 
@@ -594,7 +594,7 @@ applyRalplanPlanningStuckOverride(existing.autoHandoff ?? unavailableRalplanFina
 ```
 
 - `existing.autoHandoff`: 원장 중복이면 그 행의 `auto_handoff`를 `parseRalplanFinalAdmission`(`:790-817`)으로 읽은 값입니다. 두 대상이 `off`/`ultragoal` 중 하나, `degradationReason`이 문자열이나 `null`, `source`가 문자열이어야 하고, 아니면 `undefined`입니다.
-- `unavailableRalplanFinalAdmission()`(`:820-827`): `{configuredTarget: "off", effectiveTarget: "off", degradationReason: "admission_unavailable", source: "ledger"}`. 행에 판정이 없거나 모양이 틀린 경우, 그리고 **원장 복구가 붙이는 final 행은 늘** 이 값입니다(`store.ts:719`).
+- `unavailableRalplanFinalAdmission()`(`:820-827`): `{configuredTarget: "off", effectiveTarget: "off", degradationReason: "admission_unavailable", source: "ledger"}`. 행에 판정이 없거나 모양이 틀린 경우, 그리고 **원장 복구가 붙이는 final 행은 늘** 이 값입니다(`store.ts:653`).
 - `applyRalplanPlanningStuckOverride`(`:829-836`): 지금 막혔으면 `effectiveTarget: "off"`, `degradationReason: "planning_stuck"`으로 바꾸고 `configuredTarget`, `source`는 둡니다.
 
 그래서 처음 `ultragoal`로 판정된 final이라도, 그 행이 사라진 뒤 같은 내용으로 복구하면 영수증과 새 행은 `off`/`admission_unavailable`입니다. 상태의 `auto_handoff`는 복구 경로가 쓰지 않으므로 처음 값(`ultragoal`) 그대로 남아 원장과 달라집니다(실행해 확인). 처음 판정 뒤 run이 막히면, 같은 final의 중복 영수증은 `planning_stuck`으로 낮아집니다.
@@ -779,7 +779,7 @@ ralplan <stage> stage <n> already persisted at <path> (identical content; no cha
 
 ### 12.3 영수증이 아닌 것
 
-- `RECEIPT_FRESH_MS`(`store.ts:136`, 30분)는 `state` op가 활성 행에 붙이는 `receipt`의 `fresh_until`에만 씁니다(`stateWriteReceipt`). `write`의 영수증에는 신선도 필드가 없습니다.
+- `RECEIPT_FRESH_MS`(`store.ts:137`, 30분)는 `state` op가 활성 행에 붙이는 `receipt`의 `fresh_until`에만 씁니다(`stateWriteReceipt`). `write`의 영수증에는 신선도 필드가 없습니다.
 - gjc 상태 봉투의 `receipt`, checksum, `state_revision`은 없습니다(편차 17).
 - SKILL의 RECEIPT-ONLY 규칙(역할은 `session_id`, `run_id`, `path`, `sha256`과 판정만 돌려줌)은 역할 프롬프트의 지시입니다. 도구는 영수증을 돌려줄 뿐 역할의 답을 검사하지 않습니다.
 

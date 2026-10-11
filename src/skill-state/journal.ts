@@ -13,14 +13,20 @@
 //   `transactionJournalPath`)
 // Deviations:
 // - Every journal write and its removal leave an audit row (C-6), with the
-//   journal's mutation id; gjc does not audit journals.
+//   journal's mutation id; gjc does not audit journals. A failed removal is
+//   not an error (gjc), but a row that fails after the removal is: the write
+//   layer audits inside `remove`, so the removal's `.catch` re-reads the
+//   journal and rethrows only when it is gone. Two changes from outside the
+//   queue now differ: another process removing the journal between `lstat`
+//   and `unlink` surfaces as an error, and one replacing its directory after
+//   `unlink` swallows the row's failure (docs/development.md 필수 후속 개발 4).
 // - The no-clobber create is a check and a write inside the session's one
 //   queue (C-1), where gjc opens the file with `wx`: an existing journal is
 //   kept and its path returned in both.
 
 import path from "node:path";
 import type { WorkflowTx } from "../state.js";
-import { type AuditOwner, appendAudit } from "./audit.js";
+import type { AuditOwner } from "./audit.js";
 
 export type WorkflowTransactionJournal = {
   version: 1;
@@ -47,13 +53,8 @@ async function writeJournalTx(
   mutationId: string,
   owner: AuditOwner,
 ): Promise<void> {
-  await tx.writeText(file, `${JSON.stringify(journal, null, 2)}\n`);
-  await appendAudit(tx, {
-    category: "state",
-    verb: "write-transaction-journal",
-    owner,
-    mutationId,
-    path: file,
+  await tx.writeText(file, `${JSON.stringify(journal, null, 2)}\n`, {
+    audit: { category: "state", verb: "write-transaction-journal", owner, mutationId },
   });
 }
 
@@ -122,13 +123,15 @@ export async function completeWorkflowTransactionJournalTx(
     owner,
   );
   // gjc `atomicRemove(...).catch(() => false)`: the handoff already happened.
-  const removed = await tx.remove(file).catch(() => "failed" as const);
-  if (removed === "deleted")
-    await appendAudit(tx, {
-      category: "state",
-      verb: "remove-transaction-journal",
-      owner,
-      mutationId,
-      path: file,
+  await tx
+    .remove(file, { audit: { category: "state", verb: "remove-transaction-journal", owner, mutationId } })
+    .catch(async (error) => {
+      // A journal that is gone was removed and only its audit row failed,
+      // which stays an error. `Promise.resolve().then` also counts a
+      // synchronous throw of the read as "still there".
+      const after = await Promise.resolve()
+        .then(() => tx.readText(file))
+        .catch(() => "present");
+      if (after === undefined) throw error;
     });
 }

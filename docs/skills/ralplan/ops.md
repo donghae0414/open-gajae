@@ -13,7 +13,7 @@
 - 계획 가드, 도구 숨김, 역할 권한 규칙, continuation(그 breaker가 부르는 `state` op 포함): [guards-and-continuation.md](guards-and-continuation.md)
 - 세 역할 agent와 합의 루프의 호출 순서: [roles-and-consensus.md](roles-and-consensus.md)
 
-"ralplan 편차 N"은 `docs/development.md` "GJC로부터의 deviation (ralplan)" 절에 있는 편차 표의 번호입니다. 같은 절의 "수용한 동작 차이" 표는 행 이름으로 가리킵니다. 코드 위치는 main `5b92a60` 기준입니다. gjc 줄 번호는 open-gajae 파일 머리말 주석(`src/ralplan-runtime/tool.ts:10-25`, `store.ts:14-61`)이 적은 값을 옮긴 것입니다. 이 문서를 쓰며 gjc 소스(`5c5231418930673e42cc5d08ebe4376e03187533`)로 다시 확인한 것은 `gjc-runtime/state-runtime.ts:1290-1345`(`state write`의 phase 검사)뿐입니다.
+"ralplan 편차 N"은 `docs/development.md` "GJC로부터의 deviation (ralplan)" 절에 있는 편차 표의 번호입니다. 같은 절의 "수용한 동작 차이" 표는 행 이름으로 가리킵니다. 코드 위치는 main `5b92a60` 기준입니다. gjc 줄 번호는 open-gajae 파일 머리말 주석(`src/ralplan-runtime/tool.ts:10-25`, `store.ts:14-62`)이 적은 값을 옮긴 것입니다. 이 문서를 쓰며 gjc 소스(`5c5231418930673e42cc5d08ebe4376e03187533`)로 다시 확인한 것은 `gjc-runtime/state-runtime.ts:1290-1345`(`state write`의 phase 검사)뿐입니다.
 
 ## 한눈에 보기
 
@@ -112,18 +112,18 @@ Error: could not resolve the session lineage for ralplan
 
 ### 트랜잭션 하나
 
-op마다 `store.ralplanTransaction(owner, tx => …)` 하나를 열고, 그 안에서 `src/ralplan-runtime/store.ts`의 op 함수를 부릅니다. `ralplanTransaction`(`src/state.ts:581-586`)은 `workflowTransaction`(`src/state.ts:476-578`)의 다른 이름입니다. 루트 세션의 쓰기 큐 하나를 잡으므로, 같은 세션의 deep-interview·ultragoal·goal op와 훅 판단도 같은 큐에서 기다립니다(ultragoal 개정 계획 C-1). 큐와 `tx`의 API는 [state-and-files.md](state-and-files.md)에 있습니다.
+op마다 `store.ralplanTransaction(owner, tx => …)` 하나를 열고, 그 안에서 `src/ralplan-runtime/store.ts`의 op 함수를 부릅니다. `ralplanTransaction`(`src/state.ts:712-717`)은 `workflowTransaction`(`src/state.ts:546-709`)의 다른 이름입니다. 루트 세션의 쓰기 큐 하나를 잡으므로, 같은 세션의 deep-interview·ultragoal·goal op와 훅 판단도 같은 큐에서 기다립니다(ultragoal 개정 계획 C-1). 큐와 `tx`의 API는 [state-and-files.md](state-and-files.md)에 있습니다.
 
-- **op와 트랜잭션**: `start`, `write`, `status`, `doctor`, `state`, `clear`는 `tool.ts`에서 트랜잭션을 엽니다. `handoff`는 `ralplanHandoff`(`store.ts:1378-1394`)가 자기 트랜잭션 하나를 엽니다.
+- **op와 트랜잭션**: `start`, `write`, `status`, `doctor`, `state`, `clear`는 `tool.ts`에서 트랜잭션을 엽니다. `handoff`는 `ralplanHandoff`(`store.ts:1305-1321`)가 자기 트랜잭션 하나를 엽니다.
 - **트랜잭션 밖의 일**: `write`의 입력 검사와 임시 `path` 파일 읽기는 트랜잭션을 열기 전에 합니다(`tool.ts:218-248`). `start`의 저장소 바인딩은 트랜잭션 안에서 `git`을 부릅니다(`captureRepositoryBinding`, 시간 제한 2초).
-- **되돌리기 없음**: 트랜잭션은 줄 세우기일 뿐입니다. 첫 쓰기 뒤의 실패는 이미 쓴 파일을 남깁니다. deep-interview처럼 "모든 검사 뒤 첫 쓰기"를 보장하는 구조는 아닙니다. 대부분의 거부는 첫 쓰기 전에 나지만, 상태 한도 같은 StateStore 검사는 상태를 쓸 때마다(`writeMerged`, `src/state.ts:453-468`) 이루어지므로 `write`의 뒤쪽 상태 병합에서 실패하면 앞의 단계 파일과 원장 행이 남습니다.
-- **행 동기화는 best-effort**: `start`, `write`, `state`, `clear`가 행과 스냅숏을 쓸 때는 `bestEffort`(`store.ts:286-292`)로 감싸 예외를 삼킵니다. op 결과는 바뀌지 않습니다. `handoff`의 행 쓰기는 감싸지 않습니다(`store.ts:58-61` 머리말, DR-8).
+- **되돌리기 없음**: 트랜잭션은 줄 세우기일 뿐입니다. 첫 쓰기 뒤의 실패는 이미 쓴 파일을 남깁니다. deep-interview처럼 "모든 검사 뒤 첫 쓰기"를 보장하는 구조는 아닙니다. 대부분의 거부는 첫 쓰기 전에 나지만, 상태 한도 같은 StateStore 검사는 상태를 쓸 때마다(`writeMerged`, `src/state.ts:523-538`) 이루어지므로 `write`의 뒤쪽 상태 병합에서 실패하면 앞의 단계 파일과 원장 행이 남습니다.
+- **행 동기화는 best-effort**: `start`, `write`, `state`, `clear`가 행과 스냅숏을 쓸 때는 `bestEffort`(`store.ts:230-236`)로 감싸 예외를 삼킵니다. op 결과는 바뀌지 않습니다. `handoff`의 행 쓰기는 감싸지 않습니다(`store.ts:59-62` 머리말, DR-8).
 
 ### 결과와 거부의 형식
 
 - **정상 결과**: 대부분 2칸 들여쓰기 JSON입니다(`tool.ts:162-164`의 `json`).
 - **`write`**: 사람이 읽는 한 줄(경고가 있으면 두 줄), 줄바꿈, 그다음 JSON입니다(`tool.ts:263-265`).
-- **`handoff`**: 결과 줄 하나, 줄바꿈, 그다음 영수증 JSON입니다(`store.ts:1388-1393`).
+- **`handoff`**: 결과 줄 하나, 줄바꿈, 그다음 영수증 JSON입니다(`store.ts:1315-1320`).
 - **`status`의 손상 경고**: JSON 뒤에 `WARNING:` 줄 하나가 붙습니다(`tool.ts:285`).
 - **`doctor`**: 요약 객체를 JSON으로 돌려줍니다(`tool.ts:288`). deep-interview와 ultragoal의 `doctor`는 같은 요약을 gjc 텍스트(`renderDoctorText`)로 돌려주므로 형식이 다릅니다(`src/skill-state/doctor.ts:4-5` 머리말).
 - **PLANNING-STUCK**: 오류가 아니라 결과입니다. `Error:`가 붙지 않습니다(ralplan 편차 1, gjc의 exit code 3).
@@ -151,17 +151,17 @@ op마다 `store.ralplanTransaction(owner, tx => …)` 하나를 열고, 그 안�
 
 ## 공통 도우미
 
-### 상태 쓰기 (`writeStateTx`, `store.ts:193-247`)
+### 상태 쓰기 (`writeRunStateTx`, `store.ts:186-191`)
 
-모든 ralplan 상태 쓰기가 거칩니다. gjc `writeWorkflowEnvelopeAtomic`입니다(머리말 기준 `state-writer.ts:958-1067`).
+ralplan 상태는 `src/state.ts`의 두 쓰기 함수로만 씁니다. `start`(`startRunTx`)와 `write` 안의 상태 쓰기는 이 도우미로 검사 쓰기 `tx.writeModeStateChecked`(`src/state.ts:629-664`, gjc `writeWorkflowEnvelopeAtomic`)를 부르고, gjc ralplan 런타임처럼 `fromPhase`를 넘기지 않습니다. `state`·`clear`와 공통 인계는 검사 없는 `tx.writeModeState`(`src/state.ts:567-582`)를 씁니다.
 
-1. `forced`가 아니고 다음 상태가 `active: true`이며 `current_phase`가 있으면:
-   - 그 phase가 manifest 상태(9개 단계와 `handoff`, `RALPLAN_STATES`)가 아니면 거부합니다: `Refusing to write unknown ralplan phase "<phase>" to <statePath>: not a known ralplan manifest state`
-   - 출발 phase(감사 입력의 `fromPhase`, 없으면 이전 상태가 활성일 때의 phase)가 manifest 상태이고 도착과 다르며 전이표에 없으면, 감사 행 `state/invalid_transition_detected`를 먼저 남기고 **그래도 씁니다**(spec D-T11). 이 감사 행 쓰기의 실패는 삼킵니다.
-2. `tx.writeState(next, writer)`로 파일 전체를 바꿉니다. 병합이 아닙니다. writer는 런타임이면 `ralplan_tool`, 훅이면 `ralplan_hook`이고 `_meta.updatedBy`에 남습니다. StateStore가 `_meta`를 새로 붙이고 한도를 검사합니다.
-3. 감사 행 `state/<verb>`(기본 `write`)를 남깁니다. `mutation_id`를 주지 않은 호출(`start`, `write` 안의 상태 쓰기)은 UUID가 들어가고 `from_phase`·`to_phase`가 빠집니다.
+1. 검사 쓰기는 `forced`가 아니고 다음 상태가 `active: true`이며 `current_phase`(trim)가 있으면:
+   - 그 phase가 manifest 상태(9개 단계와 `handoff`, `RALPLAN_STATES`)가 아니면 아무것도 쓰지 않고 거부합니다: `Refusing to write unknown ralplan phase "<phase>" to <statePath>: not a known ralplan manifest state`
+   - 출발 phase(쓰기 옵션의 `fromPhase`, 없으면 저장된 상태를 StateStore로 읽어 활성일 때의 phase, `storedActivePhase` `src/state.ts:586-591`)가 manifest 상태이고 도착과 다르며 전이표에 없으면, 감사 행 `state/invalid_transition_detected`를 먼저 남기고 **그래도 씁니다**(spec D-T11). 이 감사 행 쓰기의 실패는 삼킵니다. 읽을 수 없는 상태(손상, 다른 세션, 한도 초과)에는 출발 phase가 없습니다.
+2. 파일 전체를 바꿉니다(`writeMerged`). 병합이 아닙니다. writer는 `writerFor("ralplan", owner)`(`src/skill-state/audit.ts:74-76`)라 런타임이면 `ralplan_tool`, 훅이면 `ralplan_hook`이고 `_meta.updatedBy`에 남습니다. StateStore가 `_meta`를 새로 붙이고 한도를 검사합니다.
+3. 쓰기가 성공하면 감사 행 `state/<verb>`를 남깁니다. `writeRunStateTx`는 `verb: "write"`이고 `mutation_id`·`fromPhase`를 주지 않으므로 UUID가 들어가고 `from_phase`·`to_phase`가 빠집니다. 행의 `from_phase`는 넘긴 옵션만 적고, 1의 저장된 phase는 적지 않습니다.
 
-### 손상 상태 거부 (`readStateForMutation`, `store.ts:250-260`)
+### 손상 상태 거부 (`readStateForMutation`, `store.ts:194-204`)
 
 `start`(안의 `startRunTx`), `write`, `handoff`가 씁니다. 상태 파일이 없으면 `undefined`, 있으면 `_meta`를 뗀 사본을 돌려줍니다. 읽기가 예외를 던지면 거부합니다.
 
@@ -169,15 +169,15 @@ op마다 `store.ralplanTransaction(owner, tx => …)` 하나를 열고, 그 안�
 existing ralplan state is corrupt or tampered (<error>); refusing to overwrite <statePath>. Reset it with `ralplan clear` and force: true.
 ```
 
-`<error>`는 StateStore의 문구입니다(`src/state.ts:382-405`, `256-268`). 예: `state file is corrupted; it was preserved`(JSON 아님), `state file is invalid; it was preserved: <한도 오류>`, `state scope does not match this session; it was preserved`. `state`와 `clear`는 같은 경우를 자기 문구로 거부하고, `status`는 경고만 붙입니다.
+`<error>`는 StateStore의 문구입니다(`src/state.ts:452-475`, `256-268`). 예: `state file is corrupted; it was preserved`(JSON 아님), `state file is invalid; it was preserved: <한도 오류>`, `state scope does not match this session; it was preserved`. `state`와 `clear`는 같은 경우를 자기 문구로 거부하고, `status`는 경고만 붙입니다.
 
 ### 행 동기화
 
-`start`, `write`, `state`, `clear`는 상태를 쓴 뒤 공통 `syncActiveRowTx`(`src/skill-state/rows.ts:149-162`)를 부릅니다. 활성이면 위쪽 파이프라인 행(ralplan에게는 `deep-interview` 행)을 지우고 `state/active/ralplan.json`을 쓰며, 비활성이면 그 행을 지웁니다. 그다음 스냅숏 `state/skill-active-state.json`을 행 파일들로 다시 만듭니다. 행의 `phase`는 `start`·`state` 뒤에는 상태의 `current_phase`, `write` 뒤에는 방금 쓴 단계입니다(DR-8, R-OD5). 행과 HUD 칩의 모양은 [state-and-files.md](state-and-files.md)에 있습니다.
+`start`, `write`, `state`, `clear`는 상태를 쓴 뒤 공통 `syncActiveRowTx`(`src/skill-state/rows.ts:144-157`)를 부릅니다. 활성이면 위쪽 파이프라인 행(ralplan에게는 `deep-interview` 행)을 지우고 `state/active/ralplan.json`을 쓰며, 비활성이면 그 행을 지웁니다. 그다음 스냅숏 `state/skill-active-state.json`을 행 파일들로 다시 만듭니다. 행의 `phase`는 `start`·`state` 뒤에는 상태의 `current_phase`, `write` 뒤에는 방금 쓴 단계입니다(DR-8, R-OD5). 행과 HUD 칩의 모양은 [state-and-files.md](state-and-files.md)에 있습니다.
 
 ## `start`
 
-새 run을 시드합니다. 검사는 `tool.ts:189-211`의 `start`가, 쓰기는 `startRunTx`(`store.ts:915-988`)가 같은 트랜잭션 안에서 합니다. gjc 출처는 `seedRalplanState`와 `handleConsensusHandoff`(머리말 기준 `ralplan-runtime.ts:2382-2475`)입니다.
+새 run을 시드합니다. 검사는 `tool.ts:189-211`의 `start`가, 쓰기는 `startRunTx`(`store.ts:849-921`)가 같은 트랜잭션 안에서 합니다. gjc 출처는 `seedRalplanState`와 `handleConsensusHandoff`(머리말 기준 `ralplan-runtime.ts:2382-2475`)입니다.
 
 - **입력**: `task`, `interactive?`, `deliberate?`, `run_id?`
 - **검사 순서** (deep-interview 개정 계획 DR-37, E-13, E-15, DR-39):
@@ -187,18 +187,18 @@ existing ralplan state is corrupt or tampered (<error>); refusing to overwrite <
   | 1 | ultragoal 상태(`state/ultragoal-state.json`)를 읽을 수 있고 `active === true` | `ralplan cannot be started while ultragoal is active; call ultragoal handoff(to="ralplan", reason) instead, which makes ralplan active in its planner phase.` (`RALPLAN_ACTIVATION_REFUSAL`, `tool.ts:70-71`) |
   | 2 | ralplan 상태를 읽을 수 있고 `active === true` | `ralplan run <run_id> is already active (phase <phase>); continue it with ralplan write. To plan anew, stop it first with ralplan state {"active": false} or ralplan clear.` (`ralplanRunActiveRefusal`, `tool.ts:73-78`) |
   | 3 | `task`를 trim해서 비었음 | `ralplan start requires a task description, e.g. task: "<task>".` |
-  | 4 | ralplan 상태가 손상(`startRunTx` 안의 `readStateForMutation`) | 위 [손상 상태 거부](#손상-상태-거부-readstateformutation-storets250-260) 문구 |
-  | 5 | 상태에 남은 `run_id`가 경로 성분 규칙에 맞지 않음(`activeRunId`, `store.ts:498-503`). 명시한 `run_id`가 있어도 먼저 검사합니다(`:923`이 `run_id`를 고르는 `:925`보다 앞) | `invalid path component for run_id: <value>` |
+  | 4 | ralplan 상태가 손상(`startRunTx` 안의 `readStateForMutation`) | 위 [손상 상태 거부](#손상-상태-거부-readstateformutation-storets194-204) 문구 |
+  | 5 | 상태에 남은 `run_id`가 경로 성분 규칙에 맞지 않음(`activeRunId`, `store.ts:432-437`). 명시한 `run_id`가 있어도 먼저 검사합니다(`:857`이 `run_id`를 고르는 `:859`보다 앞) | `invalid path component for run_id: <value>` |
   | 6 | 정한 `run_id`가 경로 성분 규칙에 맞지 않음(`tx.paths.runDir`) | `invalid path component for run_id: <value>` |
 
   - 1과 2는 읽기 실패를 "활성 아님"으로 봅니다(`.catch(() => undefined)`). 그래서 손상된 ultragoal 상태는 `start`를 막지 않고(테스트 "RP1"), 손상된 ralplan 상태는 2를 지나 4에서 거부됩니다(테스트 "RP5").
   - 2의 `<run_id>`·`<phase>`는 문자열이 아니면 `(none)`입니다. 상태에 `handoff_from`이 있으면 phase 뒤에 `, handed over from <skill>`이 붙습니다. 예: `ralplan run r1 is already active (phase planner, handed over from ultragoal); …`(테스트 "RP4").
   - 2는 상태 파일만 봅니다. 행이 없어도 상태가 활성이면 거부합니다(테스트 "RP3", U4-1 A). 둘 다 활성이면 1이 먼저입니다(E-15).
-  - 경로 성분 규칙(`safeComponent`, `src/state.ts:204-208`): 첫 글자 `[A-Za-z0-9_-]`, 그 뒤 `[A-Za-z0-9._-]` 63자까지, `..` 없음.
-  - 5에 걸리는 상태: `state` op는 `run_id`를 막지 않으므로([state](#state)의 4) 규칙에 맞지 않는 값이 들어갈 수 있고, `clear`도 그 값을 남깁니다. 그러면 `start`(명시한 `run_id`가 있어도)와 `handoff`([handoff](#handoff)의 3a)가 거부되고, `run_id` 없는 `write`도 같은 검사(`store.ts:643`)에서 거부됩니다. 명시한 `run_id`가 있는 `write`는 이 검사를 건너뛰고 새 run으로 상태의 `run_id`를 바꿉니다. 고치는 법은 `state(patch={"run_id": null})`이고, `clear` 뒤에는 phase가 manifest 밖이라 `state(patch={"run_id": null, "current_phase": "planner"})`처럼 phase를 함께 줘야 합니다. 실행해 확인: 비활성 `final`에 `{run_id: "../bad"}`를 넣으면 `start(run_id: "good")`가 `Error: invalid path component for run_id: ../bad`이고, `{run_id: null}` 뒤 같은 `start`는 성공했습니다. `clear` 뒤에는 `{run_id: null}`이 `unknown ralplan phase "complete"`로 거부되고, `{run_id: null, current_phase: "planner"}` 뒤 `start`가 성공했습니다. `write(run_id: "good")`도 성공했습니다(`run_id` 없는 `write`의 거부는 코드로만 확인).
+  - 경로 성분 규칙(`safeComponent`, `src/state.ts:274-278`): 첫 글자 `[A-Za-z0-9_-]`, 그 뒤 `[A-Za-z0-9._-]` 63자까지, `..` 없음.
+  - 5에 걸리는 상태: `state` op는 `run_id`를 막지 않으므로([state](#state)의 4) 규칙에 맞지 않는 값이 들어갈 수 있고, `clear`도 그 값을 남깁니다. 그러면 `start`(명시한 `run_id`가 있어도)와 `handoff`([handoff](#handoff)의 3a)가 거부되고, `run_id` 없는 `write`도 같은 검사(`store.ts:577`)에서 거부됩니다. 명시한 `run_id`가 있는 `write`는 이 검사를 건너뛰고 새 run으로 상태의 `run_id`를 바꿉니다. 고치는 법은 `state(patch={"run_id": null})`이고, `clear` 뒤에는 phase가 manifest 밖이라 `state(patch={"run_id": null, "current_phase": "planner"})`처럼 phase를 함께 줘야 합니다. 실행해 확인: 비활성 `final`에 `{run_id: "../bad"}`를 넣으면 `start(run_id: "good")`가 `Error: invalid path component for run_id: ../bad`이고, `{run_id: null}` 뒤 같은 `start`는 성공했습니다. `clear` 뒤에는 `{run_id: null}`이 `unknown ralplan phase "complete"`로 거부되고, `{run_id: null, current_phase: "planner"}` 뒤 `start`가 성공했습니다. `write(run_id: "good")`도 성공했습니다(`run_id` 없는 `write`의 거부는 코드로만 확인).
 - **run id**: trim한 `run_id`, 없으면 상태의 `run_id`, 없으면 소유 세션 id입니다(DR-19, ralplan 편차 31). 상태의 `run_id`를 이어 쓰면 그 run 폴더의 단계 파일과 `index.jsonl`도 그대로이므로 반복 예산이 이어집니다. 새 예산은 새 `run_id`로 엽니다.
 - **저장소 바인딩**: 같은 run이고 상태에 `repository_binding`이 있으면 그것을, 아니면 `captureRepositoryBinding(projectDir)`(`src/ralplan-runtime/binding.ts:63-93`)로 새로 잡습니다. 기록만 하고 검사하지 않습니다(ralplan 편차 12).
-- **새 상태**: 병합이 아니라 통째로 씁니다(`store.ts:938-956`). 키는 `active: true`, `current_phase: "planner"`, `skill`, `version: 2`, `mode`(`deliberate: true`면 `"deliberate"`, 아니면 `"short"`), `interactive`(`true`가 아니면 `false`), `task`(trim하지 않은 입력 그대로), `run_id`, `updated_at`, `repository_binding`, `session_id`(루트)입니다. 이전 상태의 역할 id, verdict, `planning_stuck`, `auto_handoff`, `handoff_*`는 남지 않습니다. `StartRunInput`의 `handoff_from`·`handoff_at`은 내부 호출자용이고 이 op는 넘기지 않습니다.
+- **새 상태**: 병합이 아니라 통째로 씁니다(`store.ts:872-889`). 키는 `active: true`, `current_phase: "planner"`, `skill`, `version: 2`, `mode`(`deliberate: true`면 `"deliberate"`, 아니면 `"short"`), `interactive`(`true`가 아니면 `false`), `task`(trim하지 않은 입력 그대로), `run_id`, `updated_at`, `repository_binding`, `session_id`(루트)입니다. 이전 상태의 역할 id, verdict, `planning_stuck`, `auto_handoff`, `handoff_*`는 남지 않습니다. `StartRunInput`의 `handoff_from`·`handoff_at`은 내부 호출자용이고 이 op는 넘기지 않습니다.
 - **쓰는 것**: 상태와 감사 행 `state/write`(UUID `mutation_id`, phase 없음) → 행 동기화(phase `planner`, HUD `latestSummary` `<mode> run · <interactive|automated>`, 위쪽 deep-interview 행이 있으면 `state/remove-superseded-pipeline-entry`) → 스냅숏.
 - **결과**: `{ok: true, session_id, skill, mode, state_path, run_id, handoff, repository_binding}`. `handoff`는 gjc의 `/skill:ralplan`을 호스트 skill id로 바꾼 `"ralplan"`입니다.
 
@@ -234,7 +234,7 @@ existing ralplan state is corrupt or tampered (<error>); refusing to overwrite <
 
 ## `write`
 
-stage 산출물 하나를 기록합니다. 입력 검사는 `tool.ts:213-248`의 `write`가 트랜잭션 밖에서 하고, 기록은 `writeStageTx`(`store.ts:635-880`)가 트랜잭션 안에서 합니다. gjc 출처는 `resolveArtifactArgs`(`ralplan-runtime.ts:1535-1583`)와 `handleArtifactWrite`(`:2033-2261`, DR-2 순서)입니다(머리말 기준).
+stage 산출물 하나를 기록합니다. 입력 검사는 `tool.ts:213-248`의 `write`가 트랜잭션 밖에서 하고, 기록은 `writeStageTx`(`store.ts:569-814`)가 트랜잭션 안에서 합니다. gjc 출처는 `resolveArtifactArgs`(`ralplan-runtime.ts:1535-1583`)와 `handleArtifactWrite`(`:2033-2261`, DR-2 순서)입니다(머리말 기준).
 
 - **입력**: `stage`, `stage_n`, `content` 또는 `path`, `run_id?`, `lane_verdict?`, `resumable?`, `fallback_reason?`, `fallback_attempted_id?`, `fallback_stage_n?`, `fallback_receipt_path?`
 
@@ -284,12 +284,12 @@ Error: fallback_attempted_id is required when recording critic fallback metadata
 
 ### `writeStageTx`의 단계
 
-검사를 모두 지나면 트랜잭션 하나 안에서 `writeStageTx`(`store.ts:635-880`)가 gjc `handleArtifactWrite`의 순서(DR-2)대로 진행합니다. 단계별 코드 위치와 거부 문구, 실제 감사 행 순서는 [stages-and-ledger.md](stages-and-ledger.md) 1.2–1.3절에 있습니다.
+검사를 모두 지나면 트랜잭션 하나 안에서 `writeStageTx`(`store.ts:569-814`)가 gjc `handleArtifactWrite`의 순서(DR-2)대로 진행합니다. 단계별 코드 위치와 거부 문구, 실제 감사 행 순서는 [stages-and-ledger.md](stages-and-ledger.md) 1.2–1.3절에 있습니다.
 
-1. 상태를 읽고(손상이면 [손상 상태 거부](#손상-상태-거부-readstateformutation-storets250-260)), `run_id`를 정해(명시값 → 상태의 값 → 소유 세션 id) 경로 성분을 검사합니다.
+1. 상태를 읽고(손상이면 [손상 상태 거부](#손상-상태-거부-readstateformutation-storets194-204)), `run_id`를 정해(명시값 → 상태의 값 → 소유 세션 id) 경로 성분을 검사합니다.
 2. `index.jsonl`을 한 번 읽고, `disposition`이면 원장과 대조해 정규화하며(`invalid ralplan disposition artifact: <사유>`), 끝 줄바꿈을 보장해 sha256을 냅니다.
 3. 같은 `(stage, stage_n)`이 원장에 있거나(원장 중복) 행 없이 단계 파일만 있으면(원장 복구): 같은 본문이면 중복 영수증으로 끝나고, 다른 본문이면 덮어쓰기 거부입니다.
-4. run 폴더 목록을 읽습니다(`tx.list`, `store.ts:762`). run 폴더나 그 위의 폴더가 symlink이거나 폴더가 아니면 `state path contains a symlink or non-directory`(`src/state.ts:375-376`, `556-557`)로 거부합니다.
+4. run 폴더 목록을 읽습니다(`tx.list`, `store.ts:696`). run 폴더나 그 위의 폴더가 symlink이거나 폴더가 아니면 `state path contains a symlink or non-directory`(`src/state.ts:445-446`, `556-557`)로 거부합니다.
 5. opener 반복 상한, 그다음 lane 예산을 봅니다. 넘으면 막힘을 기록하고 PLANNING-STUCK 결과로 끝납니다.
 6. `final`이면 승인 판정(`auto_handoff`)을 파일을 쓰기 전에 정합니다.
 7. 상태(만들기, run 전환, phase 전진, 잠긴 phase는 그대로) → 단계 파일 → `index.jsonl` 한 줄 → (`final`) `pending-approval.md` → 역할 메타데이터·lane verdict·승인 병합 → 활성 행과 스냅숏(best-effort) → 영수증.
@@ -304,7 +304,7 @@ Error: refusing to overwrite ralplan planner stage 1 at <session>/plans/ralplan/
 
 ### 결과
 
-결과는 영수증과 PLANNING-STUCK 두 가지이고(`StageWriteResult`, `store.ts:626-628`), 도구는 둘 다 "한 줄, 줄바꿈, JSON"으로 돌려줍니다(`tool.ts:263-265`). 필드와 첫 줄 문구는 [stages-and-ledger.md](stages-and-ledger.md) 12장(영수증)과 7.4절(PLANNING-STUCK)에 있습니다.
+결과는 영수증과 PLANNING-STUCK 두 가지이고(`StageWriteResult`, `store.ts:560-562`), 도구는 둘 다 "한 줄, 줄바꿈, JSON"으로 돌려줍니다(`tool.ts:263-265`). 필드와 첫 줄 문구는 [stages-and-ledger.md](stages-and-ledger.md) 12장(영수증)과 7.4절(PLANNING-STUCK)에 있습니다.
 
 **영수증**: architect 역할이 `architect` 1회차를 `lane_verdict: "clear"`, `resumable: true`로 쓴 결과입니다.
 
@@ -370,9 +370,9 @@ PLANNING-STUCK: ralplan consensus iteration cap exceeded: opening revision would
 
 ## `status`
 
-상태를 읽어 보여 줍니다. 아무것도 쓰지 않습니다. `readStatusTx`(`store.ts:1267-1283`), gjc `gjc state read ralplan`(OQ4, 머리말 기준 `state-runtime.ts:1156-1222`)입니다. 역할도 부를 수 있습니다.
+상태를 읽어 보여 줍니다. 아무것도 쓰지 않습니다. `readStatusTx`(`store.ts:1194-1210`), gjc `gjc state read ralplan`(OQ4, 머리말 기준 `state-runtime.ts:1156-1222`)입니다. 역할도 부를 수 있습니다.
 
-- **입력**: `fields?`. 값은 `STATE_FIELD_ALLOWLIST`(`store.ts:1192-1214`)의 21개입니다: `skill`, `phase`, `current_phase`, `next`, `active`, `status`, `fresh`, `fresh_until`, `receipt`, `artifact_path`, `plan_path`, `spec_path`, `run_id`, `stage`, `stage_n`, `session_id`, `updated_at`, `handoff_to`, `handoff_from`, `counts`, `hud`.
+- **입력**: `fields?`. 값은 `STATE_FIELD_ALLOWLIST`(`store.ts:1119-1141`)의 21개입니다: `skill`, `phase`, `current_phase`, `next`, `active`, `status`, `fresh`, `fresh_until`, `receipt`, `artifact_path`, `plan_path`, `spec_path`, `run_id`, `stage`, `stage_n`, `session_id`, `updated_at`, `handoff_to`, `handoff_from`, `counts`, `hud`.
 - **`fields`가 없을 때**: `{skill: "ralplan", state, storage_path}`. 상태가 없으면 `state: {}`입니다. `state`는 StateStore가 읽은 객체 그대로라 `_meta`가 **들어 있습니다**(deep-interview의 `status`는 `_meta`를 뗍니다). 예(`architect` 뒤 `revision`까지 쓴 run, 가운데를 줄임):
 
   ```json
@@ -406,7 +406,7 @@ PLANNING-STUCK: ralplan consensus iteration cap exceeded: opening revision would
   }
   ```
 
-- **`fields`가 있을 때** (`projectStateFields`, `store.ts:1224-1261`, gjc `state-renderer.ts:82-190`): 고른 필드만 냅니다.
+- **`fields`가 있을 때** (`projectStateFields`, `store.ts:1151-1188`, gjc `state-renderer.ts:82-190`): 고른 필드만 냅니다.
   - `skill`은 늘 `ralplan`입니다.
   - `phase`·`current_phase`는 상태의 `current_phase`, 없으면 `phase`, 그것도 없으면 `planner`입니다. 그래서 상태가 없어도 `"current_phase": "planner"`가 나옵니다.
   - `next`는 전이표(`RALPLAN_TRANSITIONS`)에서 그 phase를 출발점으로 하는 행의 도착 phase들입니다. `final`과 `handoff`는 `[]`입니다.
@@ -443,7 +443,7 @@ PLANNING-STUCK: ralplan consensus iteration cap exceeded: opening revision would
 
 ## `doctor`
 
-ralplan의 상태, 행, 스냅숏을 읽기 전용으로 검사합니다. `doctorTx`(`store.ts:1286-1288`)가 공통 `collectDoctorSummaryTx(tx, "ralplan")`(`src/skill-state/doctor.ts:149-279`, gjc `collectDoctorSummary`, D-T13)를 부르고, 도구는 그 객체를 JSON으로 돌려줍니다. 아무것도 고치지 않습니다. 검사 항목의 세부는 [state-and-files.md](state-and-files.md)에 있습니다.
+ralplan의 상태, 행, 스냅숏을 읽기 전용으로 검사합니다. `doctorTx`(`store.ts:1213-1215`)가 공통 `collectDoctorSummaryTx(tx, "ralplan")`(`src/skill-state/doctor.ts:149-279`, gjc `collectDoctorSummary`, D-T13)를 부르고, 도구는 그 객체를 JSON으로 돌려줍니다. 아무것도 고치지 않습니다. 검사 항목의 세부는 [state-and-files.md](state-and-files.md)에 있습니다.
 
 - **입력**: 없음. 주 agent만 부를 수 있습니다.
 - **보고 종류** 두 가지와 고치는 명령:
@@ -500,7 +500,7 @@ ralplan의 상태, 행, 스냅숏을 읽기 전용으로 검사합니다. `docto
 
 ## `state`
 
-상태에 패치를 병합합니다. gjc `gjc state ralplan write`(머리말 기준 `state-runtime.ts:1235-1400`)이고, `--force`와 `--replace`가 없으며 중첩 `state` 객체를 펼치지 않습니다(ralplan 편차 38, R-OD19). `patchStateTx`(`store.ts:1001-1079`)가 맡습니다. 역할도 부를 수 있습니다.
+상태에 패치를 병합합니다. gjc `gjc state ralplan write`(머리말 기준 `state-runtime.ts:1235-1400`)이고, `--force`와 `--replace`가 없으며 중첩 `state` 객체를 펼치지 않습니다(ralplan 편차 38, R-OD19). `patchStateTx`(`store.ts:934-1009`)가 맡습니다. 역할도 부를 수 있습니다.
 
 - **입력**: `patch`(객체). 없으면 도구가 `patch is required for ralplan state`로 거부합니다(`tool.ts:290`).
 - **검사와 계산 순서**:
@@ -513,7 +513,7 @@ ralplan의 상태, 행, 스냅숏을 읽기 전용으로 검사합니다. `docto
   7. 도착 phase가 manifest 상태(9개 단계와 `handoff`)가 아니면 `unknown ralplan phase "<phase>"`.
   8. 출발 phase(이전 상태의 `current_phase`, 활성 여부와 상관없음)가 manifest 상태이고, 같은 phase도 전이표의 간선도 아니면 `invalid ralplan phase transition from <a> to <b>`(AC12).
   9. 다시 `workflowEnvelopeError`.
-- **쓰는 것**: `writeStateTx`(감사 행 `state/write`, `mutation_id`, `from_phase`, `to_phase`) → 행 동기화. `active !== false`면 행을 쓰고(위쪽 deep-interview 행은 지움), `false`면 행을 지웁니다. 행에는 gjc의 상태 쓰기 영수증(`stateWriteReceipt`, `store.ts:295-313`: `command: "ralplan state"`, `fresh_until`은 30분 뒤, `status: "fresh"`)이 붙습니다.
+- **쓰는 것**: 검사 없는 `tx.writeModeState`(`store.ts:982-985`, 감사 행 `state/write`, `mutation_id`, `from_phase`, `to_phase`) → 행 동기화. `active !== false`면 행을 쓰고(위쪽 deep-interview 행은 지움), `false`면 행을 지웁니다. 행에는 gjc의 상태 쓰기 영수증(`stateWriteReceipt`, `store.ts:239-257`: `command: "ralplan state"`, `fresh_until`은 30분 뒤, `status: "fresh"`)이 붙습니다.
 - **결과**: `{ok: true, skill, state_path, current_phase, active, mutation_id}`.
 
 **Stop here** (SKILL step 9, spec D-F12): `state(patch={"active": false})`입니다. `final`에서 `final`로 가므로 전이 검사를 지나고, phase는 `final`로 남으며, 행이 지워집니다(R-OD10). 실제 결과와 감사 행:
@@ -552,17 +552,17 @@ Error: state.active must be a boolean when present
 
 ## `handoff`
 
-끝난 계획을 ultragoal로 넘기거나 deep-interview로 되돌립니다. `ralplanHandoff`(`store.ts:1378-1394`)가 트랜잭션 하나를 열고 `ralplanHandoffTx`(`store.ts:1328-1371`)를 부릅니다. 같은 `ralplanHandoffTx`를 같은 execution의 `skill ultragoal` 게이트도 씁니다(`src/hooks.ts:811`, 감사 `owner` `open-gajae-hook`). 공통 저널 인계의 단계와 감사 행, 되돌아가는 쪽의 상태는 [entry-and-handoff.md](entry-and-handoff.md)에 있습니다.
+끝난 계획을 ultragoal로 넘기거나 deep-interview로 되돌립니다. `ralplanHandoff`(`store.ts:1305-1321`)가 트랜잭션 하나를 열고 `ralplanHandoffTx`(`store.ts:1255-1298`)를 부릅니다. 같은 `ralplanHandoffTx`를 같은 execution의 `skill ultragoal` 게이트도 씁니다(`src/hooks.ts:811`, 감사 `owner` `open-gajae-hook`). 공통 저널 인계의 단계와 감사 행, 되돌아가는 쪽의 상태는 [entry-and-handoff.md](entry-and-handoff.md)에 있습니다.
 
 - **입력**: `to`(`ultragoal` \| `deep-interview`). 없으면 도구가 `to must be "ultragoal" or "deep-interview"`로 거부합니다(`tool.ts:297`).
 - **검사 순서**:
 
   | 순서 | 검사 | 거부 문구 |
   |---|---|---|
-  | 1 | ralplan 상태 손상 | [손상 상태 거부](#손상-상태-거부-readstateformutation-storets250-260) 문구 |
+  | 1 | ralplan 상태 손상 | [손상 상태 거부](#손상-상태-거부-readstateformutation-storets194-204) 문구 |
   | 2 | 상태 없음 | `there is no ralplan state in this session to hand off` |
   | 3 | phase ∉ T (DR-7, ralplan 편차 34) | `ralplan can hand off to <to> only from a finished phase (final, handoff, complete, completed, failed, cancelled, canceled, inactive); the current phase is <phase \| (none)>. Record the final plan first.` |
-  | 3a | `pending-approval.md`를 찾으려고 상태의 `run_id`를 경로 성분으로 검사(`pendingApprovalPathTx`, `store.ts:1298-1304` → `activeRunId`, `:498-503`) | `invalid path component for run_id: <value>` |
+  | 3a | `pending-approval.md`를 찾으려고 상태의 `run_id`를 경로 성분으로 검사(`pendingApprovalPathTx`, `store.ts:1225-1231` → `activeRunId`, `:432-437`) | `invalid path component for run_id: <value>` |
   | 4 | 비활성 (R-OD18), `to`와 phase에 따라 넷 | 아래 표 |
   | 5 | `handoffWorkflowTx` 안: callee 상태 손상 | `existing state for <to> is corrupt or tampered (<error>); refusing to hand off` |
   | 6 | `handoffWorkflowTx` 안: 병합한 두 상태가 StateStore 한도를 넘음(저널 전) | 한도 문구 |
@@ -576,10 +576,10 @@ Error: state.active must be a boolean when present
   | `deep-interview` | `handoff` | ``ralplan was already handed off (inactive, phase handoff); continue in the `<handoff_to 또는 ultragoal>` skill.`` |
   | `deep-interview` | 그 밖 | ``ralplan is not active (phase <phase>), so there is nothing to hand off: Stop here or `clear` ended the run. To interview again, load the `deep-interview` skill and call `deep-interview start`; to continue an existing interview, call `deep-interview status`.`` |
 
-  4는 `RalplanNotActiveError`(`store.ts:1295`)로 던집니다. 도구 결과에서는 다른 거부와 같은 `Error: …`입니다.
-- **쓰는 것** (`handoffWorkflowTx`, `src/skill-state/handoff.ts:212-322`): 저널 → callee 상태(기존 필드 위에 활성, 첫 phase, `handoff_from: "ralplan"`, `handoff_at`) → ralplan 상태(기존 필드 위에 `active: false`, `current_phase: "handoff"`, `handoff_to`, `handoff_at`; `run_id`는 남음) → ralplan 행(비활성, `handoff_to`)과 callee 행(활성) → 스냅숏 → 저널 `committed` 뒤 삭제. goal 상태는 건드리지 않습니다. `reason`(`ralplan handoff to <to>`)은 넘기지만 ralplan 쪽은 `recordCaller`를 주지 않으므로 어디에도 기록되지 않습니다.
+  4는 `RalplanNotActiveError`(`store.ts:1222`)로 던집니다. 도구 결과에서는 다른 거부와 같은 `Error: …`입니다.
+- **쓰는 것** (`handoffWorkflowTx`, `src/skill-state/handoff.ts:163-274`): 저널 → callee 상태(기존 필드 위에 활성, 첫 phase, `handoff_from: "ralplan"`, `handoff_at`) → ralplan 상태(기존 필드 위에 `active: false`, `current_phase: "handoff"`, `handoff_to`, `handoff_at`; `run_id`는 남음) → ralplan 행(비활성, `handoff_to`)과 callee 행(활성) → 스냅숏 → 저널 `committed` 뒤 삭제. goal 상태는 건드리지 않습니다. `reason`(`ralplan handoff to <to>`)은 넘기지만 ralplan 쪽은 `recordCaller`를 주지 않으므로 어디에도 기록되지 않습니다.
 - **감사 행**: 실제 실행(`final` 1회차 뒤 `to: "ultragoal"`)에서 11행이 이 순서로 남았습니다: `state/write-transaction-journal` → ultragoal의 `state/handoff`(`to_phase` `goal-planning`) → `state/write-transaction-journal` → ralplan의 `state/handoff`(`final` → `handoff`) → `state/write-transaction-journal` → `state/write-active-entry`(ralplan) → `state/write-active-entry`(ultragoal) → `state/rebuild-active-snapshot` → `state/write-transaction-journal` 두 번 → `state/remove-transaction-journal`. 저널 행과 `state/handoff` 행의 `mutation_id`는 `ralplan:handoff:<to>:<at>`이고, 행·스냅숏 행은 UUID입니다.
-- **결과**: 결과 줄(`store.ts:1388-1392`), 줄바꿈, 영수증 JSON. `final` 1회차 뒤 `to: "ultragoal"`의 실제 출력:
+- **결과**: 결과 줄(`store.ts:1315-1319`), 줄바꿈, 영수증 JSON. `final` 1회차 뒤 `to: "ultragoal"`의 실제 출력:
 
   ```
   Handed off to ultragoal: ralplan is inactive (phase handoff) and ultragoal is active in goal-planning. Load the `ultragoal` skill now and call `ultragoal create` with the approved plan's goals (the approved plan: <session>/plans/ralplan/ses_root/pending-approval.md).
@@ -614,7 +614,7 @@ Error: state.active must be a boolean when present
 
 ## `clear`
 
-run을 끝냅니다. `clearStateTx`(`store.ts:1140-1189`), gjc `handleClear`(`state-runtime.ts:1402-1490`)와 `describeStaleClearState`(`:244-270`)입니다(머리말 기준, DR-6을 고친 R-OD11).
+run을 끝냅니다. `clearStateTx`(`store.ts:1070-1116`), gjc `handleClear`(`state-runtime.ts:1402-1490`)와 `describeStaleClearState`(`:244-270`)입니다(머리말 기준, DR-6을 고친 R-OD11).
 
 - **입력**: `force?`(`true`일 때만 강제)
 - **검사 순서** (`force`면 모두 건너뜀):
@@ -626,7 +626,7 @@ run을 끝냅니다. `clearStateTx`(`store.ts:1140-1189`), gjc `handleClear`(`st
   | 3 | 행 파일 `state/active/ralplan.json`을 읽을 수 없음(ralplan 편차 35, R-OD16) | `active row <path> is unreadable (<error>); use force: true to clear` |
   | 4 | 보이는 항목이 활성인데 그 phase가 상태의 phase와 다름(R-OD14) | `existing state for ralplan is stale (active-state phase <a> differs from mode-state phase <b>); use force: true to clear` |
 
-  2–4는 `describeStaleClearTx`(`store.ts:1093-1130`)입니다. 4의 "보이는 항목"은 skill이 `ralplan`인 행 파일, 없으면 스냅숏의 같은 skill 항목이고, 활성일 때만 봅니다. 상태의 phase가 phase lock(`final`, `handoff`, `complete`, …)이면 항목의 phase 대신 그 phase를 씁니다(gjc `withCanonicalRalplanPhase`). 그래서 `final` 뒤 다듬기 쓰기로 행이 `revision`이어도 `force` 없는 `clear`가 지나갑니다. 비활성 상태의 phase는 phase lock에 있을 때만 셉니다(`modeStatePhase`). `force`면 손상 상태를 빈 객체로 보고, 행 파일을 읽지도 않습니다.
+  2–4는 `describeStaleClearTx`(`store.ts:1023-1060`)입니다. 4의 "보이는 항목"은 skill이 `ralplan`인 행 파일, 없으면 스냅숏의 같은 skill 항목이고, 활성일 때만 봅니다. 상태의 phase가 phase lock(`final`, `handoff`, `complete`, …)이면 항목의 phase 대신 그 phase를 씁니다(gjc `withCanonicalRalplanPhase`). 그래서 `final` 뒤 다듬기 쓰기로 행이 `revision`이어도 `force` 없는 `clear`가 지나갑니다. 비활성 상태의 phase는 phase lock에 있을 때만 셉니다(`modeStatePhase`). `force`면 손상 상태를 빈 객체로 보고, 행 파일을 읽지도 않습니다.
 - **쓰는 것**:
   - 상태: `{skill, …기존 필드, active: false, current_phase: "complete", updated_at, version: 2}`. `run_id`, 역할 id, verdict, `auto_handoff`, `planning_stuck` 등 기존 필드가 모두 남습니다. 손상(`force`)이거나 상태가 없으면 `skill`, `active`, `current_phase`, `updated_at`, `version` 다섯만 씁니다(`session_id` 없음). 상태가 없어도 파일을 만듭니다.
   - 감사 행 `state/clear`(`mutation_id` `ralplan:clear:<at>`, `from_phase`, `to_phase` `complete`, `forced`).
@@ -649,7 +649,7 @@ run을 끝냅니다. `clearStateTx`(`store.ts:1140-1189`), gjc `handleClear`(`st
 - **두 번째 `clear`**: `Error: existing state for ralplan is stale (mode-state is already terminal (complete)); use force: true to clear`. `force: true`면 다시 `complete`를 씁니다.
 - **넘긴 뒤의 `clear`**: 비활성 `handoff`는 R이 아니고 행도 비활성이라 `force` 없이 됩니다.
 - **`clear` 뒤의 다음 일**: 같은 run의 `write`는 잠긴 `complete`를 유지해 비활성으로 남고, 새 `run_id`의 `write`나 `start`는 다시 활성으로 만듭니다. `state`는 manifest phase를 주지 않으면 거부됩니다([state](#state)).
-- **`clear` 뒤 쓰기로 다시 생긴 행 지우기**: 같은 run의 `write`는 상태를 비활성 `complete`로 두지만 활성 행을 다시 씁니다. 이 행은 `force` 없는 `clear`(이미 종료라 거부)나 `state {"active": false}`(`unknown ralplan phase "complete"`)로는 지워지지 않고, `clear(force: true)`나 manifest phase를 함께 준 `state(patch={"active": false, "current_phase": "final"})`로 지워집니다. 출발 phase `complete`가 manifest 밖이라 전이 검사(`store.ts:1041-1046`)를 건너뛰기 때문입니다(실행해 확인: 결과 `"current_phase": "final", "active": false`, 행 파일 없음).
+- **`clear` 뒤 쓰기로 다시 생긴 행 지우기**: 같은 run의 `write`는 상태를 비활성 `complete`로 두지만 활성 행을 다시 씁니다. 이 행은 `force` 없는 `clear`(이미 종료라 거부)나 `state {"active": false}`(`unknown ralplan phase "complete"`)로는 지워지지 않고, `clear(force: true)`나 manifest phase를 함께 준 `state(patch={"active": false, "current_phase": "final"})`로 지워집니다. 출발 phase `complete`가 manifest 밖이라 전이 검사(`store.ts:974-979`)를 건너뛰기 때문입니다(실행해 확인: 결과 `"current_phase": "final", "active": false`, 행 파일 없음).
 
 **SKILL만 요구하는 것**: 손상되거나 낡은 자기 상태에 `clear(force=true)`를 쓰라는 안내, `doctor`의 `stale_active_state` 보고만으로 `clear`하지 말라는 안내(SKILL.md:28-32)는 코드가 강제하지 않습니다.
 

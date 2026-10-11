@@ -31,13 +31,15 @@
 //   `describeStaleClearState`), `:826-839` (`mergeWithNullDelete`), `:873-925`
 //   (`buildHudForMode` for ultragoal), `:1036-1141`
 //   (`reconcileWorkflowSkillStateUnlocked`: a corrupt state is replaced, the
-//   write is forced and audited as `reconcile`), `:1232-1400` (`handleWrite`),
-//   `:1402-1490` (`handleClear`), `:1572-1881` (handoff, via
+//   write is forced and audited as `reconcile`; `:1092` is the unchecked
+//   write, as is every ultragoal state write here), `:1232-1400`
+//   (`handleWrite`), `:1402-1490` (`handleClear`), `:1572-1881` (handoff, via
 //   `../skill-state/handoff.ts`)
 // - `gjc-runtime/goal-mode-request.ts:145-162,195` (arming: the same run's
 //   goal, or a trimmed objective match, is kept)
 // - `hooks/skill-state.ts:429-470` (the skill-load seed: an active
-//   `goal-planning` state, then `syncSkillActiveState`)
+//   `goal-planning` state, then `syncSkillActiveState`; `:447` is the
+//   unchecked write)
 // Deviations (plan §7.1; the pure rules live in the S2a modules):
 // - 1 (PQ-10 A, PQ-15 A, PQ-25 B): `create` appends a `PLAN` note to
 //   `progress.txt`, `checkpoint(complete)` requires `implementation`,
@@ -79,7 +81,7 @@ import {
   visibleGoal,
   writeGoalStateTx,
 } from "../goal/state.js";
-import { type AuditOwner, appendAudit, HOOK_OWNER, RUNTIME_OWNER } from "../skill-state/audit.js";
+import { type AuditOwner, HOOK_OWNER, RUNTIME_OWNER, writerFor } from "../skill-state/audit.js";
 import {
   activeFlag,
   collectDoctorSummaryTx,
@@ -90,7 +92,7 @@ import {
 } from "../skill-state/doctor.js";
 import { handoffWorkflowTx } from "../skill-state/handoff.js";
 import { syncActiveRowTx } from "../skill-state/rows.js";
-import type { InterviewState, StateWriter, WorkflowTx } from "../state.js";
+import type { InterviewState, WorkflowTx } from "../state.js";
 import { validateGate } from "./gate.js";
 import { buildUltragoalHudFromState } from "./hud.js";
 import {
@@ -246,10 +248,6 @@ function payloadOf(state: InterviewState | undefined): Json {
   return rest;
 }
 
-function writerOf(owner: AuditOwner): StateWriter {
-  return owner === HOOK_OWNER ? "ultragoal_hook" : "ultragoal_tool";
-}
-
 /** gjc `mergeWithNullDelete`: a `null` value removes the key. */
 function mergeWithNullDelete(target: Json, source: Json): Json {
   const result: Json = { ...target };
@@ -340,25 +338,22 @@ function newRow(
 }
 
 async function writePlanTx(tx: WorkflowTx, file: GoalsFile, owner: AuditOwner): Promise<void> {
-  await tx.writeText(tx.paths.ultragoal.goals, serializeGoals(file));
-  await appendAudit(tx, { category: "state", verb: "write", owner, skill: SKILL, path: tx.paths.ultragoal.goals });
+  await tx.writeText(tx.paths.ultragoal.goals, serializeGoals(file), {
+    audit: { category: "state", verb: "write", owner, skill: SKILL },
+  });
 }
 
 async function appendLedgerTx(tx: WorkflowTx, rows: readonly LedgerRow[], owner: AuditOwner): Promise<void> {
   for (const row of rows) {
-    await tx.appendLine(tx.paths.ultragoal.ledger, serializeLedgerRow(row));
-    await appendAudit(tx, { category: "ledger", verb: "append", owner, skill: SKILL, path: tx.paths.ultragoal.ledger });
+    await tx.appendLine(tx.paths.ultragoal.ledger, serializeLedgerRow(row), {
+      audit: { category: "ledger", verb: "append", owner, skill: SKILL },
+    });
   }
 }
 
 async function writeProgressTx(tx: WorkflowTx, text: string, owner: AuditOwner): Promise<void> {
-  await tx.writeText(tx.paths.ultragoal.progress, text);
-  await appendAudit(tx, {
-    category: "artifact",
-    verb: "write",
-    owner,
-    skill: SKILL,
-    path: tx.paths.ultragoal.progress,
+  await tx.writeText(tx.paths.ultragoal.progress, text, {
+    audit: { category: "artifact", verb: "write", owner, skill: SKILL },
   });
 }
 
@@ -413,17 +408,17 @@ export async function reconcileUltragoalTx(
     if (typeof merged.session_id !== "string") merged.session_id = sessionId;
     const envelopeError = workflowEnvelopeError(SKILL, merged);
     if (envelopeError) throw new Error(envelopeError);
-    await tx.writeModeState(SKILL, merged, writerOf(owner));
-    await appendAudit(tx, {
-      category: "state",
-      verb: "reconcile",
-      owner,
-      skill: SKILL,
-      mutationId: `${SKILL}:reconcile:${at}`,
+    await tx.writeModeState(SKILL, merged, writerFor(SKILL, owner), {
+      audit: {
+        category: "state",
+        verb: "reconcile",
+        owner,
+        skill: SKILL,
+        mutationId: `${SKILL}:reconcile:${at}`,
+        toPhase: status,
+      },
       fromPhase: trimmed(existing.current_phase),
-      toPhase: status,
       forced: true,
-      path: tx.paths.modeState(SKILL),
     });
     await syncActiveRowTx(
       tx,
@@ -476,16 +471,16 @@ export async function seedUltragoalTx(
       updated_at: at,
     };
     if (typeof state.session_id !== "string") state.session_id = sessionId;
-    await tx.writeModeState(SKILL, state, writerOf(owner));
-    await appendAudit(tx, {
-      category: "state",
-      verb: "write",
-      owner,
-      skill: SKILL,
-      mutationId: `${SKILL}:seed:${at}`,
+    await tx.writeModeState(SKILL, state, writerFor(SKILL, owner), {
+      audit: {
+        category: "state",
+        verb: "write",
+        owner,
+        skill: SKILL,
+        mutationId: `${SKILL}:seed:${at}`,
+        toPhase: ULTRAGOAL_INITIAL_STATE,
+      },
       fromPhase: trimmed(existing?.current_phase),
-      toPhase: ULTRAGOAL_INITIAL_STATE,
-      path: tx.paths.modeState(SKILL),
     });
   }
   await syncActiveRowTx(
@@ -1160,16 +1155,9 @@ export async function patchStateTx(tx: WorkflowTx, sessionId: string, args: Ultr
   const postError = workflowEnvelopeError(SKILL, merged);
   if (postError) throw new Error(postError);
 
-  await tx.writeModeState(SKILL, merged, "ultragoal_tool");
-  await appendAudit(tx, {
-    category: "state",
-    verb: "write",
-    owner: RUNTIME_OWNER,
-    skill: SKILL,
-    mutationId,
+  await tx.writeModeState(SKILL, merged, writerFor(SKILL, RUNTIME_OWNER), {
+    audit: { category: "state", verb: "write", owner: RUNTIME_OWNER, skill: SKILL, mutationId, toPhase },
     fromPhase,
-    toPhase,
-    path: tx.paths.modeState(SKILL),
   });
   const active = merged.active !== false;
   try {
@@ -1251,17 +1239,10 @@ export async function clearStateTx(tx: WorkflowTx, sessionId: string, args: Ultr
     version: WORKFLOW_STATE_VERSION,
   };
   cleared.skill = SKILL;
-  await tx.writeModeState(SKILL, cleared, "ultragoal_tool");
-  await appendAudit(tx, {
-    category: "state",
-    verb: "clear",
-    owner: RUNTIME_OWNER,
-    skill: SKILL,
-    mutationId,
+  await tx.writeModeState(SKILL, cleared, writerFor(SKILL, RUNTIME_OWNER), {
+    audit: { category: "state", verb: "clear", owner: RUNTIME_OWNER, skill: SKILL, mutationId, toPhase: "complete" },
     fromPhase: trimmed(existing.current_phase),
-    toPhase: "complete",
     forced: force,
-    path: tx.paths.modeState(SKILL),
   });
   try {
     await syncActiveRowTx(tx, { skill: SKILL, active: false, sessionId }, RUNTIME_OWNER);

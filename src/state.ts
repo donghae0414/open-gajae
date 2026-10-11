@@ -1,10 +1,36 @@
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants, promises as fs, realpathSync } from "node:fs";
 import path from "node:path";
+import { isDeepInterviewPhase, isValidDeepInterviewTransition } from "./deep-interview-runtime/manifest.js";
+import { isValidTransition, RALPLAN_STATES } from "./ralplan-runtime/manifest.js";
+import { auditLine, type ModeStateAudit, type WriteAudit } from "./skill-state/audit.js";
+import { isUltragoalPhase, isValidUltragoalTransition } from "./ultragoal-runtime/manifest.js";
 
 // The payload boundary (size, depth and key limits; corrupt and foreign state
 // preserved, not reset) draws on OMC MIT sources; project notices carry
 // attribution. The workflow skills write only through the transactions below.
+//
+// The audited write layer of `WorkflowTx` (the audit row of every write and
+// the transition check of mode-state writes) adapts gajae-code
+// 5c5231418930673e42cc5d08ebe4376e03187533 (MIT),
+// `packages/coding-agent/src/gjc-runtime/state-writer.ts`:
+// - `:517-532` (`maybeAudit`): a write's row right after it succeeds; the row
+//   itself is built in `./skill-state/audit.ts`
+// - `:888-943` (`writeGuardedWorkflowEnvelopeAtomic`): `writeModeState`
+// - `:958-975` (`readPersistedPhase`), `:977-1007`
+//   (`recordInvalidWorkflowTransition`), `:1009-1078`
+//   (`writeWorkflowEnvelopeAtomic`): `writeModeStateChecked`
+// - `:1302,1312`: a removal is audited only when it deleted the file
+// Deviations (docs/development.md "GJC로부터의 deviation (공통 쓰기 계층)"):
+// - write-layer 1: every write takes a required `audit`, a row or `false`
+//   (only the two hook-only continuation records); gjc's is optional.
+// - write-layer 2: `fromPhase` and `forced` are write options outside the
+//   audit, copied into the row; the checked write reads the stored phase
+//   through the StateStore read, so a state it cannot read gives no phase.
+// - write-layer 3: no envelope schema check; the manifest is the written
+//   mode's; no default diagnostic owner; the unknown-phase message has no
+//   "(forced writes bypass via audit.forced)".
+// - ralplan 21: the audit owners are `open-gajae-runtime` / `open-gajae-hook`.
 export const DEEP_INTERVIEW_MODE = "deep-interview" as const;
 export const RALPLAN_MODE = "ralplan" as const;
 /** Plugin-owned: only the `ultragoal` tool writes it (plan §7, decision 21). */
@@ -33,9 +59,29 @@ export type StateMeta = {
 /** Model-owned fields are open-ended. `_meta` is regenerated on every write. */
 export type InterviewState = Record<string, unknown> & { _meta?: StateMeta };
 
+/** Deviation write-layer 1: every tx write names its audit row, or `false`. */
+export type AuditOption = { audit: WriteAudit | false };
+
+/** Deviation write-layer 2: `fromPhase` and `forced` sit outside the audit; the row copies them. */
+export type ModeStateWriteOptions<M extends StateMode> = {
+  audit: ModeStateAudit<M> | false;
+  fromPhase?: string;
+  forced?: boolean;
+};
+
+/** The checked write always audits: its diagnostic row needs the owner. */
+export type CheckedModeStateWriteOptions<M extends StateMode> = {
+  audit: ModeStateAudit<M>;
+  fromPhase?: string;
+  forced?: boolean;
+};
+
 /**
- * The operations `ralplanTransaction` hands its body; none of them queue. Every
- * file argument must resolve inside the owner's session directory.
+ * The ralplan paths and the operations every workflow transaction shares;
+ * `ralplanTransaction` and `workflowTransaction` both hand their body a
+ * `WorkflowTx`. None of them queue. Every file argument must resolve inside
+ * the owner's session directory, and every audited write appends its row
+ * (`state/audit.jsonl`) right after it succeeds.
  */
 export type RalplanTx = {
   readonly paths: {
@@ -54,21 +100,14 @@ export type RalplanTx = {
     runDir(runId: string): string;
   };
   readState(): Promise<InterviewState | undefined>;
-  /**
-   * Replaces the whole state (not a merge); `_meta` is regenerated. The gjc
-   * envelope is open, so only the payload limits apply.
-   */
-  writeState(
-    state: Record<string, unknown>,
-    updatedBy: StateWriter,
-  ): Promise<InterviewState>;
   readText(file: string): Promise<string | undefined>;
-  writeText(file: string, text: string): Promise<void>;
+  writeText(file: string, text: string, options: AuditOption): Promise<void>;
   /** Appends `line` plus a newline; `line` must not contain one (JSONL). */
-  appendLine(file: string, line: string): Promise<void>;
+  appendLine(file: string, line: string, options: AuditOption): Promise<void>;
   /** Sorted entry names; `[]` when the directory is missing. */
   list(dir: string): Promise<string[]>;
-  remove(file: string): Promise<"deleted" | "missing">;
+  /** Audited only when it deleted the file (gjc). */
+  remove(file: string, options: AuditOption): Promise<"deleted" | "missing">;
 };
 
 /**
@@ -92,12 +131,43 @@ export type WorkflowTx = RalplanTx & {
     goalContinuation: string;
   };
   readModeState(mode: StateMode): Promise<InterviewState | undefined>;
-  /** Replaces the whole state (not a merge); `_meta` is regenerated. */
-  writeModeState(
-    mode: StateMode,
+  /**
+   * gjc `writeGuardedWorkflowEnvelopeAtomic` (`state-writer.ts:888-943`), no
+   * transition check: replaces the whole state (not a merge); `_meta` is
+   * regenerated. The gjc envelope is open, so only the payload limits apply.
+   */
+  writeModeState<M extends StateMode>(
+    mode: M,
     state: Record<string, unknown>,
     updatedBy: StateWriter,
+    options: ModeStateWriteOptions<NoInfer<M>>,
   ): Promise<InterviewState>;
+  /**
+   * gjc `writeWorkflowEnvelopeAtomic` (`state-writer.ts:1009-1078`): an
+   * unforced active write's named phase must be in `mode`'s manifest;
+   * an edge the manifest lacks, from `fromPhase` or else the stored active
+   * phase, leaves a best-effort `invalid_transition_detected` row first. Then
+   * the `writeModeState` write and its row.
+   */
+  writeModeStateChecked<M extends StateMode>(
+    mode: M,
+    state: Record<string, unknown>,
+    updatedBy: StateWriter,
+    options: CheckedModeStateWriteOptions<NoInfer<M>>,
+  ): Promise<InterviewState>;
+};
+
+/** The manifest of each mode; the checked write picks it by mode (write-layer 3). */
+const PHASE_RULES: Record<
+  StateMode,
+  { known(phase: string): boolean; valid(from: string, to: string): boolean }
+> = {
+  [RALPLAN_MODE]: {
+    known: (phase) => (RALPLAN_STATES as readonly string[]).includes(phase),
+    valid: isValidTransition,
+  },
+  [DEEP_INTERVIEW_MODE]: { known: isDeepInterviewPhase, valid: isValidDeepInterviewTransition },
+  [ULTRAGOAL_MODE]: { known: isUltragoalPhase, valid: isValidUltragoalTransition },
 };
 
 const MAX_PAYLOAD_BYTES = 1_048_576;
@@ -484,6 +554,41 @@ export class StateStore {
       const modeState = (mode: StateMode) =>
         path.join(stateDir, `${mode}-state.json`);
       const statePath = modeState(RALPLAN_MODE);
+      const auditPath = path.join(stateDir, "audit.jsonl");
+      // gjc `maybeAudit`: the row of a write that succeeded, with the path
+      // string the caller passed.
+      const auditRow = async (
+        audit: WriteAudit | false,
+        file: string,
+        write?: { fromPhase?: string; forced?: boolean },
+      ) => {
+        if (audit) await this.appendText(auditPath, `${auditLine(audit, file, write)}\n`);
+      };
+      const writeModeState: WorkflowTx["writeModeState"] = async (
+        mode,
+        state,
+        updatedBy,
+        options,
+      ) => {
+        const written = await this.writeMerged(
+          modeState(mode),
+          owner,
+          mode,
+          updatedBy,
+          snapshotState(state),
+        );
+        await auditRow(options.audit, modeState(mode), options);
+        return written;
+      };
+      // gjc `readPersistedPhase` through the StateStore read (write-layer 2):
+      // a state it cannot read (corrupt, another session's, over the limits)
+      // gives no phase, as does an inactive one.
+      const storedActivePhase = async (mode: StateMode) => {
+        const stored = await this.readFile(modeState(mode), owner).catch(() => undefined);
+        return stored?.active === true && typeof stored.current_phase === "string"
+          ? stored.current_phase
+          : undefined;
+      };
       const inside = (file: string) => {
         const resolved = path.resolve(file);
         const relative = path.relative(sessionDir, resolved);
@@ -500,7 +605,7 @@ export class StateStore {
           sessionDir,
           statePath,
           continuationPath: path.join(stateDir, "ralplan-continuation.json"),
-          auditPath: path.join(stateDir, "audit.jsonl"),
+          auditPath,
           activeRowPath: path.join(stateDir, "active", "ralplan.json"),
           snapshotPath: path.join(stateDir, "skill-active-state.json"),
           runDir: (runId) =>
@@ -519,29 +624,54 @@ export class StateStore {
           goalContinuation: path.join(stateDir, "goal-continuation.json"),
         },
         readState: () => this.readFile(statePath, owner),
-        writeState: (state, updatedBy) =>
-          this.writeMerged(
-            statePath,
-            owner,
-            RALPLAN_MODE,
-            updatedBy,
-            snapshotState(state),
-          ),
         readModeState: (mode) => this.readFile(modeState(mode), owner),
-        writeModeState: (mode, state, updatedBy) =>
-          this.writeMerged(
-            modeState(mode),
-            owner,
-            mode,
-            updatedBy,
-            snapshotState(state),
-          ),
+        writeModeState,
+        writeModeStateChecked: async (mode, state, updatedBy, options) => {
+          const file = modeState(mode);
+          if (options.forced !== true && state.active === true) {
+            const toPhase =
+              typeof state.current_phase === "string" ? state.current_phase.trim() : "";
+            if (toPhase) {
+              const rules = PHASE_RULES[mode];
+              if (!rules.known(toPhase))
+                throw new Error(
+                  `Refusing to write unknown ${mode} phase "${toPhase}" to ${file}: not a known ${mode} manifest state`,
+                );
+              const fromPhase = (options.fromPhase ?? (await storedActivePhase(mode)))?.trim();
+              if (
+                fromPhase &&
+                fromPhase !== toPhase &&
+                rules.known(fromPhase) &&
+                !rules.valid(fromPhase, toPhase)
+              )
+                // gjc `recordInvalidWorkflowTransition`: best-effort.
+                await auditRow(
+                  {
+                    category: "state",
+                    verb: "invalid_transition_detected",
+                    owner: options.audit.owner,
+                    skill: mode,
+                    mutationId:
+                      options.audit.mutationId ?? `${mode}:invalid-transition:${now()}`,
+                    toPhase,
+                  },
+                  file,
+                  { fromPhase, forced: false },
+                ).catch(() => undefined);
+            }
+          }
+          return writeModeState(mode, state, updatedBy, options);
+        },
         readText: (file) => this.readText(inside(file)),
-        writeText: (file, text) => this.atomicWriteText(inside(file), text),
-        appendLine: (file, line) => {
+        writeText: async (file, text, options) => {
+          await this.atomicWriteText(inside(file), text);
+          await auditRow(options.audit, file);
+        },
+        appendLine: async (file, line, options) => {
           if (line.includes("\n"))
             throw new Error("a JSONL line must not contain a newline");
-          return this.appendText(inside(file), `${line}\n`);
+          await this.appendText(inside(file), `${line}\n`);
+          await auditRow(options.audit, file);
         },
         list: async (dir) => {
           const target = inside(dir);
@@ -557,7 +687,7 @@ export class StateStore {
             throw new Error("state path contains a symlink or non-directory");
           return (await fs.readdir(target)).sort();
         },
-        remove: async (file) => {
+        remove: async (file, options) => {
           const target = inside(file);
           if (!(await this.inspectParent(target, false))) return "missing";
           const stat = await fs
@@ -570,6 +700,7 @@ export class StateStore {
           if (stat.isSymbolicLink() || !stat.isFile())
             throw new Error(`${path.basename(target)} is not a regular file`);
           await fs.unlink(target);
+          await auditRow(options.audit, file);
           return "deleted";
         },
       };

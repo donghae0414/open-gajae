@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { RUNTIME_OWNER } from "../src/skill-state/audit";
 import {
   assertStatePayload,
   epochMillis,
@@ -78,7 +79,7 @@ test("session folders carry the creation time and a read does not create directo
     expect(calls).toEqual(["ses_abc"]);
 
     await store.workflowTransaction("ses_abc", (tx) =>
-      tx.writeModeState("deep-interview", { created: true }, "deep_interview_tool"),
+      tx.writeModeState("deep-interview", { created: true }, "deep_interview_tool", { audit: false }),
     );
     expect((await fs.stat(statePath)).mode & 0o777).toBe(0o600);
     expect((await fs.stat(dirname(statePath))).mode & 0o777).toBe(0o700);
@@ -110,7 +111,7 @@ test("two folders for one session fail closed and an old hex folder is ignored",
       () => store.workflowTransaction("ses_dup", (tx) => tx.readModeState("deep-interview")),
       () =>
         store.workflowTransaction("ses_dup", (tx) =>
-          tx.writeModeState("deep-interview", { value: 1 }, "deep_interview_tool"),
+          tx.writeModeState("deep-interview", { value: 1 }, "deep_interview_tool", { audit: false }),
         ),
     ])
       await expect(operation()).rejects.toThrow(ambiguous);
@@ -122,7 +123,7 @@ test("two folders for one session fail closed and an old hex folder is ignored",
     const hex = `_session-${Buffer.from("ses_old", "utf8").toString("hex")}`;
     await mkdir(join(base, hex), { recursive: true });
     await store.workflowTransaction("ses_old", (tx) =>
-      tx.writeModeState("deep-interview", { value: "new" }, "deep_interview_tool"),
+      tx.writeModeState("deep-interview", { value: "new" }, "deep_interview_tool", { audit: false }),
     );
     const renamed = join(base, `_session-${label(CREATED)}-ses_old`);
     expect(
@@ -138,10 +139,10 @@ test("a write replaces the state and regenerates _meta", async () => {
     const store = storeAt(root);
     const statePath = join(await store.resolveSessionDir("s"), "state", "ralplan-state.json");
     await store.workflowTransaction("s", (tx) =>
-      tx.writeModeState("ralplan", { retained: false, _meta: { sessionId: "other" } }, "ralplan_tool"),
+      tx.writeModeState("ralplan", { retained: false, _meta: { sessionId: "other" } }, "ralplan_tool", { audit: false }),
     );
     const written = await store.workflowTransaction("s", (tx) =>
-      tx.writeModeState("ralplan", { goal: "model", _runtime: { value: 2 } }, "ralplan_hook"),
+      tx.writeModeState("ralplan", { goal: "model", _runtime: { value: 2 } }, "ralplan_hook", { audit: false }),
     );
     expect(written).toMatchObject({
       goal: "model",
@@ -159,7 +160,7 @@ test("payload limits preserve the last valid state", async () => {
   await fixture(async (root) => {
     const store = storeAt(root);
     const write = (state: Record<string, unknown>) =>
-      store.workflowTransaction("s", (tx) => tx.writeModeState("deep-interview", state, "deep_interview_tool"));
+      store.workflowTransaction("s", (tx) => tx.writeModeState("deep-interview", state, "deep_interview_tool", { audit: false }));
     const valid = Object.fromEntries(
       Array.from({ length: 100 }, (_, index) => [`k${index}`, index]),
     );
@@ -186,7 +187,7 @@ test("UTF-8 payload byte boundaries accept 1 MiB and reject the next byte withou
   await fixture(async (root) => {
     const store = storeAt(root);
     const write = (state: Record<string, unknown>) =>
-      store.workflowTransaction("bytes", (tx) => tx.writeModeState("deep-interview", state, "deep_interview_tool"));
+      store.workflowTransaction("bytes", (tx) => tx.writeModeState("deep-interview", state, "deep_interview_tool", { audit: false }));
     const statePath = join(await store.resolveSessionDir("bytes"), "state", "deep-interview-state.json");
     const limit = 1_048_576;
     const overhead = Buffer.byteLength(JSON.stringify({ text: "" }), "utf8");
@@ -222,7 +223,7 @@ test("multiple StateStore instances share a session queue, in call order", async
       await second.resolveSessionDir("same"),
     );
     const write = (store: StateStore, session: string, state: Record<string, unknown>) =>
-      store.workflowTransaction(session, (tx) => tx.writeModeState("deep-interview", state, "deep_interview_tool"));
+      store.workflowTransaction(session, (tx) => tx.writeModeState("deep-interview", state, "deep_interview_tool", { audit: false }));
     const read = (store: StateStore, session: string) =>
       store.workflowTransaction(session, (tx) => tx.readModeState("deep-interview"));
     await Promise.all([
@@ -234,7 +235,7 @@ test("multiple StateStore instances share a session queue, in call order", async
 
     const queuedWrite = write(first, "ordered", { sequence: "write" });
     const queuedRemove = second.workflowTransaction("ordered", (tx) =>
-      tx.remove(tx.paths.modeState("deep-interview")),
+      tx.remove(tx.paths.modeState("deep-interview"), { audit: false }),
     );
     const queuedRead = read(first, "ordered");
     await expect(queuedWrite).resolves.toMatchObject({ sequence: "write" });
@@ -255,7 +256,7 @@ test("a failed atomic publish rejects only its call, cleans its temp, and does n
     const first = storeAt(root);
     const second = storeAt(root);
     const write = (store: StateStore, value: string) =>
-      store.workflowTransaction("s", (tx) => tx.writeModeState("deep-interview", { value }, "deep_interview_tool"));
+      store.workflowTransaction("s", (tx) => tx.writeModeState("deep-interview", { value }, "deep_interview_tool", { audit: false }));
     const rename = spyOn(fs, "rename").mockRejectedValueOnce(
       new Error("rename failed"),
     );
@@ -297,7 +298,7 @@ test("corrupt and mismatched owner state stays visible; symlinked folders are re
     await writeFile(unowned, JSON.stringify({ _runtime: { data: true } }));
     expect((await read("unowned"))?._runtime).toEqual({ data: true });
     const replaced = await store.workflowTransaction("unowned", (tx) =>
-      tx.writeModeState("deep-interview", { value: "new" }, "deep_interview_tool"),
+      tx.writeModeState("deep-interview", { value: "new" }, "deep_interview_tool", { audit: false }),
     );
     expect(replaced._meta?.sessionId).toBe("unowned");
 
@@ -307,7 +308,7 @@ test("corrupt and mismatched owner state stays visible; symlinked folders are re
       await symlink(outside, join(root, ".open-gajae", sessionDirName(CREATED, "link")));
       await expect(
         store.workflowTransaction("link", (tx) =>
-          tx.writeModeState("deep-interview", { escaped: true }, "deep_interview_tool"),
+          tx.writeModeState("deep-interview", { escaped: true }, "deep_interview_tool", { audit: false }),
         ),
       ).rejects.toThrow("symlink");
     } finally {
@@ -325,15 +326,50 @@ test("each mode writes its own state file in the session folder", async () => {
     await store.workflowTransaction("s", async (tx) => {
       expect(tx.paths.modeState("ralplan")).toBe(ralplanPath);
       expect(tx.paths.statePath).toBe(ralplanPath);
-      await tx.writeModeState("deep-interview", { owner: "deep-interview" }, "deep_interview_tool");
+      await tx.writeModeState("deep-interview", { owner: "deep-interview" }, "deep_interview_tool", { audit: false });
     });
     const untouched = await readFile(deepPath, "utf8");
     const written = await store.workflowTransaction("s", (tx) =>
-      tx.writeState({ owner: "ralplan", active: true }, "ralplan_tool"),
+      tx.writeModeState("ralplan", { owner: "ralplan", active: true }, "ralplan_tool", { audit: false }),
     );
     expect(written._meta).toMatchObject({ mode: "ralplan", sessionId: "s", updatedBy: "ralplan_tool" });
     expect(await readFile(deepPath, "utf8")).toBe(untouched);
     expect(JSON.parse(await readFile(ralplanPath, "utf8")).owner).toBe("ralplan");
+  });
+});
+
+test("writeModeStateChecked: an unknown phase is refused before any write; forced and inactive writes skip the check", async () => {
+  await fixture(async (root) => {
+    const store = storeAt(root);
+    const sessionDir = await store.resolveSessionDir("s");
+    const statePath = join(sessionDir, "state", "ralplan-state.json");
+    const auditPath = join(sessionDir, "state", "audit.jsonl");
+    const write = (state: Record<string, unknown>, forced?: boolean) =>
+      store.workflowTransaction("s", (tx) =>
+        tx.writeModeStateChecked("ralplan", state, "ralplan_tool", {
+          audit: { category: "state", verb: "write", owner: RUNTIME_OWNER, skill: "ralplan" },
+          forced,
+        }),
+      );
+    const rows = async () =>
+      (await readFile(auditPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    const bogus = { skill: "ralplan", active: true, current_phase: "bogus" };
+    await expect(write(bogus)).rejects.toThrow(
+      `Refusing to write unknown ralplan phase "bogus" to ${statePath}: not a known ralplan manifest state`,
+    );
+    expect(await Bun.file(statePath).exists()).toBe(false);
+    expect(await Bun.file(auditPath).exists()).toBe(false);
+    // forced: written, one state/write row, no diagnostic.
+    await write(bogus, true);
+    expect(JSON.parse(await readFile(statePath, "utf8"))).toMatchObject({ active: true, current_phase: "bogus" });
+    expect((await rows()).map((r) => [r.category, r.verb, r.forced])).toEqual([["state", "write", true]]);
+    // inactive: not checked.
+    await write({ ...bogus, active: false });
+    expect(JSON.parse(await readFile(statePath, "utf8"))).toMatchObject({ active: false, current_phase: "bogus" });
+    expect((await rows()).map((r) => [r.category, r.verb, r.forced])).toEqual([
+      ["state", "write", true],
+      ["state", "write", false],
+    ]);
   });
 });
 
@@ -353,30 +389,30 @@ test("C-1: one workflow queue per session serializes every mode and transaction"
     const held = new Promise<void>((resolve) => (release = resolve));
     const tx = store.workflowTransaction("ses_u", async (t) => {
       order.push("workflow tx start");
-      await t.writeModeState("ultragoal", { active: true, iteration: 1 }, "ultragoal_tool");
+      await t.writeModeState("ultragoal", { active: true, iteration: 1 }, "ultragoal_tool", { audit: false });
       await held;
       order.push("workflow tx end");
     });
     // Queued behind the transaction, whatever the mode or transaction kind.
     const queued = [
       store
-        .workflowTransaction("ses_u", (t) => t.writeText(t.paths.ultragoal.goals, '{"version":1}\n'))
+        .workflowTransaction("ses_u", (t) => t.writeText(t.paths.ultragoal.goals, '{"version":1}\n', { audit: false }))
         .then(() => order.push("ultragoal tx")),
       store
-        .ralplanTransaction("ses_u", (t) => t.writeState({ active: true }, "ralplan_tool"))
+        .ralplanTransaction("ses_u", (t) => t.writeModeState("ralplan", { active: true }, "ralplan_tool", { audit: false }))
         .then(() => order.push("ralplan tx")),
       store
         .workflowTransaction("ses_u", (t) =>
-          t.writeModeState("ultragoal", { active: true, iteration: 2 }, "ultragoal_hook"),
+          t.writeModeState("ultragoal", { active: true, iteration: 2 }, "ultragoal_hook", { audit: false }),
         )
         .then(() => order.push("ultragoal write")),
       store
-        .workflowTransaction("ses_u", (t) => t.writeModeState("deep-interview", { note: "n" }, "deep_interview_tool"))
+        .workflowTransaction("ses_u", (t) => t.writeModeState("deep-interview", { note: "n" }, "deep_interview_tool", { audit: false }))
         .then(() => order.push("deep-interview write")),
     ];
     // Another session has its own queue.
     await store.workflowTransaction("ses_other", (t) =>
-      t.writeModeState("deep-interview", { note: "free" }, "deep_interview_tool"),
+      t.writeModeState("deep-interview", { note: "free" }, "deep_interview_tool", { audit: false }),
     );
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(order).toEqual(["workflow tx start"]);
