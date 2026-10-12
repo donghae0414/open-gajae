@@ -1,12 +1,12 @@
 # open-gajae 개발 문서
 
-이 문서는 open-gajae 관리자용 개발 기록이며 한국어로만 씁니다. 개발 정책(개발 단계, 출처·deviation 기록 규칙, 참조 저장소 경계)은 [AGENTS.md](../AGENTS.md)가 정하고, 이 문서는 그 정책이 요구하는 기록을 담습니다: 고정한 참조 커밋, 자체 역할과 권한, 스킬 바깥의 구현 세부, OMC·v1과 GJC로부터의 deviation 표, 필수 후속 개발, 검증 근거. 각 스킬이 지금 코드에서 단계별로 어떻게 동작하는지는 `docs/skills/`의 스킬별 문서([deep-interview](skills/deep-interview/README.md), [ralplan](skills/ralplan/README.md), [ultragoal](skills/ultragoal/README.md))가 다룹니다. `skills/*/SKILL.md`, `prompts/*.md`, `src` 주석, [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md), 테스트가 이 문서의 절 제목과 deviation 표 행 번호를 인용하므로, 제목과 번호는 바꾸지 않습니다. 이 문서와 코드가 다르면 코드가 기준입니다.
+이 문서는 open-gajae 관리자용 개발 기록이며 한국어로만 씁니다. 개발 정책(개발 단계, 자체 설계·출처·deviation 기록 규칙, 참조 저장소 경계)은 [AGENTS.md](../AGENTS.md)가 정하고, 이 문서는 그 정책이 요구하는 기록을 담습니다: 자체 설계 결정, 차용한 구현의 출처 커밋, 자체 역할과 권한, 스킬 바깥의 구현 세부, OMC·v1과 GJC로부터의 deviation 표, 필수 후속 개발, 검증 근거. 각 스킬이 지금 코드에서 단계별로 어떻게 동작하는지는 `docs/skills/`의 스킬별 문서([deep-interview](skills/deep-interview/README.md), [ralplan](skills/ralplan/README.md), [ultragoal](skills/ultragoal/README.md))가 다룹니다. `skills/*/SKILL.md`, `prompts/*.md`, `src` 주석, [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md), 테스트가 이 문서의 절 제목과 deviation 표 행 번호를 인용하므로, 제목과 번호는 바꾸지 않습니다. 이 문서와 코드가 다르면 코드가 기준입니다.
 
 ## 범위와 상태
 
-세션에 묶인 `deep-interview`/`ralplan`/`ultragoal` skill, `goal` 도구, 아홉 개의 자체 역할, 작은 읽기 전용 코드 조사 도구를 제공하는 OpenCode 플러그인입니다. 메인 에이전트 프롬프트, `deep-interview` skill(런타임과 측면 리뷰 패널 포함), `ralplan` skill(런타임과 세 합의 역할 포함), `ultragoal` skill(런타임 포함)과 `goal` 도구, cleaner 역할은 GJC를 바탕으로 이식하며, explore·document-specialist·executor 역할과 ultragoal의 진행 기록 형식은 OMC 기반 계약을 유지합니다. OMC나 GJC의 전체 이식은 아니며, 실행 워크플로는 GJC ultragoal과 goal 모드를 기준으로 다시 만든 `ultragoal` 하나뿐입니다.
+세션에 묶인 `deep-interview`/`ralplan`/`ultragoal` skill, `goal` 도구, 아홉 개의 자체 역할, 작은 읽기 전용 코드 조사 도구를 제공하는 OpenCode 플러그인입니다. 현재 구현에서 메인 에이전트 프롬프트, `deep-interview` skill(런타임과 측면 리뷰 패널 포함), `ralplan` skill(런타임과 세 합의 역할 포함), `ultragoal` skill(런타임 포함)과 `goal` 도구, cleaner 역할은 GJC를 바탕으로 이식했고, explore·document-specialist·executor 역할과 ultragoal의 진행 기록 형식은 OMC 기반 계약을 유지합니다. OMC나 GJC의 전체 이식은 아니며, 실행 워크플로는 GJC ultragoal과 goal 모드를 기준으로 다시 만든 `ultragoal` 하나뿐입니다.
 
-- OMC 기준선 이식인 Phase 1은 2026-09-27 관리자 결정으로 종료되었습니다. Phase 2 개선은 gajae-code를 주 참조로 관리자가 결정합니다. 정책은 [AGENTS.md](../AGENTS.md)에 있습니다.
+- OMC 기준선 이식인 Phase 1은 2026-09-27 관리자 결정으로 종료되었습니다. 2026-10-12 관리자는 초기 이식 목표가 완료되었다고 판단하고, Phase 2를 open-gajae 자체 요구에 따른 독자 개발로 전환했습니다. GJC·OMC·OMO는 우선순위가 정해진 기준선이 아니라 필요에 따라 선택하는 참조입니다. 정책은 [AGENTS.md](../AGENTS.md)에 있습니다.
 - GJC 기준(메인 에이전트 프롬프트, `deep-interview` skill·런타임과 lateral-reviewer 프롬프트(패널 조각), `ralplan` skill·런타임·합의 역할 프롬프트, 그리고 `ultragoal` skill·런타임, `goal` 도구, 공통 skill-state 기반, cleaner 프롬프트)은 GJC v0.17.7 커밋 `5c5231418930673e42cc5d08ebe4376e03187533`이며, OMC 기반 역할 내부 계약의 기준은 OMC v5.4.0 커밋 `5281b19e0d64f8e6dc6767f2130299a88af2dc71` 그대로입니다.
 - 대상 호스트는 OpenCode v2입니다. 이번 이식은 `@opencode/plugin` 2.0.15를 대상으로 하며, 로컬 `opencode/` 참조는 `v2.0.15`(`6f3639d82e`)에 고정되어 있습니다. v1 호스트는 더 이상 이 플러그인을 로드할 수 없습니다(v1 지원 중단 — deviations 표 참고).
 - 패키지는 빌드 단계가 없는 TS 소스입니다. `package.json`의 `exports["."]`는 `./src/index.ts`를 가리키고, 루트 `index.ts`가 이를 re-export합니다. `dist/`는 없습니다.
@@ -15,6 +15,14 @@
 - v2 호스트와 워크플로 설명은 `feat/opencode-v2-port` 브랜치 커밋 `f4df6e6`에서 비롯되었으며, 위 메인 에이전트 프롬프트 기준은 별도 변경입니다. 그 변경 자체가 Phase 1 완료를 입증한 것은 아니며, 아래 검증 계층(typecheck, unit test, host probe)이 이 변경에 대해 통과했다는 주장도 아닙니다. 검증 항목은 plan을 참고하세요.
 
 개발 정책은 [AGENTS.md](../AGENTS.md), 출처는 [third-party notices](../THIRD-PARTY-NOTICES.md)를 확인하세요.
+
+## 독자 개발 전환 결정 (2026-10-12)
+
+- 목적: 초기 이식 이후에는 open-gajae의 요구사항과 사용자 경험을 기준으로 기능과 설계를 결정합니다. 참조 프로젝트와의 동등성이나 일치는 목표가 아니며, OpenCode의 API와 실행 계약은 호스트 제약으로 따릅니다.
+- 영향: GJC 주 참조 규칙과 OMO의 호스트 통합 전용 제한을 해제합니다. 요청된 구현과 통상적인 범위 내 판단은 진행하고, 요청 범위를 넘어 제품 방향이나 공개 계약을 바꾸는 미결정 사항만 관리자에게 확인합니다.
+- 기록: 차용하거나 변경한 외부 계약은 실제 출처 커밋과 차이·이유·동작 영향을 기록합니다. 자체 계약은 목적·설계 이유·동작 영향을 기록하며, 억지로 GJC나 OMC의 deviation으로 분류하지 않습니다.
+- 참조 커밋: 위 출처 커밋과 기존 deviation 표는 기존 구현의 이식·변경 기록으로 보존합니다. 최신 체크아웃도 조사할 수 있지만, 새 동작을 채택할 때는 검토한 정확한 커밋을 남깁니다. 체크아웃이 최신이라는 이유만으로 기존 출처 커밋을 교체하지 않습니다.
+- 경계: 이 결정은 개발 정책의 전환이며, 과거 제안·후속 개발·검증 항목 전체의 완료 선언이 아닙니다. 기존 구현, 런타임 프롬프트·스킬, 출처와 라이선스를 이 결정만으로 변경하지 않습니다.
 
 ## 자체 역할과 권한
 
