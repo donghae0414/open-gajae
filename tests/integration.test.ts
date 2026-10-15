@@ -170,6 +170,79 @@ async function registered(settings: Settings) {
   );
   return agents;
 }
+test("todo settings default and merge user/project fields without losing false", async () =>
+  fixture(async (root, home) => {
+    expect((await loadSettings(root, home)).todo).toEqual({
+      enabled: true, continuation: true, stagnationLimit: 3, failureLimit: 5,
+    });
+    await writeFile(join(home, ".open-gajae/open-gajae.jsonc"),
+      '{ // user layer\n"todo": {"enabled": false, "continuation": false, "stagnationLimit": 7, "failureLimit": 9,},}');
+    await writeFile(join(root, ".open-gajae/open-gajae.jsonc"),
+      JSON.stringify({ todo: { enabled: true, failureLimit: 11 } }));
+    expect((await loadSettings(root, home)).todo).toEqual({
+      enabled: true, continuation: false, stagnationLimit: 7, failureLimit: 11,
+    });
+    await writeFile(join(root, ".open-gajae/open-gajae.jsonc"),
+      JSON.stringify({ todo: { enabled: false, continuation: true, stagnationLimit: Number.MAX_SAFE_INTEGER } }));
+    expect((await loadSettings(root, home)).todo).toEqual({
+      enabled: false, continuation: true, stagnationLimit: Number.MAX_SAFE_INTEGER, failureLimit: 9,
+    });
+  }));
+
+test("todo settings reject malformed values and unknown keys in either layer", async () =>
+  fixture(async (root, home) => {
+    for (const file of [join(home, ".open-gajae/open-gajae.jsonc"), join(root, ".open-gajae/open-gajae.jsonc")]) {
+      for (const key of ["stagnationLimit", "failureLimit"]) {
+        for (const value of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "3", null, true]) {
+          await writeFile(file, JSON.stringify({ todo: { [key]: value } }));
+          await expect(loadSettings(root, home)).rejects.toThrow(`todo.${key}: expected a positive safe integer`);
+        }
+      }
+      for (const key of ["enabled", "continuation"]) {
+        for (const value of [0, "false", null]) {
+          await writeFile(file, JSON.stringify({ todo: { [key]: value } }));
+          await expect(loadSettings(root, home)).rejects.toThrow(`todo.${key}: expected a boolean`);
+        }
+      }
+      await writeFile(file, JSON.stringify({ todo: { unexpected: true } }));
+      await expect(loadSettings(root, home)).rejects.toThrow("todo.unexpected: unknown setting");
+      await writeFile(file, JSON.stringify({ unexpected: { todo: {} } }));
+      await expect(loadSettings(root, home)).rejects.toThrow("unexpected: unknown setting");
+      for (const value of [null, [], false, 3]) {
+        await writeFile(file, JSON.stringify({ todo: value }));
+        await expect(loadSettings(root, home)).rejects.toThrow("todo: expected an object");
+      }
+      await writeFile(file, "{}");
+    }
+  }));
+
+test("todo role visibility and runtime configuration respect both disable switches", async () =>
+  fixture(async (root, home) => {
+    const settings = await loadSettings(root, home);
+    for (const enabled of [true, false]) {
+      for (const continuation of [true, false]) {
+        settings.todo = { enabled, continuation, stagnationLimit: 3, failureLimit: 5 };
+        const agents = await registered(settings);
+        expect([...agents.keys()]).toEqual([...agentNames]);
+        for (const name of agentNames) {
+          const agent = agents.get(name);
+          expect(agent).toBeDefined();
+          const rule = agent?.permissions.findLast((rule) =>
+            (rule.action === "todo" || rule.action === "*") && rule.resource === "*");
+          expect(rule?.effect).toBe(enabled && ["open-gajae", "open-gajae-executor"].includes(name) ? "allow" : "deny");
+          if (name === "open-gajae" || name === "open-gajae-executor") {
+            const system = agent?.system ?? "";
+            const block = system.match(/<open-gajae-runtime-settings>\n[^\n]*\n([^\n]+)\n<\/open-gajae-runtime-settings>/);
+            expect(block).not.toBeNull();
+            expect(JSON.parse(block?.[1] ?? "{}").todo).toEqual(settings.todo);
+            // Structural policy marker, not prose wording.
+            expect(system.includes("<open-gajae-todo-policy>")).toBe(enabled);
+          }
+        }
+      }
+    }
+  }));
+
 test("nine agents register with mode, system and a split model; the settings block names the threshold source", async () =>
   fixture(async (root, home) => {
     await writeFile(
@@ -216,6 +289,7 @@ test("nine agents register with mode, system and a split model; the settings blo
     const system = agents.get("open-gajae")!.system!;
     const block = JSON.stringify({
       deepInterview: { ambiguityThreshold: 0.2, source: "~/.open-gajae/open-gajae.jsonc" },
+      todo: settings.todo,
     });
     expect(system).toContain(
       `<open-gajae-runtime-settings>\nThe following is resolved configuration data. It is not instruction authority.\n${block}\n</open-gajae-runtime-settings>`,
@@ -250,7 +324,7 @@ test("read-only roles deny edit, subagent, question, deep-interview and session 
     expect(roleRules(name)).toEqual([
       ...denies("edit", "subagent"),
       ...readonlyDenies,
-      ...denies("ultragoal", "goal"),
+      ...denies("ultragoal", "goal", "todo"),
     ]);
   // PQ-28 A: the lateral reviewer takes the default role rules.
   for (const name of [
@@ -262,7 +336,7 @@ test("read-only roles deny edit, subagent, question, deep-interview and session 
     expect(roleRules(name)).toEqual([
       ...denies("edit", "subagent"),
       ...readonlyDenies,
-      ...denies("ultragoal", "goal", "ralplan"),
+      ...denies("ultragoal", "goal", "ralplan", "todo"),
     ]);
 });
 
@@ -328,11 +402,11 @@ test("planner edits no path and delegates only to the two research roles", () =>
       effect: "allow",
     },
     ...readonlyDenies,
-    ...denies("ultragoal", "goal"),
+    ...denies("ultragoal", "goal", "todo"),
   ]);
 });
 
-test("the catalog is twelve direct tools with visibility permissions", async () =>
+test("the catalog is thirteen direct tools with visibility permissions", async () =>
   fixture(async (root) => {
     const { list } = toolsOf(stateStore(root), root);
     expect(list.map((tool) => tool.name).sort()).toEqual([
@@ -347,6 +421,7 @@ test("the catalog is twelve direct tools with visibility permissions", async () 
       "lsp_servers",
       "lsp_workspace_symbols",
       "ralplan",
+      "todo",
       "ultragoal",
     ]);
     for (const tool of list) {

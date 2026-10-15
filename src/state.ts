@@ -116,6 +116,15 @@ export type RalplanTx = {
  * every other workflow file of the session reachable by name.
  */
 export type WorkflowTx = RalplanTx & {
+  /** Raw payload I/O uses assertStatePayload's byte limit and existing guards. */
+  readBytes(file: string): Promise<Uint8Array | undefined>;
+  writeBytes(file: string, bytes: Uint8Array, options: AuditOption): Promise<void>;
+  /**
+   * Atomically link an existing regular file to a new name in the same session
+   * state directory, without reading it. The source remains until replacement.
+   * An audit failure after linking is a committed warning, not a failed archive.
+   */
+  archiveFile(file: string, archive: string, options: AuditOption): Promise<{ readonly warning?: string }>;
   readonly paths: RalplanTx["paths"] & {
     /** `state/active/<skill>.json`; `skill` must be one safe path component. */
     activeRow(skill: string): string;
@@ -354,13 +363,14 @@ function enqueue<T>(target: string, operation: () => Promise<T>): Promise<T> {
 export class StateStore {
   readonly worktree: string;
   private readonly root: string;
-  private readonly resolveCreated: (sessionID: string) => Promise<number>;
+  private readonly resolveCreated: (sessionID: string) => Promise<number | { created: number; parentID?: string | undefined }>;
+  private readonly sessions = new Map<string, Promise<{ created: number; parentID?: string | undefined }>>();
   /** Per-instance: one host call per session covers later resolutions. */
   private readonly directories = new Map<string, string>();
 
   constructor(
     worktree: string,
-    resolveCreated: (sessionID: string) => Promise<number>,
+    resolveCreated: (sessionID: string) => Promise<number | { created: number; parentID?: string | undefined }>,
   ) {
     const resolved = path.resolve(worktree);
     try {
@@ -370,6 +380,62 @@ export class StateStore {
     }
     this.root = path.join(this.worktree, ".open-gajae");
     this.resolveCreated = resolveCreated;
+  }
+
+  private sessionInfo(id: string) {
+    validateSessionID(id);
+    let info = this.sessions.get(id);
+    if (!info) {
+      info = this.resolveCreated(id).then((value) => typeof value === "number" ? { created: value } : value);
+      this.sessions.set(id, info);
+    }
+    return info;
+  }
+
+  /** Unavailable parent metadata retains the old top-level storage fallback. */
+  async rootSessionID(sessionID: string): Promise<string> {
+    const visited = new Set<string>();
+    let id = validateSessionID(sessionID);
+    while (true) {
+      if (visited.has(id)) throw new Error(`session lineage loop for ${sessionID}`);
+      visited.add(id);
+      const info = await this.sessionInfo(id).catch(() => undefined);
+      if (!info) return sessionID;
+      if (!info.parentID) return id;
+      id = validateSessionID(info.parentID);
+    }
+  }
+
+  /** Enumerate both historical top-level sessions and direct root children. */
+  async sessionIDs(): Promise<string[]> {
+    const entries = await fs.readdir(this.root).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
+    const ids = new Set<string>();
+    for (const entry of entries) {
+      const id = /^_session-\d{8}-\d{6}-(.+)$/.exec(entry)?.[1];
+      if (!id) continue;
+      ids.add(validateSessionID(id));
+      const children = path.join(this.root, entry, "children");
+      if (!(await this.inspectParent(path.join(children, "_"), false))) continue;
+      for (const child of await fs.readdir(children)) ids.add(validateSessionID(child));
+    }
+    return [...ids];
+  }
+
+  /** Only empty nested folders are pruned, under the child's write queue. */
+  async pruneEmptyChild(sessionID: string): Promise<void> {
+    return enqueue(this.queueKey(sessionID), async () => {
+      const directory = await this.resolveSessionDir(sessionID);
+      if (path.basename(path.dirname(directory)) !== "children") return;
+      for (const target of [path.join(directory, "state"), directory]) {
+        if (!(await this.inspectParent(path.join(target, "_"), false))) continue;
+        await fs.rmdir(target).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT" && error.code !== "ENOTEMPTY" && error.code !== "EEXIST") throw error;
+        });
+      }
+    });
   }
 
   /**
@@ -401,10 +467,22 @@ export class StateStore {
         `ambiguous session directories for ${sessionID}: ${matches.join(", ")}`,
       );
 
-    const name =
-      matches[0] ??
-      sessionDirName(await this.resolveCreated(sessionID), sessionID);
-    const directory = path.join(this.root, name);
+    let directory = matches[0] ? path.join(this.root, matches[0]) : undefined;
+    if (!directory) {
+      const nested: string[] = [];
+      for (const entry of entries.filter((entry) => entry.startsWith(SESSION_DIR_PREFIX))) {
+        const candidate = path.join(this.root, entry, "children", sessionID);
+        if (await this.inspectParent(path.join(candidate, "_"), false)) nested.push(candidate);
+      }
+      if (nested.length > 1) throw new Error(`ambiguous session directories for ${sessionID}: ${nested.join(", ")}`);
+      directory = nested[0];
+    }
+    if (!directory) {
+      const rootID = await this.rootSessionID(sessionID);
+      directory = rootID === sessionID
+        ? path.join(this.root, sessionDirName((await this.sessionInfo(sessionID)).created, sessionID))
+        : path.join(await this.resolveSessionDir(rootID), "children", sessionID);
+    }
     this.directories.set(sessionID, directory);
     return directory;
   }
@@ -478,7 +556,7 @@ export class StateStore {
     await this.atomicWriteText(file, JSON.stringify(state, null, 2) + "\n");
   }
 
-  private async atomicWriteText(file: string, serialized: string) {
+  private async atomicWriteText(file: string, serialized: string | Uint8Array) {
     await this.inspectParent(file, true);
     const existing = await fs
       .lstat(file)
@@ -662,10 +740,44 @@ export class StateStore {
           }
           return writeModeState(mode, state, updatedBy, options);
         },
-        readText: (file) => this.readText(inside(file)),
+        readText: (file) => this.readData(inside(file), "utf8"),
+        readBytes: (file) => this.readData(inside(file), null),
         writeText: async (file, text, options) => {
           await this.atomicWriteText(inside(file), text);
           await auditRow(options.audit, file);
+        },
+        writeBytes: async (file, bytes, options) => {
+          const target = inside(file);
+          if (bytes.byteLength > MAX_PAYLOAD_BYTES)
+            throw new Error(`state exceeds ${MAX_PAYLOAD_BYTES} bytes`);
+          await this.atomicWriteText(target, bytes);
+          await auditRow(options.audit, file);
+        },
+        archiveFile: async (file, archive, options) => {
+          const source = inside(file);
+          const destination = inside(archive);
+          if (source === destination || path.dirname(source) !== stateDir || path.dirname(destination) !== stateDir)
+            throw new Error("archives must use distinct names in the same session state directory");
+          if (!(await this.inspectParent(source, false)))
+            throw new Error("archive source directory is missing");
+          const original = await fs.lstat(source);
+          if (original.isSymbolicLink() || !original.isFile())
+            throw new Error(`${path.basename(source)} is not a regular file`);
+          // link is atomic and refuses an existing destination (including a
+          // symlink). The normal atomic publisher later replaces only source.
+          await fs.link(source, destination);
+          const linked = await fs.lstat(destination);
+          if (linked.isSymbolicLink() || !linked.isFile() ||
+            linked.dev !== original.dev || linked.ino !== original.ino) {
+            await fs.unlink(destination);
+            throw new Error("archive source changed before linking");
+          }
+          try {
+            await auditRow(options.audit, archive);
+            return {};
+          } catch (error) {
+            return { warning: error instanceof Error ? error.message : String(error) };
+          }
         },
         appendLine: async (file, line, options) => {
           if (line.includes("\n"))
@@ -744,7 +856,9 @@ export class StateStore {
     }
   }
 
-  private async readText(file: string): Promise<string | undefined> {
+  private readData(file: string, encoding: "utf8"): Promise<string | undefined>;
+  private readData(file: string, encoding: null): Promise<Uint8Array | undefined>;
+  private async readData(file: string, encoding: "utf8" | null): Promise<string | Uint8Array | undefined> {
     if (!(await this.inspectParent(file, false))) return undefined;
     const stat = await fs.lstat(file).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined;
@@ -753,6 +867,14 @@ export class StateStore {
     if (!stat) return undefined;
     if (stat.isSymbolicLink() || !stat.isFile())
       throw new Error(`${path.basename(file)} is not a regular file`);
-    return fs.readFile(file, "utf8");
+    if (encoding !== null) return fs.readFile(file, encoding);
+    // Reject an oversized file before allocating its contents. Check the
+    // returned size too, so a growth during the read cannot bypass the limit.
+    if (stat.size > MAX_PAYLOAD_BYTES)
+      throw new Error(`state exceeds ${MAX_PAYLOAD_BYTES} bytes`);
+    const bytes = await fs.readFile(file);
+    if (bytes.byteLength > MAX_PAYLOAD_BYTES)
+      throw new Error(`state exceeds ${MAX_PAYLOAD_BYTES} bytes`);
+    return bytes;
   }
 }

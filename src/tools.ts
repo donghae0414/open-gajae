@@ -11,6 +11,8 @@ import type { StateStore } from "./state.js";
 import { astGrepSearchTool } from "./tools/ast-tools.js";
 import { lspTools } from "./tools/lsp-tools.js";
 import type { CodeToolPaths } from "./tools/permissions.js";
+import { TodoStore } from "./todo/store.js";
+import { todoTool, type TodoChangedEmitter } from "./todo/tool.js";
 import { ultragoalTool } from "./ultragoal-runtime/tool.js";
 
 /**
@@ -23,6 +25,9 @@ export type ToolDeps = Partial<Pick<RalplanToolDeps, "rootSession">> & {
   ralplanSettings?: RalplanToolDeps["settings"];
   /** Deep-interview revision plan DR-28: the 0.05 default when absent. */
   deepInterviewSettings?: DeepInterviewSettings;
+  todoEnabled?: boolean;
+  todoStore?: TodoStore;
+  todoChanged?: TodoChangedEmitter;
 };
 
 async function noHostLookup(): Promise<never> {
@@ -61,5 +66,8 @@ export function createTools(
       seedRalplanTx: (tx, root, input, owner) =>
         startRunTx(tx, root, input, paths.projectDir, owner),
     }),
+    ...(deps.todoEnabled === false ? [] : [
+      todoTool(deps.todoStore ?? new TodoStore(store), deps.todoChanged),
+    ]),
   ];
 }

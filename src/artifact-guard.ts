@@ -140,7 +140,7 @@ export function isRalplanOwned(
  * The session `state/` tree: mode states, the ralplan continuation counter,
  * the audit log and the active rows (plan R-O3, DR-18).
  */
-const SESSION_STATE = /^\.open-gajae\/_session-[^/]+\/state(?:\/|$)/;
+const SESSION_STATE = /^\.open-gajae\/_session-[^/]+\/(?:state|children)(?:\/|$)/;
 
 export function isSessionState(
   locationDir: string,

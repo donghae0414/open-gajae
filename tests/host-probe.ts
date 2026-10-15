@@ -47,7 +47,7 @@ await runProbe("open-gajae-host-probe", async (report, scratch) => {
 
     const load = host.provider.thread("load")[0];
     const primaryTools = OUR_TOOLS.filter((t) => load?.tools.includes(t));
-    report.check("twelve plugin tools offered to the primary as direct tools", primaryTools.length === 12, primaryTools);
+    report.check("thirteen plugin tools offered to the primary as direct tools", primaryTools.length === 13, primaryTools);
     const primaryCatalog = opencodeCatalog(load);
     report.check(
       "primary keeps opencode.session_move/session_rename",

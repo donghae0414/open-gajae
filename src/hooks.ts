@@ -98,8 +98,14 @@ import {
   sessionArtifactOwner,
 } from "./artifact-guard.js";
 import { createDeepInterviewHooks } from "./deep-interview-runtime/hooks.js";
+import type { Settings } from "./config.js";
+import { createTodoContinuation, todoEventSource, type TodoFormReader } from "./todo/continuation.js";
+import { TodoStore } from "./todo/store.js";
+import type { TodoSource } from "./todo/state.js";
+import type { TodoView } from "./todo/protocol.js";
 import { specGuardRefusal } from "./deep-interview-runtime/messages.js";
 import { createGoalHooks } from "./goal/hooks.js";
+import { parseGoalContinuation, readGoalStateTx, visibleGoal } from "./goal/state.js";
 import { GOAL_CONTEXT_DESCRIPTION } from "./goal/messages.js";
 import { INJECTION_MARKERS } from "./injection.js";
 import {
@@ -151,18 +157,29 @@ import { seedUltragoalTx } from "./ultragoal-runtime/store.js";
  * test satisfies it. The host's `ctx.session` satisfies it too.
  */
 export type HostSession = {
-  get(input: { sessionID: string }): Promise<{
+  wait?(input: { sessionID: string }, options?: { signal?: AbortSignal }): Promise<void>;
+  get(input: { sessionID: string }, options?: { signal?: AbortSignal }): Promise<{
     agent?: string;
     parentID?: string;
     location?: { directory: string };
   }>;
   synthetic(input: {
     sessionID: string;
+    id?: string;
     text: string;
     /** One visible TUI line; the TUI hides a synthetic message without one. */
     description?: string;
     resume: boolean;
-  }): Promise<unknown>;
+    metadata?: Record<string, string | number>;
+  }, options?: { signal?: AbortSignal }): Promise<unknown>;
+  context?(input: { sessionID: string }): Promise<ReadonlyArray<{
+    readonly id: string;
+    readonly type: string;
+    readonly content?: ReadonlyArray<{
+      readonly type: string;
+      readonly state?: unknown;
+    }>;
+  }>>;
 };
 
 /** A synthetic notice and the one line the TUI shows for it. */
@@ -246,6 +263,10 @@ export type RalplanHooks = {
   executeAfter(event: ExecuteAfterEvent): Promise<void>;
   /** One event from `ctx.event.subscribe`: an envelope `{ type, data }`. */
   onEvent(event: unknown): Promise<void>;
+  /** Synchronous veto observation; must run before the serialized handler. */
+  observeEvent(event: unknown): void;
+  configureTodo(settings: Settings["todo"], changed: (view: TodoView) => Promise<void>, readPendingForms?: TodoFormReader): void;
+  dispose(): Promise<void>;
 };
 
 /** The primary this plugin drives; the only agent its workflow tools serve. */
@@ -295,6 +316,7 @@ const TOOL_OWNERS: Record<string, ReadonlySet<string>> = {
   ultragoal: new Set([PRIMARY_AGENT]),
   goal: new Set([PRIMARY_AGENT]),
   "deep-interview": new Set([PRIMARY_AGENT]),
+  todo: new Set([PRIMARY_AGENT, "open-gajae-executor"]),
 };
 
 /**
@@ -355,9 +377,55 @@ export function createHooks(
   packageRoot: string,
   locationDir: string,
   projectDir: string,
+  todoSettings: Settings["todo"] = { enabled: true, continuation: true, stagnationLimit: 3, failureLimit: 5 },
 ): RalplanHooks {
   const goal = createGoalHooks(store);
   const deepInterview = createDeepInterviewHooks(store);
+  const parentChecks = new Map<Promise<void>, string>();
+  const ownershipUpdates = new Set<Promise<void>>();
+  const ownershipLifetime = new AbortController();
+  const observedEvents = new WeakSet<object>();
+  let disposed = false;
+  let todoChanged: ((view: TodoView) => Promise<void>) | undefined;
+  let todoReadForms: TodoFormReader | undefined;
+  const todo = createTodoContinuation(new TodoStore(store), session, {
+    state: store,
+    locationDir,
+    settings: todoSettings,
+    changed: async (view) => { await todoChanged?.(view); },
+    get readPendingForms() { return todoReadForms; },
+    // Unresolved lineage is guarded by the durable, visible child ledger.
+    // Keep the fast lookup veto only for a confirmed local parent's children;
+    // a foreign or user-waived unknown lookup cannot block unrelated work.
+    observationsPending: (sessionID) => [...parentChecks.values()].some((id) => {
+      const info = sessions.get(id);
+      return info?.own && info.parentID === sessionID;
+    }),
+    async ownsSession(sessionID) {
+      try { return (await sessionOf(sessionID)).own; }
+      catch (error) { log("todo session ownership lookup failed", error); return false; }
+    },
+    async eligible(sessionID) {
+      await Promise.all([...parentChecks].filter(([, id]) => {
+        const info = sessions.get(id);
+        return info?.own && info.parentID === sessionID;
+      }).map(([pending]) => pending));
+      if (interrupted.has(sessionID) || (running.get(sessionID)?.size ?? 0) > 0) return false;
+      const current = await session.get({ sessionID });
+      if (current.agent !== PRIMARY_AGENT || current.parentID ||
+        current.location?.directory !== locationDir) return false;
+      // Read higher-priority ownership and explicit holds together, without
+      // advancing any workflow's continuation counters. Raw paused/complete
+      // goal status is not a veto; a matching explicit hold still is.
+      return store.workflowTransaction(sessionID, async (tx) => {
+        if (await readVisiblePrimaryTx(tx)) return false;
+        const currentGoal = visibleGoal(await readGoalStateTx(tx));
+        const continuation = parseGoalContinuation(await tx.readText(tx.paths.goalContinuation));
+        if (currentGoal && continuation?.goal_id === currentGoal.id && continuation.held) return false;
+        return currentGoal?.status !== "active";
+      });
+    },
+  });
 
   // The absolute `Read fallback:` path OMC resolved through `resolveSkillPath`;
   // here it is always this package's own copy, so no existence probe is needed.
@@ -373,6 +441,7 @@ export function createHooks(
    * stack reinforcements. Pattern from oh-my-openagent's ralph-loop handler.
    */
   const inFlight = new Set<string>();
+  const pendingContinuations = new Map<string, TodoSource>();
 
   /**
    * Sessions the user stopped (Q9). Set by an `interrupted` event, cleared only
@@ -393,7 +462,8 @@ export function createHooks(
    * Every plugin instance on a shared server receives every event, so an
    * instance handles only sessions whose location is its own (Q10).
    */
-  const sessions = new Map<string, { own: boolean; parentID?: string }>();
+  const sessions = new Map<string, { own: boolean; foreign: boolean; parentID?: string }>();
+  const sessionLookups = new Map<string, Promise<{ own: boolean; foreign: boolean; parentID?: string }>>();
 
   /** Running child executions per parent session (Q5). */
   const running = new Map<string, Set<string>>();
@@ -411,19 +481,30 @@ export function createHooks(
   async function sessionOf(
     sessionID: string,
     created?: Record<string, unknown>,
-  ): Promise<{ own: boolean; parentID?: string }> {
+  ): Promise<{ own: boolean; foreign: boolean; parentID?: string }> {
     const cached = sessions.get(sessionID);
-    if (cached) return cached;
+    if (cached && (cached.own || cached.foreign)) return cached;
+    const pending = sessionLookups.get(sessionID);
+    if (pending) return pending;
     // `session.created` carries `location` and `parentID` itself.
-    const info: Record<string, unknown> =
-      created ?? (await session.get({ sessionID }));
-    const location = info.location;
-    const entry = {
-      own: isRecord(location) && location.directory === locationDir,
-      ...(typeof info.parentID === "string" ? { parentID: info.parentID } : {}),
-    };
-    sessions.set(sessionID, entry);
-    return entry;
+    const lookup = (async () => {
+      const info: Record<string, unknown> = created ??
+        (await session.get({ sessionID }, { signal: ownershipLifetime.signal }));
+      const confirmed = sessions.get(sessionID);
+      if (confirmed?.foreign) return confirmed;
+      const location = info.location;
+      const entry = {
+        own: isRecord(location) && location.directory === locationDir,
+        foreign: isRecord(location) && typeof location.directory === "string" && location.directory !== locationDir,
+        ...(typeof info.parentID === "string" ? { parentID: info.parentID } :
+          cached?.parentID ? { parentID: cached.parentID } : {}),
+      };
+      sessions.set(sessionID, entry);
+      return entry;
+    })();
+    sessionLookups.set(sessionID, lookup);
+    try { return await lookup; }
+    finally { sessionLookups.delete(sessionID); }
   }
 
   /** Write one synthetic message. Never throws. */
@@ -533,8 +614,11 @@ export function createHooks(
   }
 
   /** Plan C-9 for a lineage root's `succeeded`, after the marker is cleared. */
-  async function continueSession(sessionID: string): Promise<void> {
+  async function continueSession(sessionID: string, source?: TodoSource): Promise<void> {
     if (inFlight.has(sessionID)) {
+      const pending = pendingContinuations.get(sessionID);
+      if (source && (!pending || (pending.aggregateID === source.aggregateID && source.seq > pending.seq)))
+        pendingContinuations.set(sessionID, source);
       log(`continuation already in flight for ${sessionID}`);
       return;
     }
@@ -589,10 +673,19 @@ export function createHooks(
         action = await decideRalplan(sessionID);
       } catch (error) {
         log("ralplan continuation failed", error);
+        return;
       }
-      if (action) await inject(sessionID, action.text, action.description);
+      if (action) {
+        await inject(sessionID, action.text, action.description);
+        return;
+      }
+      if (source) await todo.resume(sessionID, source);
     } finally {
       inFlight.delete(sessionID);
+      const next = pendingContinuations.get(sessionID);
+      pendingContinuations.delete(sessionID);
+      if (next && !disposed && (!source || next.seq > source.seq) && !todo.staleEvent(sessionID, next))
+        await continueSession(sessionID, next);
     }
   }
 
@@ -1009,6 +1102,7 @@ export function createHooks(
     // repair runs before this hook, so a stringified-JSON input arrives here
     // already parsed.
     try {
+      if (event.tool === "todo") await todo.beforeTool(event.sessionID);
       const refusal = await guardSessionArtifacts(
         event.tool,
         event.sessionID,
@@ -1036,6 +1130,8 @@ export function createHooks(
     }
     try {
       if (event.tool === "subagent") {
+        todo.subagentTool(event.sessionID, event.id, isRecord(event.input) && event.input.background === true,
+          isRecord(event.input) && event.input.sessionID === undefined);
         attachRedTeam(event.input);
         return;
       }
@@ -1104,6 +1200,7 @@ export function createHooks(
    */
   const executeAfter: RalplanHooks["executeAfter"] = async (event) => {
     try {
+      if (event.tool === "todo") await todo.afterTool(event.sessionID);
       const undo = markerUndo.get(event.id);
       if (undo !== undefined) {
         markerUndo.delete(event.id);
@@ -1145,6 +1242,17 @@ export function createHooks(
    */
   const context: RalplanHooks["context"] = async (event) => {
     hideTools(event);
+    if (event.sessionID && event.messages && todoSettings.enabled) {
+      // All prior todo directives are single-turn messages, never instructions
+      // to replay after a cancel, generation change or compaction.
+      event.messages = event.messages.filter((message) => !message.content.some((part) =>
+        part.type === "text" && typeof part.text === "string" &&
+        (part.text.includes("<open-gajae-todo-continuation>") ||
+          part.text.includes("<open-gajae-todo-context>"))));
+      const text = await todo.contextText(event.sessionID);
+      if (text !== undefined && (event.agent === PRIMARY_AGENT || event.agent === "open-gajae-executor"))
+        event.messages.push({ role: "user", content: [{ type: "text", text }] });
+    }
     try {
       const sessionID = event.sessionID;
       const messages = event.messages;
@@ -1192,6 +1300,8 @@ export function createHooks(
    * the run folder.
    */
   const compaction: RalplanHooks["compaction"] = async (event) => {
+    const todoText = await todo.contextText(event.sessionID);
+    if (todoText !== undefined) event.system.push({ type: "text", text: todoText });
     try {
       if ((await rootSession(event.sessionID)) === event.sessionID) {
         const text = await goal.ultragoalCompaction(event.sessionID);
@@ -1240,14 +1350,65 @@ export function createHooks(
     }
   };
 
+  function trackOwnership(childID: string, pending: Promise<void>) {
+    parentChecks.set(pending, childID);
+    const published = pending.then(async () => {
+      parentChecks.delete(pending);
+      if (!disposed) await todo.ownershipChanged();
+    }).catch((error) => log("todo ownership publication failed", error));
+    ownershipUpdates.add(published);
+    void published.finally(() => ownershipUpdates.delete(published));
+  }
+  const observeEvent: RalplanHooks["observeEvent"] = (event) => {
+    if (disposed || !isRecord(event) || observedEvents.has(event)) return;
+    observedEvents.add(event);
+    // Process-wide RPC notifications carry the active registrant's location,
+    // not the location of a session referenced in their application payload.
+    if (typeof event.type === "string" && event.type.startsWith("rpc.")) return;
+    if (isRecord(event.location) && typeof event.location.directory === "string" &&
+      event.location.directory !== locationDir) {
+      if (isRecord(event.data) && typeof event.data.sessionID === "string") {
+        const id = event.data.sessionID;
+        sessions.set(id, { own: false, foreign: true });
+        trackOwnership(id, todo.executionForeign(id));
+      }
+      return;
+    }
+    todo.observe(event);
+    if (isRecord(event) && event.type === "session.execution.started" &&
+      isRecord(event.data) && typeof event.data.sessionID === "string") {
+      const childID = event.data.sessionID;
+      // Existing child sessions may predate this plugin instance. Resolve
+      // lineage on the fast lane, not behind a pending synthetic response.
+      const pending = sessionOf(childID).then((info) => {
+        if (info.own) return todo.executionOwner(childID, info.parentID);
+        if (info.foreign) return todo.executionForeign(childID);
+      }).catch((error) => { if (!disposed) log("todo child observation failed", error); });
+      trackOwnership(childID, pending);
+    }
+  };
   const onEvent: RalplanHooks["onEvent"] = async (event) => {
+    if (disposed) return;
+    observeEvent(event);
     try {
       if (!isRecord(event) || !isRecord(event.data)) return;
       const { type, data } = event;
-      const sessionID = data.sessionID;
+      const sessionID = typeof data.sessionID === "string" ? data.sessionID :
+        isRecord(data.form) ? data.form.sessionID : undefined;
       if (typeof sessionID !== "string" || sessionID.length === 0) return;
+      // Fast observations may be ahead of this ordered queue. They veto old
+      // continuation decisions, not the start/tool/end bookkeeping needed by
+      // later turns (running children and the goal's zero-tool-turn limit).
+      const stale = todo.staleEvent(sessionID, todoEventSource(event));
+      await todo.flush(sessionID);
+      if (!stale && type === "session.inbox.delivered" && todo.genuineDelivery(sessionID, todoEventSource(event)))
+        interrupted.delete(sessionID);
       if (type === "session.created") {
-        await sessionOf(sessionID, data);
+        const info = await sessionOf(sessionID, data);
+        if (info.foreign) {
+          await todo.executionForeign(sessionID);
+          await todo.ownershipChanged();
+        }
         return;
       }
       // Counted before the execution branch, so a child's tool call never
@@ -1263,31 +1424,39 @@ export function createHooks(
       // decides on it; the next execution is a new turn.
       if (EXECUTION_ENDS.has(type)) turnSkill.delete(sessionID);
       const info = await sessionOf(sessionID);
-      if (!info.own) return;
+      if (!info.own) {
+        if (info.foreign) {
+          await todo.executionForeign(sessionID);
+          await todo.ownershipChanged();
+        }
+        return;
+      }
       if (type === "session.execution.started") toolCalls.set(sessionID, 0);
 
       if (info.parentID !== undefined) {
         const children = running.get(info.parentID) ?? new Set<string>();
-        if (type === "session.execution.started") children.add(sessionID);
+        // The durable ledger fences replayed starts AND late older ends.
+        // Raw events alone could resurrect a forgotten child or clear a newer run.
+        if (todo.executionRunning(sessionID) ?? type === "session.execution.started") children.add(sessionID);
         else children.delete(sessionID);
         if (children.size > 0) running.set(info.parentID, children);
         else running.delete(info.parentID);
       }
 
       if (type === "session.execution.interrupted") {
-        if (STOP_REASONS.has(String(data.reason))) {
+        if (!stale && STOP_REASONS.has(String(data.reason))) {
           interrupted.add(sessionID);
           log(`recorded user interrupt for ${sessionID}`);
         }
         return;
       }
       // `failed` does not continue; only a lineage root continues (C-2, E-4).
-      if (type === "session.execution.succeeded" && info.parentID === undefined)
-        await continueSession(sessionID);
+      if (!stale && type === "session.execution.succeeded" && info.parentID === undefined)
+        await continueSession(sessionID, todoEventSource(event));
       // The next `started` counts afresh; a finished session keeps no entry.
       if (type !== "session.execution.started") toolCalls.delete(sessionID);
     } catch (error) {
-      log("execution event handler failed", error);
+      if (!disposed) log("execution event handler failed", error);
     }
   };
 
@@ -1300,5 +1469,18 @@ export function createHooks(
     executeBefore,
     executeAfter,
     onEvent,
+    observeEvent,
+    configureTodo(settings, changed, readPendingForms) {
+      Object.assign(todoSettings, settings);
+      todoChanged = changed;
+      todoReadForms = readPendingForms;
+    },
+    async dispose() {
+      disposed = true;
+      ownershipLifetime.abort();
+      await todo.dispose();
+      await Promise.all(parentChecks.keys());
+      await Promise.all(ownershipUpdates);
+    },
   };
 }

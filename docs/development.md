@@ -8,9 +8,9 @@
 
 - OMC 기준선 이식인 Phase 1은 2026-09-27 관리자 결정으로 종료되었습니다. 2026-10-12 관리자는 초기 이식 목표가 완료되었다고 판단하고, Phase 2를 open-gajae 자체 요구에 따른 독자 개발로 전환했습니다. GJC·OMC·OMO는 우선순위가 정해진 기준선이 아니라 필요에 따라 선택하는 참조입니다. 정책은 [AGENTS.md](../AGENTS.md)에 있습니다.
 - GJC 기준(메인 에이전트 프롬프트, `deep-interview` skill·런타임과 lateral-reviewer 프롬프트(패널 조각), `ralplan` skill·런타임·합의 역할 프롬프트, 그리고 `ultragoal` skill·런타임, `goal` 도구, 공통 skill-state 기반, cleaner 프롬프트)은 GJC v0.17.7 커밋 `5c5231418930673e42cc5d08ebe4376e03187533`이며, OMC 기반 역할 내부 계약의 기준은 OMC v5.4.0 커밋 `5281b19e0d64f8e6dc6767f2130299a88af2dc71` 그대로입니다.
-- 대상 호스트는 OpenCode v2입니다. 이번 이식은 `@opencode/plugin` 2.0.15를 대상으로 하며, 로컬 `opencode/` 참조는 `v2.0.15`(`6f3639d82e`)에 고정되어 있습니다. v1 호스트는 더 이상 이 플러그인을 로드할 수 없습니다(v1 지원 중단 — deviations 표 참고).
-- 패키지는 빌드 단계가 없는 TS 소스입니다. `package.json`의 `exports["."]`는 `./src/index.ts`를 가리키고, 루트 `index.ts`가 이를 re-export합니다. `dist/`는 없습니다.
-- 구현 범위는 `deep-interview`·`ralplan`·`ultragoal`, `open-gajae`/`open-gajae-explore`/`open-gajae-document-specialist`, `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic` 합의 역할, `open-gajae-executor`/`open-gajae-cleaner` ultragoal 실행 역할, `open-gajae-lateral-reviewer` deep-interview 패널 역할, 세션 상태, 그리고 바로 호출 가능한 도구 12개(`deep-interview`·`ralplan`·`ultragoal`·`goal` 도구 4개 + 읽기 전용 AST/LSP 도구 8개)입니다.
+- 대상 호스트는 OpenCode v2입니다. 초기 이식은 `@opencode/plugin` 2.0.15(로컬 `opencode/` 참조 `v2.0.15`, `6f3639d82e`)를 대상으로 했고, todo 기능부터 `@opencode/plugin`·`@opencode/theme` 2.0.26과 OpenCode 2.0.26 바이너리를 대상으로 검증합니다. v1 호스트는 더 이상 이 플러그인을 로드할 수 없습니다(v1 지원 중단, deviations 표 참고).
+- 서버 플러그인은 빌드 단계가 없는 TS 소스입니다. `package.json`의 `exports["."]`는 `./src/index.ts`를 가리키고, 루트 `index.ts`가 이를 re-export합니다. TUI만 빌드합니다: `bun run build:tui`(`scripts/build-tui.ts`)가 `src/tui.tsx`를 공식 `@opentui/solid/bun-plugin` transform으로 `dist/tui.js` 하나로 묶고, `solid-js`·`@opentui/*`·`@opencode/plugin`·`@opencode/theme` import는 bare external로 남깁니다. `prepack`이 이 빌드를 실행하므로 tarball에는 `dist/tui.js`가 들어갑니다. `exports["./tui"]`는 `./dist/tui.js`, `exports["./rpc"]`는 `./src/todo/protocol.ts`이고, 루트 `tui.ts`가 compiled default를 re-export합니다(R-OD17).
+- 구현 범위는 `deep-interview`·`ralplan`·`ultragoal`, `open-gajae`/`open-gajae-explore`/`open-gajae-document-specialist`, `open-gajae-planner`/`open-gajae-architect`/`open-gajae-critic` 합의 역할, `open-gajae-executor`/`open-gajae-cleaner` ultragoal 실행 역할, `open-gajae-lateral-reviewer` deep-interview 패널 역할, 세션 상태, 세션별 todo 보드와 읽기 전용 TUI, 그리고 바로 호출 가능한 도구 13개(`deep-interview`·`ralplan`·`ultragoal`·`goal`·`todo` 도구 5개 + 읽기 전용 AST/LSP 도구 8개)입니다. `todo`를 끄면(`todo.enabled: false`) 12개입니다.
 - `ralplan`은 제공하며 `pending approval` 상태의 plan(`pending-approval.md`)에서 끝나고, 최종 승인 질문은 `Refine further`/`Approve execution via ultragoal (Recommended)`/`Stop here`를 제공합니다. `ultragoal`은 GJC ultragoal 런타임과 goal 모드를 기준으로 구현했습니다: 수용 기준이 있는 지속 목표 목록, 완료 영수증을 담는 ledger, 목표마다 architect gate, 실행의 마지막 목표에서 경계 리뷰 cohort(cleaner, architect, executor QA/red-team)와 terminal critic, 그리고 `goal` 도구의 continuation 루프입니다([Ultragoal](skills/ultragoal/README.md) 참고). deep-interview → ralplan → ultragoal 핸드오프 체인, deep-interview → ultragoal 직접 핸드오프, 그리고 ultragoal과 ralplan에서 deep-interview로 돌아가는 핸드오프도 제공합니다. autopilot, team, 독립된 ralph skill, autoresearch, 공유 세션 상태, 자동 migration/recovery는 제공하지 않습니다. 슬래시 커맨드는 없으며 명시적인 자연어 요청이나 지원되는 mention·키워드로 skill에 진입할 수 있습니다(진입 규칙은 [deep-interview](skills/deep-interview/entry-and-handoff.md)·[ralplan](skills/ralplan/entry-and-handoff.md)·[ultragoal](skills/ultragoal/entry-and-handoff.md)의 `entry-and-handoff.md` 참고).
 - v2 호스트와 워크플로 설명은 `feat/opencode-v2-port` 브랜치 커밋 `f4df6e6`에서 비롯되었으며, 위 메인 에이전트 프롬프트 기준은 별도 변경입니다. 그 변경 자체가 Phase 1 완료를 입증한 것은 아니며, 아래 검증 계층(typecheck, unit test, host probe)이 이 변경에 대해 통과했다는 주장도 아닙니다. 검증 항목은 plan을 참고하세요.
 
@@ -47,7 +47,7 @@
 
 ## 읽기 전용 코드 도구
 
-플러그인은 읽기 전용 코드 도구 8개를 등록합니다(위의 `deep-interview`·`ralplan`·`ultragoal`·`goal` 도구를 더하면 총 12개).
+플러그인은 읽기 전용 코드 도구 8개를 등록합니다(위의 `deep-interview`·`ralplan`·`ultragoal`·`goal`·`todo` 도구를 더하면 총 13개).
 
 - `ast_grep_search` (`@ast-grep/napi` 0.31.1): AST 검색만 하며 replace는 없습니다.
 - `lsp_goto_definition`, `lsp_hover`, `lsp_diagnostics`, `lsp_find_references`, `lsp_document_symbols`, `lsp_workspace_symbols`, `lsp_servers`.
@@ -75,7 +75,7 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
 | 안내는 실패했을 때만 prompt 텍스트에 덧붙임 | 안내는 state 우선으로 쓴 뒤 `synthetic` 메시지로 보냅니다. `synthetic` 자체가 거부되면 (marker로 감싼) 안내를 prompt 텍스트에 덧붙여 사라지지 않게 합니다. |
 | 안내가 user 메시지 앞에 옴 | host는 `synthetic` 안내를 같은 턴의 user 메시지 앞에 배치합니다. OMC/v1은 뒤에 덧붙였습니다. 설계 선택이 아니라 host 배치 사실입니다. |
 | 삽입 메시지의 TUI 표시 | TUI는 `description`이 없는 `synthetic` 메시지를 표시하지 않습니다. 플러그인이 넣는 모든 안내와 continuation에 한 줄 설명(예: `open-gajae: ralplan keyword notice added`, `open-gajae: ralplan continuation 1/30`)을 붙여 사용자가 삽입 사실을 볼 수 있게 합니다. 본문은 OMC처럼 모델에게만 전달됩니다. |
-| 빌드 없는 TS 소스 패키징 | 루트 `index.ts`와 `package.json`의 `exports["."]`가 `./src/index.ts`를 가리킵니다. `dist/`와 build script는 사라졌습니다. |
+| 서버는 빌드 없는 TS 소스 패키징 | 루트 `index.ts`와 `package.json`의 `exports["."]`가 `./src/index.ts`를 가리킵니다. 서버용 `dist/`는 없습니다. todo TUI만 `build:tui`/`prepack`으로 `dist/tui.js`를 만듭니다(R-OD17). |
 | `model` 없는 `variant`는 설정 오류 | user+project 병합 뒤 agent 이름을 담은 오류로 거부됩니다 — variant를 진단만 남기고 조용히 버리는 v2 host보다 엄격합니다. |
 | continuation이 durable execution 이벤트에서 동작 | `session.execution.succeeded`가 v2에서 발행하지 않는 `session.idle`을 대체합니다. |
 | continuation이 background subagent를 기다림 | `background: true`로 실행 중인 child 세션이 있으면 `parentID`와 execution 이벤트로 추적해 건너뜁니다(OMC/OMO parity; v1에는 대응 사례가 없었습니다). |
@@ -188,7 +188,7 @@ source에서 실제 도달하는 제품 환경 변수는 `OPEN_GAJAE_LSP_TIMEOUT
 | 28 | final gate의 `reviewCohort`와 `criticReview`가 최상위 키이고 레인 status가 역할별입니다. | `rt:2656-2725,2956-2974` | spec D-VF4, D-VF6 | gate 모양이 다름 |
 | 29 | 수정 목표를 완료할 때 gate 검증과 영수증 종류를 **둘 다** 원 목표(와 사슬의 나머지, deviation 43)가 이미 superseded인 계획으로 정합니다. GJC는 supersede 전 계획으로 gate를 검증하고(`rt:3707-3717` → `rt:2738-2742`), supersede 뒤에 영수증 종류를 다시 정합니다(`rt:3737-3750`). | 좌동 | GJC 순서에서는 실행을 닫는 수정 목표가 목표별 gate로 통과한 뒤 final 영수증을 받고, 가드가 critic 누락으로 막음(`guard:264-288`). open-gajae에는 그 재검증 경로가 없음(spec D-AG7) | 실행을 닫는 수정 목표는 첫 checkpoint부터 final gate(2세대 cohort)를 냄 |
 | 30 | goal 문맥과 continuation은 TUI 줄이 붙은 보이는 synthetic 메시지입니다. continuation 프롬프트에서 GJC 첫 줄인 HTML 주석 `<!-- Hidden continuation steer. role=user, suppressed from visible transcript. -->`를 뺍니다(호스트 치환). | `session/agent-session.ts:13116-13168,21098-21120`, `prompts/goals/goal-continuation.md:1` | 호스트와 TUI 줄 규칙. 여기서는 메시지가 숨겨지지 않음 | 삽입마다 한 줄, 기본 `steer` 전달로 모델 한 단계가 더 돌 수 있음(plan R12) |
-| 31 | continuation 문구에서 `todo_write`를 뺐습니다. | `prompts/goals/goal-continuation.md:12` | 호스트에 todo 도구가 없음 | 문구만 다름 |
+| 31 | continuation 문구에서 `todo_write`를 뺐습니다. | `prompts/goals/goal-continuation.md:12` | 호스트에 `todo_write`가 없음. 이후 추가된 플러그인 `todo`는 goal과 독립이라(관리자 결정 D-10) goal continuation이 todo를 부르지 않음 | 문구만 다름 |
 | 32 | pause 판정에 planGeneration 결속이 없고, critic 상한이 pause를 막지 않습니다. | `fresh:56-111`, `guard:927-933` | spec D-AG7, D-VF9 | 옛 pause OKAY도 유효 |
 | 33 | deep-interview 개정으로 철회: ultragoal → deep-interview 인계의 callee는 GJC의 `interviewing`과 활성 행을 받습니다. | — | — | — |
 | 34 | `next(retry_failed: true)`는 활성 목표가 없으면 대기 목표보다 첫 failed 목표를 먼저 잡습니다. | `rt:1278-1284`(active → pending → failed) | spec D-VF8 "고친 뒤 재시도", PQ-19 B, spec E6 | 고친 목표를 바로 재검증. 대기 목표가 남아 있어도 AC24가 성립 |
@@ -281,6 +281,193 @@ spec 결정이나 PQ 답으로 기능을 빼거나 바꿨습니다.
 | 2 | `fromPhase`·`forced`는 감사 dict 밖의 쓰기 옵션이고, 행은 그 값을 복사합니다. 검사 쓰기는 `fromPhase`가 없으면 저장된 상태를 StateStore 읽기로 읽어, 활성이고 phase가 문자열이면 그 phase를 출발로 씁니다. 손상, 다른 세션, 한도 초과로 읽을 수 없으면 출발 phase가 없습니다. 행의 `from_phase`는 이 대체를 쓰지 않고 넘긴 값만 적습니다. | `gjc-runtime/state-writer.ts:63-74`, `:1037`, `:1059`, `:958-975`(원본 JSON 읽기 `:425-432`) | 관리자 결정(MD-4, Q-5): 전이 검사의 입력과 감사 기록을 나눔. StateStore가 읽지 못하는 상태는 쓰지 않고 보존함 | 행 내용은 같음. 다른 세션·한도 초과 상태 위의 deep-interview `start`는 GJC와 달리 진단을 남기지 않음 |
 | 3 | 쓰기 계층은 봉투 스키마를 검사하지 않고 StateStore payload 한도만 봅니다(일부 op는 쓰기 전에 `workflowEnvelopeError`로 스스로 검사함). 검사 쓰기의 manifest는 봉투의 `skill`이 아니라 쓰는 mode로 고르고, 진단 행의 `skill`도 mode입니다. 감사 dict가 필수라 진단 owner의 기본값(`gjc-runtime`)이 없습니다. 알 수 없는 phase 거부 문구에 "(forced writes bypass via audit.forced)"가 없습니다. | `gjc-runtime/state-writer.ts:908,932,1018-1025`(스키마), `:1044`(봉투 `skill`), `:996`(owner 기본값), `:1049`(문구) | StateStore가 mode별 파일에 쓰고 open-gajae에 봉투 스키마가 없음(ralplan deviation 17). 옛 ralplan 검사의 동작과 문구를 유지 | 봉투 `skill`이 mode와 다른 상태도 그 mode의 표로 검사함. 문구만 다름 |
 
+## todo 도구와 진행 표시 (자체 계약)
+
+todo-agent-performance 계획(`.omo/plans/todo-agent-performance.md`, 결정 D-1~D-13)으로 추가한 자체 계약입니다. 대상 호스트는 OpenCode 2.0.26입니다. 2.0.26 Core는 native `todowrite`를 제거했으므로(`@opencode/core` 2.0.26 `dist/database/v1-migration.bun.js:677,696`) 이 기능은 제거된 native todo API나 UI를 쓰지 않고, 플러그인이 등록한 도구와 상태 파일, 공개 TUI slot만 씁니다.
+
+Task 11의 실행별 결과 회계는 자체 설계입니다. 순수 전이 함수는
+`src/todo/child-result-state.ts`, 재개·보류 판정은
+`src/todo/continuation-decision.ts`에 두며, `src/todo/child-results.ts`가
+실제 저장·호스트 이벤트·idle 구독을 연결합니다. 관찰한 시작은 실행별 의무를
+만들고 늦은 lineage 조회는 소유자만 정합니다. foreground 결과는 원래 tool ID로,
+background 결과는 background 의무 사이의 FIFO로 정산합니다. 실행 종료와
+background handoff 자체는 결과 전달이 아닙니다. progress는 두 모드 모두 시작
+전에 발생하므로 입력의 `background`가 초기 채널을 정합니다. 성공 결과의
+`status: running`은 background 전환이며, 실패 도구가 보존한 같은 progress
+metadata는 foreground 실패 정산을 막지 않습니다.
+
+`state/todo-child-results.json`에는 실행·채널·결과·취소·waiver·source watermark와
+관찰 이력의 시작을 아는지를 저장합니다. 실제 세션 생성이나 새 subagent 호출이
+그 시작을 증명하며, 부모 조회나 사용자 승인은 증명이 아닙니다. 복원만으로
+running을 ended로 바꾸거나 재개하지 않습니다. 완전한 이력에서는 복구된 결과로
+누락된 종료를 정산하지만, 불명확한 과거가 있으면 `child_result_ambiguous`를
+canonical controller와 기존 도구/RPC/TUI에 표시합니다.
+
+Session-folder cleanup (A+B) is an original design for keeping the user's root
+session discoverable without discarding replay safety. StateStore resolves native
+parent metadata and stores new descendants directly at
+`_session-<root created>-<rootID>/children/<childID>/`, including grandchildren.
+It reuses a historical top-level folder first, then an existing nested folder;
+ambiguous matches and lineage loops fail closed. Resolution is cached per session.
+An unavailable parent lookup falls back to that session's historical top-level
+layout rather than inventing lineage. Plans and drafts still belong to the root.
+
+When a child ledger has no execution, pending result, next tool, outstanding
+acknowledgement or unacknowledged ambiguity, its individual file is removed.
+Only empty nested `state/` and child directories are pruned; executor boards,
+form observations and audit files survive. The root's
+`state/todo-child-results-fences.json` maps session IDs to compact terminal
+history, ownership and per-aggregate watermarks (location-scoped observers use
+the same filename suffix as their ledgers). These tombstones intentionally
+remain: deleting the fences would let a replayed start or result resurrect debt
+or settle newer work. The next real execution still creates a new obligation.
+Snapshots are published before fence changes and take precedence on restore,
+so a crash during either terminal deletion or child reuse preserves accounting.
+Restoration scans both layouts. The hook's running-child veto also reads the
+fenced execution state, not a replayed raw start/end. RPC board lookup remains
+session-ID based; all `children/**` paths are runtime-owned like root `state/**`.
+
+Task 12 adds an original location-ownership contract, not a third-party
+adaptation. A definite foreign directory creates an exclusion in this
+location's child ledger; later execution, lineage or delivery events cannot
+turn it into local debt. Missing metadata or a failed lookup is not proof of
+a root or a foreign session. An unattributed observation instead projects
+`child_result_ambiguous` on affected local boards. Genuine user delivery
+waives only that parent's captured execution prefix; another parent and a
+later execution retain their own wait. The existing idle-confirmation rule
+still applies to captured running executions.
+If ownership later proves foreign, its already-pending idle subscription is
+cancelled and excluded from local admission as well; that expected cancellation
+does not become a storage error.
+
+Ownership resolution publishes the existing child hold and re-enters the
+same scoped admission path. It does not manufacture a parent terminal,
+reset budgets, or release stronger holds. Confirmed-local lookup vetoes
+remain parent-scoped; an unresolved lookup cannot silently override a
+visible wait that the user has already waived. Restored ownership queries
+run outside the child write queue, so missing session metadata is not
+misreported as damaged storage. Nested locations sharing one project use
+a directory-hashed child-sidecar filename, preserving the root filename
+and importing pre-ownership snapshots without overwriting another
+location's ledger.
+
+Task 12 회귀 수정: process-wide RPC의 `rpc.*` 알림은 session ownership
+관찰에서 제외합니다. 기존 `registerTodoRpc`는 현재 활성 등록 위치에서 다른
+위치의 보드 변경도 발행하므로, 알림 envelope의 directory는 payload에 든
+sessionID의 소유 위치를 증명하지 않습니다. 이를 foreign 증거로 캐시하면
+service 모드의 로컬 질문 보류가 사라집니다. 자체 설계 수정으로, 실제 세션
+이벤트의 foreign 제외·unknown 보류·사용자 승인 계약은 유지합니다.
+`todo-continuation.test.ts`는 캐시 유무 두 경우에서 다른 위치의 RPC 알림 뒤에도
+로컬 `unanswered_form` 보류가 생기는지 검증합니다.
+
+관리자의 zero-blocker 결정에 따라 조기 재개보다 명시적인 보류를 택합니다.
+실제 사용자 메시지는 당시 의무의 **기다림**을 면제할 수 있지만 전달 완료나
+완전한 이력을 만들어 내지 않습니다. 면제한 의무를 보존하여 늦은 결과를
+흡수하고, 알 수 없는 과거의 결과를 이후 실행에 배정하지 않습니다. 따라서
+불명확한 child를 재사용한 새 background 작업도 다시 보이는 보류가 필요할 수
+있습니다. 알려진 이력의 취소는 `child_result_cancelled`로 표시하고, 승인은
+그 시점에 이미 취소된 결과에만 적용합니다. 이후 취소까지 미리 승인하지 않습니다.
+
+아직 running인 승인 대상에는 공개 `session.wait`의 idle 증명이 필요합니다.
+이 구독은 observer 수명에 묶여 취소되며 쓰기 transaction을 점유하지 않습니다.
+idle 완료 후 자식 저장 queue 밖에서 부모 보류를 다시 판정하고 `changed`를
+발행하므로 별도의 부모 턴이 필요하지 않습니다. 재판정은 최신 의무를 읽으며
+다른 부모, 새 실행, user stop·질문·저장·workflow 보류를 해제하지 않습니다.
+부모의 마지막 성공이 child 보류 때문에 재개되지 못했다면 그 실제 source와
+generation·work epoch만 프로세스 안에 보관합니다. idle 확인으로 보류가 해제되고
+부모가 이미 idle이면 기존 `resume` admission을 다시 실행합니다. 별도의 synthetic
+경로는 없으며 기존 watermark·reservation·stagnation 및 모든 veto를 그대로
+적용합니다. 새 부모 실행은 이전 후보를 폐기하고, admission 중 겹친 idle 확인은
+그 admission 종료 후 한 번 재판정합니다. 후보는 복원만으로 재개하지 않도록
+영속화하지 않습니다.
+Round 4의 admission single-flight는 실행 중 들어온 새 부모 성공과 recovery
+신호를 함께 보관하고, 현재 시도가 끝나면 가장 최신 source를 다시 판정합니다.
+바깥 workflow arbiter도 겹친 durable 성공을 버리지 않습니다. CAS 패배나
+dispatch 전 취소는 같은 generation·work epoch 안에서 다시 판정하되,
+새 start보다 오래된 source는 폐기합니다. 현재 프로세스의 scoped retry만
+취소되거나 definite pre-accept 실패한 reservation의 동일 synthetic ID를
+재사용하며 attempts·failure budget을 보존합니다. accepted·uncertain 결과나
+재시작 뒤의 terminal replay는 이 예외로 재전송하지 않습니다.
+recovery publication의 양쪽에서 신호를 보관하므로 첫 held snapshot을 읽는
+도중의 recovery도 사라지지 않습니다. 이 자체 설계는 polling이나 별도
+dispatcher 없이 R4-B1의 silent stall을 없애기 위한 것이며 모든 기존 veto와
+budget은 공통 admission 경로에서 다시 확인합니다.
+자식 회계는 진척 budget을 소비하지 않고, canonical 보류 변경만 기존 controller
+CAS 규칙에 따라 보드 revision을 갱신합니다. 손상·불확실한 저장은 보류합니다.
+
+빠른 observer가 앞서더라도 ordered start/tool/end bookkeeping은 버리지 않습니다.
+이 규칙은 기존 running-child veto와 goal의 tool-less-turn 한도를 보존합니다.
+background 알림이 tool handoff보다 먼저 전달될 수도 있으므로 아직 배정할 수
+없는 inbox receipt도 저장하고, 앞선 foreground 도구의 최종 채널이 정해진 뒤
+background FIFO를 정산합니다.
+
+확인한 공개 산출물은 `@opencode/core` 2.0.26의
+`location-services-pwjskxwy.js`, `location-services-beme9910.js`,
+`location-services-6xb47vfp.js`입니다. 추가로 태그 `v2.0.26`, 커밋
+`9b4ec5714d481559990db0a816d5dec19541a814`의
+`packages/core/src/tool/plugin/subagent.ts`, `packages/core/src/session/subagent-job.ts`,
+`packages/core/src/session/subagent-completion.ts`, `packages/core/src/session/session.ts`를
+직접 읽었습니다. 결과 metadata는 child와 상태를 식별하지만 실행 ID는 주지
+않습니다. 채널 분리·FIFO·waiver 경계는 이 계약에 맞춘 자체 설계이며 외부 구현을
+복사하거나 출처 커밋을 만들어 내지 않습니다.
+
+예약 쓰기 실패도 다른 controller 쓰기와 같은 보류·changed 경로를 사용합니다.
+새 revision에 진 CAS는 저장 실패가 아닙니다. `uncertain_storage`는 권위 있는
+view 후 적용된 명시적 operation이 필요합니다. 이전 바이트가 보존된 확정 거절
+`storage_failure`는 다음 적용된 명시적 operation이 저장 정상화를 증명하므로
+선행 view 없이 해제됩니다. read, unchanged operation, 재개 재시도는 둘 다
+해제하지 않습니다. 패키지 allowlist는 `dist` 전체가 아니라 `dist/tui.js`만
+포함합니다. package probe는 자기 복사본에 오래된 산출물을 넣고 dist 내용,
+루트 facade와 RPC 소스를 각각 검사합니다.
+
+### 동작
+
+- **도구.** `todo` 하나이고 호출마다 `op` 하나를 받습니다: `view`, `init`(`list:[{phase, items}]`로 보드 교체), `append`(`phase`, `items`), `start`(`task`), `done`·`drop`(`task` 또는 `phase` 중 정확히 하나), `rm`(`task`, `phase`, 또는 둘 다 없으면 전체 삭제). 단계 이름과 task 본문은 trim한 정확한 문자열로 찾습니다. ID, 순번, fuzzy match는 거부합니다. 상태는 `pending`, `in_progress`, `completed`, `abandoned`이고 open이 있으면 focus가 하나입니다. focus가 끝나면 단계 순서의 첫 pending이 focus가 됩니다.
+- **소유.** `open-gajae`와 `open-gajae-executor`만 이 도구를 쓰며, 각자 **실제 sessionID**의 보드를 씁니다. 루트 보드는 `.open-gajae/_session-<YYYYMMDD-HHMMSS>-<rootID>/state/todo.json`, 자손 보드는 같은 루트의 `children/<childID>/state/todo.json`에 저장합니다. 기존 최상위 세션 폴더는 그대로 재사용합니다. 다른 역할은 거부됩니다. executor는 부모 보드를 바꿀 수 없고, 부모는 executor가 돌려준 증거를 확인한 뒤 자기 항목을 갱신합니다.
+- **생성 정책.** 두 프롬프트의 `<open-gajae-todo-policy>`가 두 단계 이상 작업에서 보드를 만들게 하고, 사용자가 명시한 항목을 하나씩 적게 합니다. 한 단계 요청은 보드가 필요 없습니다.
+- **설정.** `todo: {enabled: true, continuation: true, stagnationLimit: 3, failureLimit: 5}`. 다른 key처럼 project → user → default 순으로 병합합니다. `enabled`·`continuation`은 boolean, 두 limit은 양의 safe integer여야 하며 그 밖의 값과 알 수 없는 key는 로드 오류입니다. `enabled: false`는 도구와 정책 문단, 자동 재개, TUI 영역을 끄지만 저장 파일은 지우지 않습니다. `continuation: false`는 자동 재개만 끕니다.
+- **보존과 복구.** completed와 abandoned를 포함한 전체 보드를 저장하고 복원 때 걸러 내지 않습니다. 압축 문맥 `<open-gajae-todo-context>`에는 전체 보드가 아니라 generation, work epoch, 상태별 수, focus, 보류, 그리고 pending/in_progress 항목만 들어갑니다(`src/todo/messages.ts:7-20`). 끝난 기록은 저장소와 `todo view`에 남습니다. 명시적 `init`/`rm`만 기록을 지웁니다. 손상되었거나 다른 세션 소유이거나 미래 schema인 파일은 바이트를 보존한 채 진단과 보류로 다루며 빈 보드나 완료로 읽지 않습니다.
+- **진행 기반 재개.** 주 agent의 미완료 보드는 `session.execution.succeeded` 뒤 `session.synthetic({resume: true})` 한 번(`metadata.source: "open-gajae.todo"`, `<open-gajae-todo-continuation>`)으로 이어집니다. `session.generate`는 보조 텍스트 생성일 뿐 도구 루프를 재개하지 않으므로 쓰지 않습니다. 진행은 work epoch 안에서 open이던 task가 처음 해소되는 것입니다: completed나 abandoned가 되거나, `rm`이나 `init` 교체로 보드에서 빠지는 경우입니다(`src/todo/state.ts:228-233`의 closed-label ledger). 첫 재개는 진행을 요구하지 않습니다. 그 뒤 accepted 재개가 끝날 때마다 진행이 없으면 stagnation이 1 오르고, 진행이 있으면 0으로 돌아가며, `stagnationLimit`에 이르면 보류합니다(`src/todo/continuation.ts:663-675`). 그 전까지는 진행 없는 재개도 이어집니다. 확실한 dispatch 실패는 `failureLimit`까지 다시 시도하고, 전달 여부가 불명확하면 재전송하지 않고 보류합니다. 사용자 중단, 답하지 않은 질문, 아직 전달되지 않은 자식 결과, workflow 보류는 재개를 막습니다. 반환된 executor는 되살리지 않습니다. 보류는 `resume: false`인 `<open-gajae-todo-notice>` 하나로 알립니다.
+- **읽기 전용 TUI.** RPC `open-gajae.todo` v1의 `get`과 `changed` 이벤트로 같은 보드를 읽습니다. 사이드바(`sidebar.content`)는 단계별 수, focus, 보류 이유를 보이고, 터미널이 200열보다 좁으면 `session.composer.top`에 요약 줄을 더합니다(2.0.26은 좁은 화면에서 사이드바를 숨김). 명령 팔레트의 `Todo: view history`(`open-gajae.todo.view`)는 전체 기록을 fullscreen panel로 엽니다. 어느 화면도 보드를 편집하지 않습니다.
+- **goal과 독립(관리자 결정 D-10).** todo 상태는 goal 완료, pause, 영수증 검사에 영향을 주지 않고, goal 완료도 todo를 완료하거나 지우지 않습니다. 이전의 "todo가 goal 완료를 막는" 제안은 폐기되었습니다.
+
+### 관리자 결정과 호스트 사실
+
+| 구분 | 내용 | 근거 |
+|---|---|---|
+| 관리자 결정 | 검증된 wave마다 worktree 브랜치에 로컬 commit하고 main에 로컬 병합합니다. push·tag·release는 없습니다. | ledger 2026-10-12 "wave별 로컬 커밋" |
+| 관리자 결정 | 질문(form) 보류는 사용자가 답하거나 닫을 때, 또는 호스트가 대기 질문이 없다고 확인할 때만 풀립니다. 사용자 메시지나 `start`로는 풀리지 않습니다. | ledger 2026-10-13 task 5 결정 |
+| 관리자 결정 | backend 재시작 전 인스턴스의 질문은 무효로 봅니다. | task 7 fix, host 재시작 영수증 |
+| 관리자 결정 | goal과 todo 완료는 독립입니다(D-10). | 계획 Must have |
+| 호스트 사실 | 대기 중인 form은 backend 재시작을 넘기지 못하고, 그 form에 답하면 404입니다. | ledger task 7a verify, task-7-host.json |
+| 호스트 사실 | 공개 서버 플러그인 context로는 form을 조회할 수 없습니다. | ledger task 7 midpoint signal, task 7 native QA |
+| 호스트 사실 | service 모드는 location마다 플러그인을 한 번씩 로드합니다. | tui/gate-fix-run-5/report.json `twoLocationRuns` |
+| 호스트 사실 | 팔레트 명령은 `mode: "global"`이어야 보입니다. | ledger task 6 TUI QA, `src/tui.tsx:450-459` |
+| 호스트 사실 | 플러그인 panel을 닫는 호스트 명령이 없습니다. 그래서 panel의 Esc가 `PanelInput.close()`를 부릅니다. | ledger task 6 TUI QA |
+| 호스트 사실 | `session.generate`는 보조 생성이고 도구 루프를 재개하지 않습니다. 재개는 `session.synthetic({resume: true})`입니다. | 계획 저장·재개 계약 9 |
+
+### 출처와 deviation
+
+새 채택 계약의 pin입니다. 기존 GJC pin `5c5231418930673e42cc5d08ebe4376e03187533`과 OMC 출처는 기존 adaptation 기록으로 그대로 둡니다. 세 참조 모두 코드를 복사하지 않았고 계약만 참고했습니다.
+
+| 출처 | pin | 원래 계약 | 채택 | deviation, 이유, 영향 |
+|---|---|---|---|---|
+| GJC | `a7179dc497ac0d4bc718ff31c5efe79bb1be48c2` (`tools/todo-write.ts`, `tools/todo-contract.ts`, `session/agent-session.ts`, `config/settings-schema.ts`) | 단계별 상태, focus 하나, 본문으로 task 식별, 잘못된 입력은 호출 전체 거부. resync 때 terminal task를 지워 복원. | 상태 이름, focus 승격, 본문 식별, 원자적 거부 | resync의 terminal 제거는 채택하지 않음: 전체 기록을 보존합니다. 이유: 재시작 뒤에도 끝난 일을 다시 하지 않고 history panel이 정직해야 함. 영향: 보드가 길어질 수 있고 명시적 `init`/`rm`으로만 줄어듭니다. GJC 별도 todo reminder 대신 진행 기반 재개를 씁니다. |
+| Senpi | `f992c56d32f0741884e49a967bf19b7b6d14aa08` (`builtin/todotools/*`, `builtin/compaction/todo-bridge.ts`) | 단일 op 도구, 단계 묶음, 전체 branch 복원, 압축 bridge. task를 fuzzy하게 찾음. `init`은 보드를 교체하면서 중복 단계를 합치고 중복 task는 첫 것만 남기며 `[auto-corrected]` 안내를 돌려줌(`todo-operations.ts:10-46`). `rm`은 task를 빼거나, 단계 selector나 selector 없음이면 그 단계(들)의 task만 비우고 단계 자체는 남김(`:90-110`). | 단일 `op`, 단계 구조, 전체 복원, `init` 교체, 인자 없는 `rm` | fuzzy match 대신 정확한 trim 본문만 받습니다. `init`의 중복 단계·task는 고치지 않고 호출 전체를 거부합니다. `rm phase`는 그 단계를 지우고, 인자 없는 `rm`은 `phases: []`인 빈 보드를 저장합니다. 다른 field나 충돌 selector도 거부합니다. 이유: 모델이 보낸 목록을 조용히 바꾸지 않고, 빈 단계가 진행 수와 화면에 남지 않게 함. 영향: 오타와 중복은 오류로 돌아와 다시 보내야 하고, 지운 단계는 다시 `append`로 만들어야 합니다. `init`은 새 generation을 만들고 session revision은 계속 오릅니다. |
+| OMO | `89b78d47de02a5f2693fc921d6fb5a45b26cc4cc` (`hooks/todo-continuation-enforcer/*`, `hooks/compaction-todo-preserver/hook.ts`, `hooks/goal/controller.ts`, `hooks/goal/prompt.ts`) | idle timer로 미완료 todo를 재주입하고 정체를 감지. 압축 때 todo snapshot을 메모리에 보존. goal 완료(`controller.ts:84-87` `markComplete`)는 goal 상태와 TUI mirror만 갱신하고 todo를 읽지 않음. 완료 prompt는 증거 감사를 요구함. | 정체 한도라는 생각, 압축 때 todo 보존, goal 완료가 todo와 무관하다는 점 | timer 기반 idle 재개는 채택하지 않음: durable `session.execution.succeeded`와 진행 기준을 씁니다. 이유: 2.0.26에는 `session.idle`이 없고 polling 없이 replay를 구분해야 함. 영향: 시간이 지나도 저절로 재개하거나 보류가 풀리지 않습니다. goal과의 관계는 OMO와 같아 deviation이 아닙니다. 폐기된 "todo가 goal 완료를 막는" 안은 이 계획의 초기 제안이었고 OMO 계약이 아닙니다(관리자 결정 D-10). 압축 보존은 메모리 snapshot 대신 저장된 보드에서 열린 항목만 다시 넣습니다. |
+| 자체 | 없음 | 해당 없음 | 진행/admission 설계: work epoch, open task의 첫 해소(completed, abandoned, 또는 `rm`/`init`으로 빠짐)만 진행으로 세는 closed-label ledger, `view`·focus 토글·revision 변화는 진행 아님(OMO보다 엄격한 bookkeeping 제외), 사용자 inbox delivery activation fence, event identity(`id`, `durable.aggregateID`, `durable.seq`) watermark와 reservation, RPC와 TUI 구성 | 목적: 조기 종료를 줄이되 중복 재개와 사용자 중단 우회를 막음. 영향: 같은 event에 accepted 재개는 최대 하나이고 정상 진행에는 총 횟수 상한이 없습니다. |
+
+라이선스: GJC는 MIT(`licenses/GJC-MIT.txt`), Senpi는 MIT(Copyright (c) 2025 Mario Zechner (upstream pi-mono), Copyright (c) 2026 Yeongyu Kim and senpi contributors, `licenses/Senpi-MIT.txt`)입니다. Senpi todo 소스는 oh-my-pi에서 옮겨 왔으며, pin의 `todotools/todo-operations.ts:1-4` 머리말은 다음과 같습니다: `// Ported and adapted from oh-my-pi's todo tool (MIT License).`, `// Copyright (c) 2025 Mario Zechner`, `// Copyright (c) 2025-2026 Can Bölük`, `// https://github.com/can1357/oh-my-pi`. open-gajae는 이 계약만 참고했고 코드를 옮기지 않았습니다. OMO는 Sustainable Use License(`licenses/OMO-SUL.txt`)입니다. 증거와 pin 목록은 `.omo/evidence/todo-agent-performance/task-8-provenance.md`에 있습니다.
+
+### 검증과 알려진 한계
+
+- `bun run test:interleavings`는 task 11의 전체 결정적 열거를 실행합니다. 기본 `bun run test`는 모든 명시적 회귀 사례와 원래 882개 순서, 그리고 고정 생성 순서에서 각 합법적인 이벤트 종류·위치·재시작 경계·승인 전후 관계·옵션 조합을 처음 덮는 사례를 실행합니다. 선택은 제품 상태나 실행 결과에 의존하지 않으며 무작위 표본이 아닙니다. 전체 증명과 기본 CI 검사를 분리한 이유와 실제 소요 시간은 `task-11.md`의 Round 2에 기록합니다.
+- 이 열거는 child-result 계약의 유한한 이벤트 집합에 대한 증명이며 전체 host hook 모델이 아닙니다. 부모 성공은 생성된 순서의 명시적 노드이며, 마지막 이벤트 뒤에 성공이나 사용자 메시지를 덧붙여 liveness를 만들지 않습니다. 마지막 자연 이벤트 뒤에는 재개, 보이는 보류, 완료 중 하나가 필요합니다. 별도 host veto 및 여섯 adapter 불일치의 경계는 `task-11.md`의 Round 3에 명시합니다.
+- 명령: `bun run typecheck`, `bun run test`, `bun run build:tui`, `bun run test:host`, `bun run test:host:todo`(native closed loop, 재시작, 경합 probe), `bun run test:host:todo:tui`(실제 2.0.26 PTY의 사이드바·composer·panel). 결과는 `.omo/evidence/todo-agent-performance/task-7-host.json`과 `tui/gate-fix-run-5/report.json`에 있습니다. 가짜 provider를 쓰는 메커니즘 검증이며, 일반적인 모델 성능 향상을 측정하거나 주장하지 않습니다.
+- light theme의 상태 표시는 호스트의 info/success/warning 토큰을 써서 대비가 4.5:1보다 낮습니다. 호스트 자체 화면과 같은 대비입니다.
+- 보드 파일을 밖에서 지우면 세션을 다시 고를 때까지 낮은 revision의 view가 숨겨집니다.
+- 기존 StateStore 텍스트 읽기·쓰기의 크기 제한 없는 경로와 `tests/state.test.ts`의 20 ms sleep은 이 변경 이전부터 있던 것이며 범위 밖입니다.
+
 ## 필수 후속 개발
 
 아래 항목은 정책으로 기록한 필수 후속 작업입니다. 2번과 3번은 ultragoal 개정(브랜치 `feat/ultragoal-gjc-revision`)으로, 1번과 7번은 deep-interview 개정(브랜치 `feat/deep-interview-gjc-revision`)으로 해결되었고 번호는 그대로 둡니다. 나머지는 아직 구현되지 않았습니다. ultragoal의 열린 한계와 후속 작업, 그리고 옛 후속 번호(U1–U34) 대응표는 [`docs/skills/ultragoal/known-limits.md`](skills/ultragoal/known-limits.md)에 있습니다.
@@ -290,11 +477,11 @@ spec 결정이나 PQ 답으로 기능을 빼거나 바꿨습니다.
 3. **승인 라벨 정렬 — 해결.** `skills/ultragoal/SKILL.md`는 이제 GJC처럼 ralplan 승인 선택지를 **Approve execution via ultragoal**로 부릅니다.
 4. **알려진 한계(기록만, 일정 없음).** 한 worktree에서 여러 OpenCode 프로세스가 동시에 작업하면 서로 직렬화되지 않습니다: 플러그인은 한 프로세스 안에서만 쓰기를 큐에 넣고, GJC는 파일 잠금을 씁니다.
 5. **항상 차단 경로의 대소문자.** 항상 차단 경로 검사(`.open-gajae/_session-*/state/**`, `plans/ralplan/**`, ultragoal 파일)는 대소문자를 구분해 비교하므로, 대소문자를 구분하지 않는 파일 시스템(macOS 기본)에서는 `.OPEN-GAJAE/…`처럼 대소문자만 다른 경로가 계획 가드가 없는 때 이 검사를 빠져나갑니다. 이 검사들의 대소문자를 정규화합니다(관리자 결정 R-OD13).
-6. **TUI 진행 사이드바(보류, R-OD17).** spec이 계획한 ralplan 사이드바(D-H3~D-H7)는 이식 브랜치 `feat/ralplan-gjc-stage-trail`에서 만들었다가(`tui-plugin/`, 커밋 `96e9176`, 수정 `eb85dde`·`0cbb491`) 병합 전에 제거했습니다. 배포된 OpenCode 2.0.15 바이너리(Bun 1.4.2로 컴파일)는 TUI 플러그인의 bare import(`solid-js`, `@opentui/solid`, `@opentui/core`, `@opencode/plugin/tui`)를 호스트 인스턴스로 연결하지 않습니다. 로컬 패키지가 없으면 플러그인 로드가 실패하고, 있으면 별도 사본을 불러와 요소를 만들 때 `No renderer found`가 나서 아무것도 그려지지 않습니다. OpenCode 자체 테스트는 이 연결을 기대하지만(`tui/test/plugin-source.test.ts`, "shared runtime and ordinary package identities survive plugin generations"), 컴파일하지 않은 상태에서 돕니다. 2026-09-29 수동 확인에서는 플러그인이 호스트의 가상 모듈 `opentui:runtime-module:<specifier>`(`@opentui/core` 0.5.10 `runtime-plugin.js`의 내부 명명 규칙)에서 호스트 인스턴스를 가져오면 블록이 그려졌습니다. 호스트가 플러그인 import를 연결하게 되면, 또는 그 우회를 호스트 통합 deviation으로 기록해 사이드바를 다시 넣습니다. 로컬 파일을 읽으므로 원격 서버에 attach한 TUI는 계속 지원하지 않습니다.
+6. **TUI 진행 사이드바(R-OD17, 2.0.26에서 todo로 해결, ralplan 칩은 아직 그리지 않음).** spec이 계획한 ralplan 사이드바(D-H3~D-H7)는 이식 브랜치 `feat/ralplan-gjc-stage-trail`에서 만들었다가(`tui-plugin/`, 커밋 `96e9176`, 수정 `eb85dde`·`0cbb491`) 병합 전에 제거했습니다. 당시 OpenCode 2.0.15 바이너리(Bun 1.4.2로 컴파일)는 TUI 플러그인의 bare import(`solid-js`, `@opentui/solid`, `@opentui/core`, `@opencode/plugin/tui`)를 호스트 인스턴스로 연결하지 않아, 로컬 패키지가 없으면 로드가 실패하고 있으면 별도 사본 때문에 `No renderer found`가 났습니다. 이 기록은 2.0.15의 역사적 사실로 남깁니다. 2.0.26에서는 다시 확인했습니다(`.omo/evidence/tui-linkage-probe/findings.md`, `.omo/evidence/todo-agent-performance/tui/gate-fix-run-5/report.json`): 공식 Solid Bun transform과 bare external import로 컴파일한 `dist/tui.js`, 그리고 그것을 re-export하는 루트 `tui.ts` facade가 dev 디렉터리, 실제 `npm pack` tarball을 설치한 디렉터리, 로컬 npm 호환 registry의 `name@version` 설치에서 모두 그려졌습니다. directory 대상은 package `./tui` export가 아니라 `directory/tui`를 찾으므로 facade가 필요합니다. 예전의 직접 virtual-module 우회나 singleton resolver는 쓰지 않습니다. named `@file:` archive spec과 backend/frontend 분리 선언은 marker가 보이지 않아 배포 경로로 채택하지 않습니다. 서버는 TS 소스 배포를 유지합니다. ralplan HUD 칩(ralplan deviation 9, deep-interview deviation 23)은 여전히 그리지 않습니다.
 7. **deep-interview 도구 숨김 — 해결.** `deep-interview` 도구는 다른 workflow 도구처럼 `open-gajae` 전용이고 다른 모든 agent에게서 숨겨집니다(deep-interview deviation 24). 옛 상태 도구 3개(`state_*`)는 사라졌습니다.
 
 ## 검증 근거와 한계
 
-이 이식이 정의하는 검증 계층은 `@opencode/plugin` 2.0.15에서의 `bun run typecheck`/`bun test`, prompt hook·permission rule 생성·continuation과 goal 루프·도구 숨김·artifact guard·code tool·공통 skill-state 기반·`ralplan` 도구와 런타임(`tests/fixtures/gjc-ralplan/`의 GJC 픽스처와의 key 집합 비교 포함)·`ultragoal`과 `goal` 도구와 런타임(텍스트 결과를 줄 단위로 확인)·`deep-interview` 도구와 런타임과 그 훅(`tests/deep-interview-runtime.test.ts`, `tests/deep-interview-tool.test.ts`, `tests/hooks.test.ts`의 H 사례)에 대한 unit test, 로컬 OpenCode 2.0.15 바이너리를 대상으로 한 host probe(`tests/host-probe.ts`, `tests/host-session-probe.ts`, `tests/planner-permission-probe.ts`, `tests/package-probe.ts`, `tests/ralplan-trail-probe.ts`), 그리고 `openai/gpt-6-luna`로 키워드 진입, ralplan 중 Esc interrupt, `experimental.subagent_depth` 유무에 따른 planner delegation, 단계 파일·Stop here·인계까지의 ralplan 1회 실행, 목표 계획·목표별과 final gate·재오픈·ralplan 왕복 인계·보류·도구 숨김까지의 ultragoal 1회 실행, 그리고 기본 흐름과 측면 리뷰 패널까지의 deep-interview 1회 실행을 다루는 manual checklist([수동 점검 기록](manual-checks.md) 5절과 7절)입니다. 이들의 현재 pass/fail 상태는 이식의 plan과 ledger가 관리하며 이 문서가 주장하지 않습니다.
+이 이식이 정의하는 검증 계층은 처음에 `@opencode/plugin` 2.0.15에서 정의했고 todo 변경부터 2.0.26에서 다시 실행한 `bun run typecheck`/`bun test`, prompt hook·permission rule 생성·continuation과 goal 루프·도구 숨김·artifact guard·code tool·공통 skill-state 기반·`ralplan` 도구와 런타임(`tests/fixtures/gjc-ralplan/`의 GJC 픽스처와의 key 집합 비교 포함)·`ultragoal`과 `goal` 도구와 런타임(텍스트 결과를 줄 단위로 확인)·`deep-interview` 도구와 런타임과 그 훅(`tests/deep-interview-runtime.test.ts`, `tests/deep-interview-tool.test.ts`, `tests/hooks.test.ts`의 H 사례)에 대한 unit test, 로컬 OpenCode 바이너리(처음 2.0.15, todo 변경부터 2.0.26)를 대상으로 한 host probe(`tests/host-probe.ts`, `tests/host-session-probe.ts`, `tests/planner-permission-probe.ts`, `tests/package-probe.ts`, `tests/ralplan-trail-probe.ts`), 그리고 `openai/gpt-6-luna`로 키워드 진입, ralplan 중 Esc interrupt, `experimental.subagent_depth` 유무에 따른 planner delegation, 단계 파일·Stop here·인계까지의 ralplan 1회 실행, 목표 계획·목표별과 final gate·재오픈·ralplan 왕복 인계·보류·도구 숨김까지의 ultragoal 1회 실행, 그리고 기본 흐름과 측면 리뷰 패널까지의 deep-interview 1회 실행을 다루는 manual checklist([수동 점검 기록](manual-checks.md) 5절과 7절)입니다. 이들의 현재 pass/fail 상태는 이식의 plan과 ledger가 관리하며 이 문서가 주장하지 않습니다.
 
 이 계층들은 호스트 probe에 필요할 때 가짜 provider를 쓰는 결정적 transport·source-contract 검사입니다. 실제 모델 행동 검증이나 LLM obedience, prompt branch 보장, injection resistance, model 의미적 품질, external credential, 설치된 language server의 의미적 정확성 증거는 아닙니다. GJC 메인 프롬프트의 실제 모델 대화 확인은 GJC 프롬프트 plan의 사용자 전용 체크리스트에 따라 사용자가 맡으며, 여기서는 수행하지 않았습니다. LSP server는 자동 다운로드되지 않습니다. 이 가이드는 동작과 evidence scope를 기록하며 독립 completion proof는 durable delivery ledger에 둡니다.

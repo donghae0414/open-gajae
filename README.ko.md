@@ -37,7 +37,7 @@ bunx open-gajae install     # 또는: npx open-gajae install
 #    @deep-interview API에 속도 제한 넣고 싶어
 ```
 
-**OpenCode v2가 필요합니다(2.0.15 기준, v1은 지원하지 않음).** `default_agent`를 다른 값으로 두었다면 3단계 전에 `open-gajae` 에이전트로 바꿉니다.
+**OpenCode v2가 필요합니다(2.0.26에서 검증, v1은 지원하지 않음).** `default_agent`를 다른 값으로 두었다면 3단계 전에 `open-gajae` 에이전트로 바꿉니다.
 
 | 설치가 넣는 것 | 값 | 이미 값이 있으면 |
 |---|---|---|
@@ -131,11 +131,17 @@ Try: `@ultragoal API에 속도 제한 넣어 줘`
 
 [ultragoal 동작 문서](docs/skills/ultragoal/README.md)
 
+### todo
+
+두 단계 이상인 작업에서는 `open-gajae`와 `open-gajae-executor`가 `todo` 도구로 단계별 할 일 목록을 관리합니다. 목록은 세션마다 따로 있고, executor는 부모의 목록을 바꿀 수 없습니다. 완료하거나 버린 항목까지 전체 기록을 저장하므로 재시작 뒤에도 그대로입니다. 압축 뒤에는 열린 항목과 개수만 다시 알려 주고, `todo view`로는 여전히 전체를 볼 수 있습니다. 메인 에이전트가 열린 항목을 남기고 멈추면 open-gajae가 이어서 진행시킵니다. 진행(항목 완료, 포기, 삭제) 없이 끝난 재개는 `todo.stagnationLimit`에 하나씩 쌓이고, 그 한도에 이르면 보류합니다. 사용자가 멈췄거나, 답하지 않은 질문이 있거나, 서브에이전트 결과가 아직 전달되지 않았을 때도 재개하지 않습니다. todo와 goal의 완료는 서로 독립이라, 열린 todo가 goal 완료를 막지 않습니다.
+
+터미널 UI에서 목록은 읽기 전용입니다. 세션 사이드바에 단계별 수, 현재 항목, 보류 이유가 보입니다. OpenCode가 사이드바를 숨기는 200열 미만에서는 입력창 위에 요약이 나옵니다. 명령 팔레트에서 `Todo: view history`를 실행하면 전체 목록을 전체 화면으로 봅니다.
+
 ## 설정
 
 open-gajae는 없어도 되는 설정 파일 두 개를 읽습니다. 모든 프로젝트에 적용되는 `~/.open-gajae/open-gajae.jsonc`와, 프로젝트 루트의 `.open-gajae/open-gajae.jsonc`입니다. 프로젝트 값이 사용자 값을 키 단위로 덮어쓰고, 정하지 않은 항목은 기본값을 씁니다. 두 파일 모두 JSONC라서 주석과 끝 쉼표를 쓸 수 있습니다. 설정은 엄격하게 검사합니다. 문법 오류, 알 수 없는 키, 잘못된 값은 오류로 보고되고, 고칠 때까지 open-gajae가 로드되지 않습니다. open-gajae는 프로젝트에서 시작할 때 설정을 한 번만 읽으므로, 설정을 고친 뒤에는 OpenCode를 다시 시작하세요.
 
-`open-gajae install`이 만든 템플릿에는 모든 설정이 주석으로 들어 있습니다. 바꾸고 싶은 설정 앞의 `//`를 지우면 됩니다. 예를 들면 다음과 같습니다.
+`open-gajae install`이 만든 템플릿에는 `deepInterview`, `ralplan`, `agents` 설정이 주석으로 들어 있습니다(`todo` 설정은 직접 추가합니다). 바꾸고 싶은 설정 앞의 `//`를 지우면 됩니다. 예를 들면 다음과 같습니다.
 
 ```json
 {
@@ -156,6 +162,10 @@ open-gajae는 없어도 되는 설정 파일 두 개를 읽습니다. 모든 프
 | `ralplan.maxIterations` | `5` | 1~20 정수 | ralplan 실행 하나가 열 수 있는 계획 회차(planner 초안이나 수정)의 최대 수 |
 | `ralplan.maxReviewPassesPerLane` | `1` | 1~10 정수 | 회차마다 architect와 critic이 각각 쓸 수 있는 리뷰 수 |
 | `ralplan.autoHandoff` | `"off"` | `"off"` 또는 `"ultragoal"` | `"ultragoal"`이면 완성된 계획을 승인 질문 없이 ultragoal로 넘깁니다. 회차 상한에 걸린 계획은 넘기지 않습니다. |
+| `todo.enabled` | `true` | `true` 또는 `false` | `false`이면 `todo` 도구, 프롬프트 정책, 자동 재개, TUI 표시를 끕니다. 저장된 목록은 남습니다. |
+| `todo.continuation` | `true` | `true` 또는 `false` | `false`이면 자동 재개만 끕니다. 도구와 표시는 남습니다. |
+| `todo.stagnationLimit` | `3` | 양의 정수 | 진행 없는 재개가 이만큼 이어지면 보류합니다. |
+| `todo.failureLimit` | `5` | 양의 정수 | 재개 전송이 이만큼 실패하면 보류합니다. |
 | `agents.<역할>.model`, `agents.<역할>.variant` | 없음 | `provider/model`, 그 모델이 지원하는 variant | 역할이 쓸 모델. `model`이 없으면 OpenCode가 고르고, `variant`를 쓰려면 같은 역할에 `model`이 있어야 합니다(두 파일 중 어디에 있어도 됨). |
 
 역할과 에이전트 이름은 다음과 같습니다.

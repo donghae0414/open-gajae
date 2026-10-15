@@ -134,6 +134,53 @@ test("two folders for one session fail closed and an old hex folder is ignored",
   });
 });
 
+test("child and grandchild state nests directly under the lineage root", async () => {
+  await fixture(async (root) => {
+    const calls: string[] = [];
+    const store = new StateStore(root, async (id) => {
+      calls.push(id);
+      return { created: CREATED, parentID: id === "child" ? "root" : id === "grandchild" ? "child" : undefined };
+    });
+    for (const id of ["child", "grandchild"])
+      await store.workflowTransaction(id, (tx) =>
+        tx.writeModeState("deep-interview", { value: id }, "deep_interview_tool", { audit: false }));
+    const rootDir = join(root, ".open-gajae", sessionDirName(CREATED, "root"));
+    expect(await readdir(join(root, ".open-gajae"))).toEqual([sessionDirName(CREATED, "root")]);
+    expect(await store.resolveSessionDir("grandchild")).toBe(join(rootDir, "children", "grandchild"));
+    expect(calls.sort()).toEqual(["child", "grandchild", "root"]);
+    const restored = storeAt(root);
+    expect(await restored.resolveSessionDir("child")).toBe(join(rootDir, "children", "child"));
+    expect(await restored.workflowTransaction("grandchild", (tx) => tx.readModeState("deep-interview")))
+      .toMatchObject({ value: "grandchild" });
+  });
+});
+
+test("lineage loops fail closed and unavailable parents retain top-level storage", async () => {
+  await fixture(async (root) => {
+    const loop = new StateStore(root, async (id) => ({ created: CREATED, parentID: id === "a" ? "b" : "a" }));
+    await expect(loop.resolveSessionDir("a")).rejects.toThrow("lineage loop");
+    const unavailable = new StateStore(root, async (id) => {
+      if (id === "missing") throw new Error("host session unavailable");
+      return { created: CREATED, parentID: "missing" };
+    });
+    expect(await unavailable.resolveSessionDir("child")).toBe(join(root, ".open-gajae", sessionDirName(CREATED, "child")));
+  });
+});
+
+test("legacy child folders win and duplicate nested children fail closed", async () => {
+  await fixture(async (root) => {
+    const base = join(root, ".open-gajae");
+    const legacy = join(base, sessionDirName(CREATED, "child"));
+    const nested = join(base, sessionDirName(CREATED, "root"), "children", "child");
+    await mkdir(legacy, { recursive: true });
+    await mkdir(nested, { recursive: true });
+    expect(await storeAt(root).resolveSessionDir("child")).toBe(legacy);
+    await rm(legacy, { recursive: true });
+    await mkdir(join(base, sessionDirName(CREATED, "other"), "children", "child"), { recursive: true });
+    await expect(storeAt(root).resolveSessionDir("child")).rejects.toThrow("ambiguous");
+  });
+});
+
 test("a write replaces the state and regenerates _meta", async () => {
   await fixture(async (root) => {
     const store = storeAt(root);

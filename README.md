@@ -37,7 +37,7 @@ bunx open-gajae install     # or: npx open-gajae install
 #    @deep-interview I want to add rate limiting to our API
 ```
 
-**Requires OpenCode v2 (built on 2.0.15; v1 is not supported).** If you kept another `default_agent`, switch to the `open-gajae` agent before step 3.
+**Requires OpenCode v2 (verified on 2.0.26; v1 is not supported).** If you kept another `default_agent`, switch to the `open-gajae` agent before step 3.
 
 | Install sets | Value | If you already have one |
 |---|---|---|
@@ -84,7 +84,7 @@ Then restart OpenCode. A project's `.open-gajae/` folder, which holds its sessio
 
 ## Workflow: Clarify → Plan → Execute
 
-The skills run in the main `open-gajae` agent, which delegates to eight subagent roles (see the role table under Configuration). Each session's workflow records, such as specs, plans, and goals, are saved under `.open-gajae/` in your project.
+The skills run in the main `open-gajae` agent, which delegates to eight subagent roles (see the role table under Configuration). Workflow records are saved under `.open-gajae/_session-<created>-<rootID>/` in your project. Subagent state lives in that root's `children/<childID>/`; existing session folders remain usable.
 
 Each skill can run on its own; deep-interview and ralplan offer to hand their result to the next skill when they finish. Start a skill in the `open-gajae` agent in either of two ways:
 
@@ -131,11 +131,17 @@ Try: `@ultragoal add rate limiting to the API`
 
 [How ultragoal works](docs/skills/ultragoal/README.md) (Korean)
 
+### todo
+
+For work with two or more steps, `open-gajae` and `open-gajae-executor` keep a phased todo list with the `todo` tool. Each session has its own list, and an executor can't change its parent's. The full history is saved, so completed and dropped items survive restarts; after compaction the agent is reminded of the open items and counts, and `todo view` still shows everything. When the main agent stops with open items, open-gajae resumes it. Each resumption that ends without progress (an item completed, dropped or removed) counts toward `todo.stagnationLimit`, and at that limit open-gajae holds. It also doesn't resume after a user stop, while a question is unanswered, or while a subagent result is still pending. Todo and goal completion are independent: an open todo never blocks a goal.
+
+The list is read-only in the terminal UI. The session sidebar shows counts, the current item and any hold reason. Below 200 columns, where OpenCode hides the sidebar, a summary appears above the prompt. Run `Todo: view history` from the command palette to see the whole list fullscreen.
+
 ## Configuration
 
 open-gajae reads two optional settings files: `~/.open-gajae/open-gajae.jsonc` for all your projects, and `.open-gajae/open-gajae.jsonc` at a project's root. Project values override user values key by key, and anything left unset keeps its default. Both files are JSONC, so comments and trailing commas are allowed. Settings are checked strictly: a syntax error, an unknown key, or an invalid value is reported as an error, and open-gajae does not load until you fix it. open-gajae reads its settings once when it starts in a project, so restart OpenCode after editing them.
 
-The template that `open-gajae install` creates lists every setting as a comment; to change a setting, remove the `//` in front of it. For example:
+The template that `open-gajae install` creates lists the `deepInterview`, `ralplan` and `agents` settings as comments (add `todo` settings yourself); to change a setting, remove the `//` in front of it. For example:
 
 ```json
 {
@@ -156,6 +162,10 @@ Replace `provider/model` with a model from one of your OpenCode providers, writt
 | `ralplan.maxIterations` | `5` | Integer from 1 to 20 | The most planning rounds (a planner draft or a revision) one ralplan run may open. |
 | `ralplan.maxReviewPassesPerLane` | `1` | Integer from 1 to 10 | How many reviews the architect and the critic may each write per round. |
 | `ralplan.autoHandoff` | `"off"` | `"off"` or `"ultragoal"` | `"ultragoal"` hands a finished plan to ultragoal without asking for approval, unless the plan hit the round limit. |
+| `todo.enabled` | `true` | `true` or `false` | `false` removes the `todo` tool, its prompt policy, automatic resumption and the TUI views. Saved lists are kept. |
+| `todo.continuation` | `true` | `true` or `false` | `false` turns off only automatic resumption; the tool and the views stay. |
+| `todo.stagnationLimit` | `3` | Positive integer | Resumptions in a row without progress before open-gajae holds. |
+| `todo.failureLimit` | `5` | Positive integer | Failed resume dispatches before open-gajae holds. |
 | `agents.<role>.model`, `agents.<role>.variant` | None | `provider/model`; a variant the model supports | The model for a role. Without a `model`, OpenCode chooses one; a `variant` needs a `model` for the same role, set in either file. |
 
 The roles, by agent name:

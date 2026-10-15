@@ -1,5 +1,5 @@
 // Shared driver for the v2 host probes (plan Step 8). It runs the installed
-// OpenCode host (`~/.opencode/bin/opencode`, 2.0.15) as a private
+// OpenCode host (`~/.opencode/bin/opencode`, 2.0.26) as a private
 // `opencode serve` against a deterministic local OpenAI-compatible provider.
 //
 // Isolation: the host process gets an environment built only from paths under
@@ -34,6 +34,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -41,11 +42,16 @@ import {
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { EventEmitter } from "node:events";
 
 export const REPO = resolve(import.meta.dir, "..");
 export const HOST =
   process.env.OPEN_GAJAE_TEST_HOST ?? join(homedir(), ".opencode/bin/opencode");
-export const HOST_VERSION = "opencode v2.0.15";
+export const HOST_VERSION = "opencode v2.0.26";
+
+export function isSupportedHostVersion(version: string): boolean {
+  return version === HOST_VERSION;
+}
 
 export const OUR_TOOLS = [
   "ast_grep_search",
@@ -59,6 +65,7 @@ export const OUR_TOOLS = [
   "lsp_servers",
   "lsp_workspace_symbols",
   "ralplan",
+  "todo",
   "ultragoal",
 ];
 export const AGENTS = [
@@ -93,6 +100,33 @@ export function fail(message: string): never {
   throw new Error(message);
 }
 
+/** Register before the triggering action. Timeouts bound failure, never signal progress. */
+export function waitForEvent<T>(
+  label: string,
+  subscribe: (listener: (value: T) => void) => () => void,
+  predicate: (value: T) => boolean = () => true,
+  timeout = 60_000,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      unsubscribe();
+      reject(new Error(`timed out: ${label}`));
+    }, timeout);
+    const unsubscribe = subscribe((value) => {
+      if (!predicate(value)) return;
+      clearTimeout(timer);
+      unsubscribe();
+      resolve(value);
+    });
+  });
+}
+
+export function barrier() {
+  let release: () => void = () => fail("barrier not initialized");
+  const promise = new Promise<void>((resolve) => { release = resolve; });
+  return { promise, release };
+}
+
 export async function waitFor<T>(
   label: string,
   check: () => T | undefined | false | Promise<T | undefined | false>,
@@ -121,6 +155,7 @@ type Check = { name: string; pass: boolean; detail?: unknown };
 
 export class Report {
   readonly checks: Check[] = [];
+  readonly cleanup: unknown[] = [];
   constructor(readonly probe: string) {}
   check(name: string, pass: boolean, detail?: unknown) {
     this.checks.push({ name, pass, ...(detail === undefined ? {} : { detail }) });
@@ -159,6 +194,7 @@ export async function runProbe(
   const touched = REAL_DIRS.filter(existsSync).flatMap((dir) => {
     const found = spawnSync("find", [dir, "-newer", marker], {
       encoding: "utf8",
+      timeout: 30_000,
     });
     return found.stdout.split("\n").filter(Boolean);
   });
@@ -179,7 +215,10 @@ export type Action =
   | { text: string }
   | { sleep: number; text: string }
   | { error: number };
-export type Directive = { tag: string; steps: Action[]; clearAfter?: number };
+export type Directive = {
+  tag: string; steps: Action[]; clearAfter?: number;
+  todo?: "active" | "stagnant" | "failure" | "status-only";
+};
 
 export const directive = (value: Directive) =>
   `#ACTION ${JSON.stringify(value)}`;
@@ -188,7 +227,7 @@ const DIRECTIVE_LINE = /#ACTION (\{.*\})\s*$/m;
 const CONTINUATION = /<ralplan-continuation>[\s\S]*?REINFORCEMENT (\d+)\//;
 const GOAL_CONTINUATION = "<goal-continuation>";
 /** Plugin messages a model reads as context, never as its next instruction. */
-const PASSIVE_USER = /^(<goal-(context|notice)>|<conversation-checkpoint>)/;
+const PASSIVE_USER = /^(<goal-(context|notice)>|<open-gajae-todo-(context|notice)>|<conversation-checkpoint>)/;
 /** The host's compaction prompts (`core/src/session/compaction.ts:364-390`). */
 const COMPACTION_PROMPT = /^(You MUST summarize the conversation above|Update the existing checkpoint in the conversation above)/;
 const COMPACTION_SUMMARY = "## Objective\n- Probe the plugin's hooks.\n\n## Next Move\n1. (none)\n";
@@ -198,7 +237,7 @@ export type ProviderEntry = {
   /** The tag of the newest `#ACTION` anywhere in the thread. */
   thread?: string;
   /** What the last user message was: a directive, a continuation, or other. */
-  kind: "directive" | "continuation" | "other" | "title";
+  kind: "directive" | "continuation" | "todo-continuation" | "other" | "title";
   step: number;
   count?: number;
   tools: string[];
@@ -312,7 +351,32 @@ function classify(messages: any[]) {
     return { kind: "continuation" as const, step, thread, steps, count };
   }
   const own = parseDirective(last);
-  if (own) return { kind: "directive" as const, step, thread: own, steps: own.steps };
+  if (own) {
+    // The context hook deliberately replaces stale synthetic directives. Detect
+    // re-entry from the assistant's previous tool-less yield, not passive notices.
+    const yielded = messages.slice(lastUser + 1).some((m) =>
+      m.role === "assistant" && !m.tool_calls?.length && contentText(m.content).length > 0);
+    const context = [...messages].reverse().find((m) =>
+      m.role === "user" && contentText(m.content).startsWith("<open-gajae-todo-context>"));
+    if (own.todo && yielded && context) {
+      const text = contentText(context.content);
+      const data = text.match(/\n(\{"generation".*)/)?.[1];
+      const board = data ? JSON.parse(data) : undefined;
+      const task = board?.focus?.task;
+      const action: Action = own.todo === "active" && typeof task === "string"
+        ? { tool: "todo", args: { op: "done", task } }
+        : own.todo === "failure" ? { error: 400 }
+        : own.todo === "status-only" ? { tool: "todo", args: { op: "view" } }
+        : { text: "premature yield without progress" };
+      // One real operation per resumed execution, then yield again.
+      const previous = [...messages].reverse().find((m) =>
+        m.role !== "user" || !PASSIVE_USER.test(contentText(m.content)));
+      const afterTool = previous?.role === "tool";
+      return { kind: "todo-continuation" as const, step: 0, thread: own,
+        steps: [afterTool ? { text: "resumed operation finished" } : action] };
+    }
+    return { kind: "directive" as const, step, thread: own, steps: own.steps };
+  }
   const continuation = last.match(CONTINUATION);
   if (continuation) {
     const count = Number(continuation[1]);
@@ -329,9 +393,17 @@ export class FakeProvider {
   readonly log: string;
   private server?: ReturnType<typeof Bun.serve>;
   private slept = new Set<string>();
+  private callbacks = new EventEmitter();
+  private gates = new Set<{
+    predicate: (entry: ProviderEntry) => boolean;
+    reached: (entry: ProviderEntry) => void;
+    gate: ReturnType<typeof barrier>;
+  }>();
   constructor(dir: string) {
     this.log = join(dir, "provider.jsonl");
   }
+
+  get port() { return this.server?.port; }
 
   start(): string {
     this.server = Bun.serve({
@@ -356,6 +428,13 @@ export class FakeProvider {
           body,
         };
         appendFileSync(this.log, JSON.stringify(entry) + "\n");
+        this.callbacks.emit("request", entry);
+        for (const gate of this.gates) {
+          if (!gate.predicate(entry)) continue;
+          gate.reached(entry);
+          await gate.gate.promise;
+          this.gates.delete(gate);
+        }
         if (!c) return textResponse("Probe title");
         const action = c.steps[c.step];
         if (!action) return textResponse(c.thread ? `done:${c.thread.tag}` : "ack");
@@ -398,13 +477,30 @@ export class FakeProvider {
     return this.entries().filter((e) => e.kind !== "title" && e.thread === tag);
   }
 
+  waitForEvent(predicate: (entry: ProviderEntry) => boolean, timeout = 60_000) {
+    return waitForEvent("provider request", (listener) => {
+      this.callbacks.on("request", listener);
+      return () => { this.callbacks.off("request", listener); };
+    }, predicate, timeout);
+  }
+
+  /** Install before prompting; response remains blocked until explicit release. */
+  hold(predicate: (entry: ProviderEntry) => boolean, timeout = 60_000) {
+    const gate = barrier();
+    const reached = this.waitForEvent(predicate, timeout);
+    this.gates.add({ predicate, reached: () => {}, gate });
+    return { reached, release: gate.release };
+  }
+
   stop() {
+    for (const gate of this.gates) gate.gate.release();
+    this.gates.clear();
     this.server?.stop(true);
   }
 }
 
 // ------------------------------------------------------------ disposable host
-export type HostEvent = { t: number; type: string; data: any };
+export type HostEvent = { t: number; type: string; data: any; id?: string; durable?: unknown };
 
 export class Host {
   readonly env: Record<string, string>;
@@ -416,6 +512,8 @@ export class Host {
   private auth = "";
   private events: HostEvent[] = [];
   private eventAbort = new AbortController();
+  private callbacks = new EventEmitter();
+  readonly cleanup: Array<Record<string, unknown>> = [];
 
   constructor(readonly root: string) {
     this.home = join(root, "env/home");
@@ -445,6 +543,7 @@ export class Host {
       mkdirSync(dir, { recursive: true });
     spawnSync("git", ["init", "-q", this.project], {
       env: { ...this.env, GIT_CONFIG_NOSYSTEM: "1" },
+      timeout: 30_000,
     });
     writeFileSync(join(this.project, "sample.ts"), "export const fixture = true;\n");
     writeFileSync(
@@ -467,9 +566,11 @@ export class Host {
         2,
       ),
     );
-    const version = spawnSync(HOST, ["--version"], { env: this.env, encoding: "utf8" }).stdout.trim();
-    report.check(`host version is ${HOST_VERSION}`, version === HOST_VERSION, version);
-    const paths = spawnSync(HOST, ["debug", "paths"], { cwd: this.project, env: this.env, encoding: "utf8" })
+    const version = spawnSync(HOST, ["--version"], { cwd: this.project, env: this.env,
+      encoding: "utf8", timeout: 30_000 }).stdout.trim();
+    report.check(`host version is ${HOST_VERSION}`, isSupportedHostVersion(version), version);
+    const paths = spawnSync(HOST, ["debug", "paths"], { cwd: this.project, env: this.env,
+      encoding: "utf8", timeout: 30_000 })
       .stdout.trim()
       .split("\n")
       .map((line) => line.trim().split(/\s+/));
@@ -482,22 +583,39 @@ export class Host {
   }
 
   async start() {
+    this.eventAbort = new AbortController();
     const out = { text: "" };
     this.server = spawn(HOST, ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
       cwd: this.project,
       env: this.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    this.server.stdout!.on("data", (d) => (out.text += d));
-    this.server.stderr!.on("data", (d) => {
-      out.text += d;
-      appendFileSync(join(this.root, "server.err"), d);
-    });
-    await waitFor("server listening", () => /server password (\S+)/.test(out.text), 60_000);
+    const server = this.server;
+    await waitForEvent<string>("server listening", (listener) => {
+      const stdout = (d: Buffer) => {
+        out.text += d;
+        appendFileSync(join(this.root, "server.out"), d);
+        listener(out.text);
+      };
+      const stderr = (d: Buffer) => {
+        out.text += d;
+        appendFileSync(join(this.root, "server.err"), d);
+        listener(out.text);
+      };
+      server.stdout?.on("data", stdout);
+      server.stderr?.on("data", stderr);
+      return () => {
+        server.stdout?.off("data", stdout);
+        server.stderr?.off("data", stderr);
+        server.stderr?.on("data", (d) => appendFileSync(join(this.root, "server.err"), d));
+      };
+    }, (text) => /listening on (http:\/\/\S+)/.test(text) && /server password (\S+)/.test(text));
     this.baseUrl = out.text.match(/listening on (http:\/\/\S+)/)![1]!;
     const password = out.text.match(/server password (\S+)/)![1]!;
     this.auth = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`;
+    const subscribed = this.waitForEvent(() => true);
     void this.subscribe();
+    await subscribed;
   }
 
   /** Record the server event stream (`GET /api/event`). */
@@ -526,7 +644,12 @@ export class Host {
           if (!data) continue;
           try {
             const parsed = JSON.parse(data);
-            this.events.push({ t: Date.now(), type: parsed.type, data: parsed.data ?? parsed.properties });
+            const event: HostEvent = {
+              t: Date.now(), type: parsed.type, data: parsed.data ?? parsed.properties,
+              id: parsed.id, durable: parsed.durable,
+            };
+            this.events.push(event);
+            this.callbacks.emit("event", event);
           } catch {
             // Non-JSON keep-alive.
           }
@@ -545,15 +668,17 @@ export class Host {
     return this.events.filter((e) => e.t >= since);
   }
 
+  waitForEvent(predicate: (event: HostEvent) => boolean, timeout = 60_000) {
+    return waitForEvent("host SSE event", (listener) => {
+      this.callbacks.on("event", listener);
+      return () => { this.callbacks.off("event", listener); };
+    }, predicate, timeout);
+  }
+
   async terminal(sessionID: string, since: number, timeout = 60_000) {
-    return await waitFor(
-      `terminal event for ${sessionID}`,
-      () =>
-        this.sessionEvents(sessionID, since).find((e) =>
-          ["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"].includes(e.type),
-        ),
-      timeout,
-    );
+    const predicate = (e: HostEvent) => e.t >= since && e.data?.sessionID === sessionID &&
+      ["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"].includes(e.type);
+    return this.events.find(predicate) ?? await this.waitForEvent(predicate, timeout);
   }
 
   /** Wait until the session has been quiet (no event) for `quietMs`. */
@@ -584,6 +709,7 @@ export class Host {
         ...(body === undefined ? {} : { "content-type": "application/json" }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(180_000),
     });
     const text = await response.text();
     let json: any;
@@ -615,18 +741,22 @@ export class Host {
   /** Prompt, wait for the first terminal event, and return it. */
   async turn(sessionID: string, text: string, extra: Record<string, unknown> = {}, timeout = 60_000) {
     const since = Date.now();
+    const terminal = this.terminal(sessionID, since, timeout);
     await this.prompt(sessionID, text, extra);
-    return await this.terminal(sessionID, since, timeout);
+    return await terminal;
   }
 
   /** A file under the session's `_session-*` folder, or undefined. */
   sessionFile(sessionID: string, relative: string): string | undefined {
     const root = join(this.project, ".open-gajae");
     if (!existsSync(root)) return undefined;
-    const folder = spawnSync("ls", [root], { encoding: "utf8" })
-      .stdout.split("\n")
-      .find((name) => name.endsWith(`-${sessionID}`));
-    const file = folder && join(root, folder, relative);
+    const folders = readdirSync(root).filter((name) => name.startsWith("_session-"));
+    const legacy = folders.filter((name) => name.endsWith(`-${sessionID}`)).map((name) => join(root, name));
+    const matches = legacy.length ? legacy : folders.map((name) => join(root, name, "children", sessionID))
+      .filter((directory) => existsSync(directory));
+    if (matches.length > 1) throw new Error(`ambiguous probe session directories for ${sessionID}`);
+    const folder = matches[0];
+    const file = folder && join(folder, relative);
     return file && existsSync(file) ? readFileSync(file, "utf8") : undefined;
   }
 
@@ -648,14 +778,47 @@ export class Host {
     return text === undefined ? undefined : JSON.parse(text);
   }
 
-  async stop() {
+  async stopBackend() {
     this.eventAbort.abort();
-    if (this.server && this.server.exitCode === null) {
-      this.server.kill("SIGTERM");
-      await Promise.race([new Promise((done) => this.server!.once("close", done)), sleep(5_000)]);
-      if (this.server.exitCode === null) this.server.kill("SIGKILL");
+    const server = this.server;
+    if (server && server.exitCode === null) {
+      const closed = waitForEvent("host close", (listener) => {
+        server.once("close", listener);
+        return () => { server.off("close", listener); };
+      });
+      const force = setTimeout(() => server.kill("SIGKILL"), 5_000);
+      server.kill("SIGTERM");
+      try { await closed; } finally { clearTimeout(force); }
     }
-    this.provider.stop();
+    const port = this.baseUrl ? Number(new URL(this.baseUrl).port) : undefined;
+    this.cleanup.push({
+      kind: "backend", pid: server?.pid, exit: server?.exitCode, signal: server?.signalCode,
+      closed: !server || server.exitCode !== null || server.signalCode !== null,
+      port, portReleased: port === undefined || releasedPort(port),
+    });
+  }
+
+  async stop() {
+    const port = this.provider.port;
+    try { await this.stopBackend(); }
+    finally {
+      this.provider.stop();
+      this.cleanup.push({ kind: "provider", port, portReleased: port === undefined || releasedPort(port) });
+      writeFileSync(join(this.root, "cleanup.json"), JSON.stringify(this.cleanup, null, 2) + "\n");
+    }
+  }
+}
+
+/** Rebinding proves no listener remains; this is a one-shot check, not polling. */
+export function releasedPort(port: number): boolean {
+  try {
+    const server = Bun.serve({ hostname: "127.0.0.1", port,
+      fetch: () => new Response("cleanup check") });
+    server.stop(true);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EADDRINUSE") return false;
+    throw error;
   }
 }
 
@@ -674,6 +837,9 @@ export async function withHost(
     await body(host);
   } finally {
     await host.stop();
+    report.cleanup.push({ root, receipts: host.cleanup });
+    report.check("host/provider closed and ports released",
+      host.cleanup.every((receipt) => receipt.portReleased === true && receipt.closed !== false), host.cleanup);
   }
 }
 

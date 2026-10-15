@@ -13,6 +13,7 @@ import {
 import { continuationMessage } from "../src/ralplan";
 import { RUNTIME_OWNER } from "../src/skill-state/audit";
 import { syncActiveRowTx } from "../src/skill-state/rows";
+import * as childResultsModule from "../src/todo/child-results";
 import {
   DEEP_INTERVIEW_MODE,
   RALPLAN_MODE,
@@ -739,6 +740,146 @@ test("continuation waits while a child execution runs (Q5)", async () => {
   );
 });
 
+test("queued child start bookkeeping survives a newer fast tool observation", async () => {
+  const parent = nextSession("queued-parent");
+  const child = nextSession("queued-child");
+  await fixture(async (context) => {
+    const { store, hooks } = context;
+    try {
+      // Given: the fast lane has advanced before the ordered start handler.
+      await plan(store, parent);
+      const start = { id: "evt_start", type: "session.execution.started",
+        durable: { aggregateID: child, seq: 1 }, data: { sessionID: child } };
+      const tool = { id: "evt_tool", type: "session.tool.called",
+        durable: { aggregateID: child, seq: 2 }, data: { sessionID: child, id: "call_child" } };
+      hooks.observeEvent(start);
+      hooks.observeEvent(tool);
+      // When: the original ordered events drain and the parent finishes.
+      await hooks.onEvent(start);
+      await hooks.onEvent(tool);
+      await succeeded(hooks, parent);
+      // Then: workflow continuation still knows the child is running.
+      expect(continuations(context)).toHaveLength(0);
+      await emit(hooks, "session.execution.succeeded", child);
+      await succeeded(hooks, parent);
+      expect(continuations(context)).toHaveLength(1);
+    } finally { await hooks.dispose(); }
+  }, { parents: { [child]: parent } });
+});
+
+for (const workflow of ["ralplan", "goal", "todo"] as const) {
+test(`reused child start waits for ledger publication before ${workflow} continuation`, async () => {
+  const parent = nextSession("reused-parent");
+  const child = nextSession("reused-child");
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const flushing = Promise.withResolvers<void>();
+  let watchFlush = false;
+  const create = childResultsModule.createChildResults;
+  // Observe entry to the real queue barrier without replacing its behavior.
+  const observer = spyOn(childResultsModule, "createChildResults").mockImplementation((...args) => {
+    const ledger = create(...args);
+    return { ...ledger, async flush() {
+      if (watchFlush) flushing.resolve();
+      await ledger.flush();
+    } };
+  });
+  try {
+    await fixture(async (context) => {
+      const { store, hooks, agents } = context;
+      agents[parent] = "open-gajae";
+      const event = (id: string, seq: number, type: string, extra: Record<string, unknown> = {}) => ({
+        id: `${id}_${seq}`, type, durable: { aggregateID: id, seq }, data: { sessionID: id, ...extra },
+      });
+      const enqueue = (seq: number, inboxID: string) => event(parent, seq, "session.inbox.enqueued", {
+        inboxID, item: { payload: { metadata: { source: "subagent", childID: child, state: "completed" } } },
+      });
+      const file = join(await store.resolveSessionDir(child), "state/todo-child-results.json");
+      if (workflow === "ralplan") await plan(store, parent);
+      else if (workflow === "goal") await setGoal(store, parent);
+      else await new TodoStore(store).apply(parent, { op: "init", list: [{ phase: "Work", items: ["A", "B"] }] });
+      await hooks.onEvent(event(child, 1, "session.created", { parentID: parent, location: { directory: context.root } }));
+      await hooks.onEvent(event(child, 2, "session.execution.started"));
+      await hooks.onEvent(event(child, 3, "session.execution.succeeded"));
+      await hooks.onEvent(enqueue(1, "first"));
+      const rename = fs.rename.bind(fs);
+      let blocked = false;
+      const writer = spyOn(fs, "rename").mockImplementation(async (from, to) => {
+        if (!blocked && String(to) === file) {
+          blocked = true;
+          entered.resolve();
+          await release.promise;
+        }
+        return rename(from, to);
+      });
+      let settled = false;
+      const delivered = hooks.onEvent(event(parent, 2, "session.inbox.delivered", { inboxID: "first" }));
+      let second: Promise<void> | undefined;
+      let parentEnd: Promise<void> | undefined;
+      const timeout = setTimeout(() => {
+        entered.reject(new Error("terminal ledger write was not intercepted"));
+        flushing.reject(new Error("second start did not enter the child queue barrier"));
+      }, 2_000);
+      try {
+        // The terminal reducer already emptied the ledger, but its write is
+        // suspended. The fresh start is queued behind that exact write.
+        await entered.promise;
+        watchFlush = true;
+        second = hooks.onEvent(event(child, 4, "session.execution.started")).then(() => { settled = true; });
+        parentEnd = hooks.onEvent(event(parent, 3, "session.execution.succeeded"));
+        await flushing.promise;
+        expect(settled).toBe(false);
+        expect(continuations(context)).toHaveLength(0);
+        release.resolve();
+        await Promise.all([delivered, second, parentEnd]);
+        // Even concurrent handlers (stronger than index.ts's ordered queue)
+        // cannot continue after draining while execution two is running.
+        expect(continuations(context)).toHaveLength(0);
+        await hooks.onEvent(event(child, 5, "session.execution.succeeded"));
+        await hooks.onEvent(enqueue(4, "second"));
+        await hooks.onEvent(event(parent, 5, "session.inbox.delivered", { inboxID: "second" }));
+        await hooks.onEvent(event(parent, 6, "session.execution.succeeded"));
+        expect(continuations(context)).toHaveLength(1);
+        console.info("REUSED_CHILD_QUEUE_PROOF", JSON.stringify({ workflow, pendingWriteBlocked: true, premature: 0, afterCompletion: 1 }));
+      } finally {
+        clearTimeout(timeout);
+        release.resolve();
+        await Promise.all([delivered, second, parentEnd]);
+        writer.mockRestore();
+        await hooks.dispose();
+      }
+    }, { parents: { [child]: parent } });
+  } finally { observer.mockRestore(); }
+});
+}
+
+test("queued parent starts preserve zero-tool turns after fast success observation", async () => {
+  await fixture(async (context) => {
+    const { store, hooks } = context;
+    const id = nextSession("queued-goal");
+    try {
+      // Given: the host supports tool-call events and an active goal.
+      await setGoal(store, id);
+      await emit(hooks, "session.tool.called", "elsewhere");
+      // When: each fast success is observed before its ordered start drains.
+      for (let n = 0; n < 3; n++) {
+        const start = { id: `evt_start${n}`, type: "session.execution.started",
+          durable: { aggregateID: id, seq: n * 2 + 1 }, data: { sessionID: id } };
+        const end = { id: `evt_end${n}`, type: "session.execution.succeeded",
+          durable: { aggregateID: id, seq: n * 2 + 2 }, data: { sessionID: id } };
+        hooks.observeEvent(start);
+        hooks.observeEvent(end);
+        await hooks.onEvent(start);
+        await hooks.onEvent(end);
+      }
+      // Then: three genuinely tool-less turns reach the existing goal limit.
+      expect(await goalRecord(store, id)).toMatchObject({
+        tool_less_turns: 3, held: { reason: "no_tool_progress" },
+      });
+    } finally { await hooks.dispose(); }
+  });
+});
+
 test("sessions of another location are ignored (Q10)", async () => {
   const foreign = nextSession("q10-foreign");
   const announced = nextSession("q10-announced");
@@ -1092,6 +1233,7 @@ import {
   ultragoalMentionNotice,
 } from "../src/ultragoal-runtime/messages";
 import { buildCompletionVerification } from "../src/ultragoal-runtime/receipt";
+import { TodoStore } from "../src/todo/store";
 
 const UG = "ultragoal" as const;
 const ugState = (store: StateStore, id: string) => stateOf(store, id, UG);
@@ -2153,5 +2295,75 @@ test("(H9) cancel and resume: the guard and the continuation stop and come back;
     expect((await writeCall(hooks, id, join(root, "src/x.ts"))).input).toEqual({});
     await succeeded(hooks, id);
     expect(synthetics.at(-1)!.description).toBe("open-gajae: deep-interview continuation 1/2");
+  });
+});
+
+test("todo is below deep-interview, active goal, and ralplan in the common arbiter", async () => {
+  await fixture(async (context) => {
+    const { hooks, store, agents, synthetics } = context;
+    const id = nextSession("todo-priority");
+    agents[id] = "open-gajae";
+    const todo = new TodoStore(store);
+    await todo.apply(id, { op: "init", list: [{ phase: "Work", items: ["unfinished"] }] });
+    const { deepInterview } = tools(context);
+    await setGoal(store, id);
+    expect((await deepInterview(id, { op: "start", idea: "clarify" })).startsWith("Error:")).toBe(false);
+    const terminal = (seq: number) => hooks.onEvent({
+      id: `evt_priority_${seq}`, type: "session.execution.succeeded",
+      durable: { aggregateID: id, seq, version: 1 }, data: { sessionID: id },
+    });
+    await terminal(1);
+    expect(synthetics.at(-1)?.text.startsWith("<deep-interview-continuation>")).toBe(true);
+    await deepInterview(id, { op: "state", patch: { active: false } });
+    await terminal(2);
+    expect(synthetics.at(-1)?.text.startsWith("<goal-continuation>")).toBe(true);
+    await setGoal(store, id, { status: "complete" });
+    await plan(store, id);
+    await terminal(3);
+    expect(synthetics.at(-1)?.text.startsWith("<ralplan-continuation>")).toBe(true);
+    expect(synthetics.some((call) => call.text.startsWith("<open-gajae-todo-continuation>"))).toBe(false);
+    await hooks.dispose();
+  });
+});
+
+test("goal completion receipts and todo completion are independent in both directions", async () => {
+  await fixture(async (context) => {
+    const id = nextSession("todo-goal-independent");
+    const { ultragoal, goal } = tools(context);
+    const todo = new TodoStore(context.store);
+    await todo.apply(id, { op: "init", list: [{ phase: "Work", items: ["still open"] }] });
+    expect((await ultragoal(id, { op: "create", description: "ship", goals: GOALS })).startsWith("Error:")).toBe(false);
+    expect((await ultragoal(id, { op: "next" })).startsWith("Error:")).toBe(false);
+    const checkpoint = await ultragoal(id, { op: "checkpoint", goal_id: "G001", status: "complete",
+      evidence: "verified", implementation: ["implemented"], files_changed: ["src/x.ts"], learnings: ["verified"],
+      gate: {
+        targetedVerification: { status: "passed", commands: ["bun test"], evidence: "green" },
+        architectReview: { architectureStatus: "CLEAR", productStatus: "CLEAR", codeStatus: "CLEAR",
+          recommendation: "APPROVE", evidence: "reviewed", blockers: [] },
+        criteriaCoverage: [{ criterionId: "G001.AC1", status: "covered", evidence: "verified" }],
+        reviewCohort: { reviewGeneration: 1, joined: true, lanes: {
+          cleaner: { status: "PASS", evidence: "reviewed", blockers: [] },
+          architect: { status: "CLEAR", evidence: "reviewed", blockers: [] },
+          qa: { status: "passed", evidence: "verified", blockers: [], commands: ["bun test"], adversarialCases: ["empty"] },
+        } },
+        criticReview: { verdict: "OKAY", evidence: "clean", blockers: [] },
+      } });
+    expect(checkpoint).not.toMatch(/^Error:/);
+    const before = await todo.readSnapshot(id);
+    expect((await goal(id, { op: "complete" })).startsWith("Error:")).toBe(false);
+    const completed = await context.store.workflowTransaction(id, (tx) => tx.readText(tx.paths.goalState));
+    expect(JSON.parse(completed ?? "{}").status).toBe("complete");
+    expect(await todo.readSnapshot(id)).toEqual(before);
+
+    const other = nextSession("todo-goal-invalid");
+    await todo.apply(other, { op: "init", list: [{ phase: "Work", items: ["done"] }] });
+    await todo.apply(other, { op: "done", task: "done" });
+    await ultragoal(other, { op: "create", description: "unverified", goals: GOALS });
+    expect((await goal(other, { op: "complete" })).startsWith("Error:")).toBe(true);
+    const active = await context.store.workflowTransaction(other, (tx) => tx.readText(tx.paths.goalState));
+    expect(JSON.parse(active ?? "{}").status).toBe("active");
+    const board = await todo.read(other);
+    expect(board.status === "ready" && board.counts.open).toBe(0);
+    await context.hooks.dispose();
   });
 });

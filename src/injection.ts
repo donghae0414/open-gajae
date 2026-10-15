@@ -15,6 +15,9 @@
 // revision plan C-12, E-13).
 
 export const INJECTION_MARKERS = [
+  "<open-gajae-todo-continuation>",
+  "<open-gajae-todo-context>",
+  "<open-gajae-todo-notice>",
   "<ralplan-continuation>", // OMC src/hooks/persistent-mode/index.ts:2147
   "<ralplan-notice>", // host addition: wraps the keyword and breaker notices
   // Host addition (plan D-H2/AC19): the ralplan compaction recovery context,

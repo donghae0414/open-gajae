@@ -173,6 +173,12 @@ test("manager deduplicates concurrent connections and releases failed leases", a
       `#!${process.execPath}\n${peer}`,
       { mode: 0o700 },
     );
+    // Discovery sees no containers, regardless of the host's Docker installation.
+    await writeFile(
+      join(bin, "docker"),
+      `#!${process.execPath}\nprocess.exit(0);\n`,
+      { mode: 0o700 },
+    );
     process.env.PATH = `${bin}:${oldPath ?? ""}`;
     try {
       const [a, b] = await Promise.all([
